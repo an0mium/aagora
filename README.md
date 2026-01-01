@@ -25,7 +25,7 @@ aagora synthesizes ideas from:
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/aagora.git
+git clone https://github.com/an0mium/aagora.git
 cd aagora
 pip install -e .
 

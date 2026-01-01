@@ -50,10 +50,10 @@ dev = [
 aagora = "aagora.cli.main:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/aagora"
-Documentation = "https://github.com/yourusername/aagora#readme"
-Repository = "https://github.com/yourusername/aagora"
-Issues = "https://github.com/yourusername/aagora/issues"
+Homepage = "https://aagora.ai"
+Documentation = "https://github.com/an0mium/aagora#readme"
+Repository = "https://github.com/an0mium/aagora"
+Issues = "https://github.com/an0mium/aagora/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
