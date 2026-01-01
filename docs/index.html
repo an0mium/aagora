@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>aagora - Multi-Agent Debate Framework</title>
+    <meta name="description" content="A society of heterogeneous AI agents that discuss, critique, improve each other's responses, and learn from successful patterns.">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #12121a;
+            --border: #2a2a3a;
+            --text: #e4e4eb;
+            --text-muted: #8888a0;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.3);
+            --green: #22c55e;
+            --orange: #f97316;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 4rem 0 3rem;
+        }
+
+        .logo {
+            font-size: 4rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--accent), #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .badges {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: center;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 2rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .badge:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        .install-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            text-align: center;
+        }
+
+        .install-box code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 1.1rem;
+            color: var(--green);
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 3rem 0;
+        }
+
+        .feature {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+        }
+
+        .feature h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .feature p {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .demo {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            overflow: hidden;
+            margin: 2rem 0;
+        }
+
+        .demo-header {
+            background: #1a1a24;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .demo-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+
+        .demo-dot.red { background: #ef4444; }
+        .demo-dot.yellow { background: #eab308; }
+        .demo-dot.green { background: #22c55e; }
+
+        .demo-content {
+            padding: 1.5rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.875rem;
+            line-height: 1.8;
+        }
+
+        .demo-content .prompt {
+            color: var(--accent);
+        }
+
+        .demo-content .command {
+            color: var(--text);
+        }
+
+        .demo-content .output {
+            color: var(--text-muted);
+        }
+
+        .demo-content .success {
+            color: var(--green);
+        }
+
+        .architecture {
+            margin: 3rem 0;
+        }
+
+        .architecture h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .arch-diagram {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 2rem;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.75rem;
+            line-height: 1.4;
+            overflow-x: auto;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+
+        .cta {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin: 3rem 0;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.875rem 1.75rem;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 30px var(--accent-glow);
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+        }
+
+        footer {
+            text-align: center;
+            padding: 3rem 0;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .inspired {
+            margin: 3rem 0;
+            padding: 1.5rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+        }
+
+        .inspired h3 {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .inspired-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .inspired-item {
+            font-size: 0.8rem;
+            padding: 0.25rem 0.75rem;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 1rem;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1 class="logo">aagora</h1>
+            <p class="tagline">A society of heterogeneous AI agents that discuss, critique, improve each other's responses, and learn from successful patterns.</p>
+            <div class="badges">
+                <a href="https://pypi.org/project/aagora/" class="badge">
+                    <span>PyPI</span>
+                    <span style="color: var(--green);">v0.1.0</span>
+                </a>
+                <a href="https://github.com/an0mium/aagora" class="badge">
+                    <span>GitHub</span>
+                </a>
+                <span class="badge">
+                    <span>MIT License</span>
+                </span>
+            </div>
+        </header>
+
+        <div class="install-box">
+            <code>pip install aagora</code>
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <h3>Heterogeneous Agents</h3>
+                <p>Mix Claude, GPT/Codex, Gemini, and local models in the same debate. Each brings unique strengths.</p>
+            </div>
+            <div class="feature">
+                <h3>Structured Debate</h3>
+                <p>Propose, Critique, Revise loop with configurable rounds and multiple consensus mechanisms.</p>
+            </div>
+            <div class="feature">
+                <h3>Self-Improvement</h3>
+                <p>SQLite-based pattern store learns from successful critiques. Prompts evolve over time.</p>
+            </div>
+            <div class="feature">
+                <h3>One Command</h3>
+                <p>Simple CLI interface. Multiple agents working behind the scenes to produce better answers.</p>
+            </div>
+        </div>
+
+        <div class="demo">
+            <div class="demo-header">
+                <div class="demo-dot red"></div>
+                <div class="demo-dot yellow"></div>
+                <div class="demo-dot green"></div>
+            </div>
+            <div class="demo-content">
+<span class="prompt">$</span> <span class="command">aagora ask "Design a rate limiter for 1M req/sec" --agents codex,claude</span>
+
+<span class="output">[Round 1] codex_proposer: Proposing solution...</span>
+<span class="output">[Round 1] claude_critic: Analyzing proposal...</span>
+<span class="output">  Issues found: Race condition in distributed counter</span>
+<span class="output">[Round 2] codex_proposer: Revising based on critique...</span>
+<span class="output">[Round 2] claude_critic: Re-evaluating...</span>
+<span class="success">Consensus reached (confidence: 87%)</span>
+            </div>
+        </div>
+
+        <div class="architecture">
+            <h2>Architecture</h2>
+            <div class="arch-diagram">
+┌─────────────────────────────────────────────────────────────────┐
+│                         AAGORA FRAMEWORK                         │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
+│  │ Claude Agent │    │ Codex Agent  │    │ OpenAI Agent │       │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
+│         └───────────────────┼───────────────────┘               │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    ARENA (Orchestrator)                  │    │
+│  │  • Role assignment (proposer, critic, synthesizer)       │    │
+│  │  • Round management and context accumulation             │    │
+│  └─────────────────────────┬───────────────────────────────┘    │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                   DEBATE PROTOCOL                        │    │
+│  │  • Propose → Critique → Revise loop                      │    │
+│  │  • Majority / unanimous / judge consensus                │    │
+│  └─────────────────────────┬───────────────────────────────┘    │
+│                             ▼                                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │              CRITIQUE STORE + PROMPT EVOLUTION           │    │
+│  │  • Pattern storage and semantic retrieval                │    │
+│  │  • Automatic prompt improvement from successes           │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘</div>
+        </div>
+
+        <div class="inspired">
+            <h3>Inspired By</h3>
+            <div class="inspired-list">
+                <span class="inspired-item">Stanford Generative Agents</span>
+                <span class="inspired-item">ChatArena</span>
+                <span class="inspired-item">LLM Multi-Agent Debate</span>
+                <span class="inspired-item">UniversalBackrooms</span>
+                <span class="inspired-item">Project Sid</span>
+            </div>
+        </div>
+
+        <div class="cta">
+            <a href="https://github.com/an0mium/aagora" class="btn btn-primary">
+                View on GitHub
+            </a>
+            <a href="https://pypi.org/project/aagora/" class="btn btn-secondary">
+                PyPI Package
+            </a>
+        </div>
+
+        <footer>
+            <p>Built with curiosity. Released under <a href="https://github.com/an0mium/aagora/blob/main/LICENSE">MIT License</a>.</p>
+        </footer>
+    </div>
+</body>
+</html>
