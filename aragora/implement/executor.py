@@ -1,9 +1,16 @@
 """
 Hybrid multi-model executor.
 
-Routes implementation tasks to the appropriate model based on complexity:
-- simple: Codex (fast, reliable for isolated tasks)
-- moderate/complex: Claude (better at multi-file coordination)
+Updated routing based on empirical performance data (Dec 2025):
+- Claude: ALL implementation tasks (37% faster than alternatives, best code quality)
+- Codex: Code review / QA after implementation (high quality review, latency-tolerant)
+- Gemini: Planning only (handled by planner.py, leverages 1M context window)
+
+Research sources:
+- Claude completed projects in 1h17m vs Gemini's 2h2m (37% faster)
+- Codex has known latency issues (5-20 min for simple tasks per GitHub issues)
+- Claude produces "production-ready codebase with organized folders"
+- Codex excels at review/QA where latency isn't critical
 """
 
 import subprocess
@@ -41,12 +48,16 @@ IMPORTANT: Only make changes that are safe and reversible.
 
 class HybridExecutor:
     """
-    Executes implementation tasks using the appropriate model.
+    Executes implementation tasks using Claude, with optional Codex review.
 
-    Complexity routing:
-    - simple: CodexAgent (o3, fast for isolated tasks)
-    - moderate: ClaudeAgent (claude, balanced)
-    - complex: ClaudeAgent with extended timeout
+    Updated routing strategy (Dec 2025):
+    - ALL tasks: Claude (fastest, best quality for implementation)
+    - Post-implementation: Codex review (optional QA phase)
+
+    Rationale:
+    - Codex has severe latency issues (GitHub #5149, #1811, #6990)
+    - Claude is 37% faster and produces more organized code
+    - Codex quality shines in review mode where latency is acceptable
     """
 
     def __init__(
@@ -92,11 +103,15 @@ Make only the changes specified. Follow existing code style."""
         return self._codex
 
     def _select_agent(self, complexity: str):
-        """Select the appropriate agent based on task complexity."""
-        if complexity == "simple":
-            return self.codex, "codex"
-        else:  # moderate or complex
-            return self.claude, "claude"
+        """Select the appropriate agent based on task complexity.
+
+        Updated Dec 2025: Always use Claude for implementation.
+        Codex latency issues make it unsuitable for interactive implementation.
+        Codex is now used only for post-implementation review.
+        """
+        # Always use Claude for implementation (fastest, best quality)
+        # Complexity only affects timeout expectations
+        return self.claude, "claude"
 
     def _build_prompt(self, task: ImplementTask) -> str:
         """Build the implementation prompt for a task."""
@@ -224,3 +239,82 @@ Make only the changes specified. Follow existing code style."""
                 break
 
         return results
+
+    async def review_with_codex(self, diff: str, timeout: int = 600) -> dict:
+        """
+        Run Codex code review on implemented changes.
+
+        Codex is slow (~5-20min) but produces high-quality review.
+        Use this as a QA step after Claude implementation.
+
+        Args:
+            diff: The git diff to review
+            timeout: Max time to wait (default 10 min)
+
+        Returns:
+            dict with 'approved', 'issues', and 'suggestions'
+        """
+        if not diff.strip():
+            return {"approved": True, "issues": [], "suggestions": []}
+
+        review_prompt = f"""Review this code change for quality and safety issues.
+
+## Git Diff
+```
+{diff}
+```
+
+## Review Checklist
+1. Are there any bugs or logic errors?
+2. Are there security vulnerabilities (injection, XSS, etc.)?
+3. Does the code follow consistent style?
+4. Are there missing error handlers or edge cases?
+5. Is there unnecessary complexity that could be simplified?
+
+## Response Format
+Provide your review as:
+- APPROVED: yes/no
+- ISSUES: List any problems that MUST be fixed
+- SUGGESTIONS: List any improvements that would be nice
+
+Be concise and actionable."""
+
+        print("  Running Codex code review (this may take several minutes)...")
+        start_time = time.time()
+
+        try:
+            # Use codex with extended timeout for review
+            self._codex = CodexAgent(
+                name="codex-reviewer",
+                model="o3",
+                role="reviewer",
+                timeout=timeout,
+            )
+            self._codex.system_prompt = """You are a senior code reviewer.
+Focus on correctness, security, and maintainability.
+Be constructive but thorough."""
+
+            response = await self._codex.generate(review_prompt, context=[])
+            duration = time.time() - start_time
+
+            print(f"    Review completed in {duration:.1f}s")
+
+            # Parse response (basic parsing)
+            response_lower = response.lower() if response else ""
+            approved = "approved: yes" in response_lower or "approved:yes" in response_lower
+
+            return {
+                "approved": approved,
+                "review": response,
+                "duration_seconds": duration,
+                "model": "codex-o3",
+            }
+
+        except Exception as e:
+            duration = time.time() - start_time
+            print(f"    Review failed after {duration:.1f}s: {e}")
+            return {
+                "approved": None,
+                "error": str(e),
+                "duration_seconds": duration,
+            }

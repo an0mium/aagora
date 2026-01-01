@@ -958,6 +958,23 @@ CRITICAL SAFETY RULES:
         self._log(f"\nImplementation complete")
         self._log(f"Changed files:\n{impl_result.get('diff', 'No changes')}")
 
+        # === Optional: Codex Code Review Phase ===
+        # Codex is slow but provides high-quality review
+        # Enable with ARAGORA_CODEX_REVIEW=1
+        if os.environ.get("ARAGORA_CODEX_REVIEW", "0") == "1":
+            self._log("\n  Running Codex code review (optional QA)...")
+            from aragora.implement import HybridExecutor
+            executor = HybridExecutor(self.aragora_path)
+            diff = impl_result.get('diff', '')
+            review_result = await executor.review_with_codex(diff)
+            cycle_result["codex_review"] = review_result
+
+            if review_result.get("approved") is False:
+                self._log("  Codex review found issues:")
+                self._log(f"    {review_result.get('review', '')[:500]}...")
+                # Note: We don't fail on review issues, just log them
+                # The review is advisory for human consideration
+
         # === SAFETY: Verify protected files are intact ===
         self._log("\n  Checking protected files...")
         protected_issues = self._verify_protected_files()
