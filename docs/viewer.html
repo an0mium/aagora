@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>aragora - Live Debate Viewer</title>
+    <meta name="description" content="Watch AI agents debate in real-time. Shareable multi-model debate viewer.">
+
+    <!-- Open Graph for social sharing -->
+    <meta property="og:title" content="aragora Debate Viewer">
+    <meta property="og:description" content="Watch AI agents from different providers debate and reach consensus">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://aragora.ai/viewer.html">
+
+    <style>
+:root {
+    --primary: #6366f1;
+    --primary-dark: #4f46e5;
+    --secondary: #8b5cf6;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --bg: #0f172a;
+    --bg-light: #1e293b;
+    --card: #1e293b;
+    --card-hover: #334155;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --border: #334155;
+
+    --agent-claude: #d97706;
+    --agent-codex: #059669;
+    --agent-gemini: #2563eb;
+    --agent-grok: #dc2626;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+/* Header */
+header {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding: 2rem;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    border-radius: 1rem;
+}
+
+header h1 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+header h1 .logo {
+    width: 40px;
+    height: 40px;
+    background: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
+
+.meta { color: rgba(255,255,255,0.8); font-size: 0.9rem; }
+
+.consensus-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 2rem;
+    font-weight: 600;
+    margin-top: 1rem;
+    background: rgba(255,255,255,0.2);
+}
+
+.consensus-badge.reached { background: rgba(34, 197, 94, 0.3); }
+.consensus-badge.not-reached { background: rgba(239, 68, 68, 0.3); }
+
+/* Task Section */
+.task-section {
+    background: var(--card);
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    margin-bottom: 2rem;
+    border-left: 4px solid var(--primary);
+}
+
+.task-section h2 {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+}
+
+/* Agents Bar */
+.agents-bar {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.agent-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--card);
+    border-radius: 2rem;
+    font-size: 0.9rem;
+}
+
+.agent-chip .avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.7rem;
+    color: white;
+}
+
+.agent-chip.claude .avatar { background: var(--agent-claude); }
+.agent-chip.codex .avatar, .agent-chip.gpt .avatar { background: var(--agent-codex); }
+.agent-chip.gemini .avatar { background: var(--agent-gemini); }
+.agent-chip.grok .avatar { background: var(--agent-grok); }
+
+.agent-chip .role {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding: 0.1rem 0.4rem;
+    background: var(--bg);
+    border-radius: 0.25rem;
+}
+
+/* Timeline */
+.timeline-section {
+    margin-bottom: 2rem;
+}
+
+.timeline-controls {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    align-items: center;
+    padding: 1rem;
+    background: var(--card);
+    border-radius: 0.5rem;
+}
+
+.timeline-controls button {
+    padding: 0.5rem 1rem;
+    background: var(--primary);
+    border: none;
+    color: white;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.timeline-controls button:hover { background: var(--primary-dark); }
+.timeline-controls button:disabled { background: var(--border); cursor: not-allowed; }
+
+.timeline-slider {
+    flex: 1;
+    height: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 3px;
+    outline: none;
+}
+
+.timeline-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: var(--primary);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.round-indicator {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    min-width: 80px;
+    text-align: center;
+}
+
+/* Debate Messages */
+.debate-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.message {
+    background: var(--card);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    transition: all 0.3s ease;
+    border-left: 4px solid var(--border);
+}
+
+.message.visible { opacity: 1; transform: translateY(0); }
+.message.hidden { opacity: 0.3; transform: translateY(10px); }
+
+.message.claude { border-left-color: var(--agent-claude); }
+.message.codex, .message.gpt { border-left-color: var(--agent-codex); }
+.message.gemini { border-left-color: var(--agent-gemini); }
+.message.grok { border-left-color: var(--agent-grok); }
+
+.message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.message-header .agent-name {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.message-header .agent-name .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 0.75rem;
+    color: white;
+}
+
+.message.claude .avatar { background: var(--agent-claude); }
+.message.codex .avatar, .message.gpt .avatar { background: var(--agent-codex); }
+.message.gemini .avatar { background: var(--agent-gemini); }
+.message.grok .avatar { background: var(--agent-grok); }
+
+.message-header .meta-info {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    display: flex;
+    gap: 0.5rem;
+}
+
+.message-header .role-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    background: var(--bg);
+}
+
+.role-badge.proposer { color: var(--primary); }
+.role-badge.critic { color: var(--warning); }
+.role-badge.synthesizer { color: var(--success); }
+
+.message-content {
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.message-content::-webkit-scrollbar { width: 6px; }
+.message-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Final Answer */
+.final-answer {
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(99, 102, 241, 0.1));
+    border: 2px solid var(--success);
+    border-radius: 1rem;
+    padding: 1.5rem;
+    margin-top: 2rem;
+}
+
+.final-answer h3 {
+    color: var(--success);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.final-answer .content {
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+}
+
+/* Stats */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+    margin-top: 2rem;
+}
+
+.stat-card {
+    background: var(--card);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* Share Section */
+.share-section {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background: var(--card);
+    border-radius: 0.5rem;
+    text-align: center;
+}
+
+.share-section h3 {
+    margin-bottom: 1rem;
+    font-size: 1rem;
+}
+
+.share-url {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.share-url input {
+    flex: 1;
+    padding: 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 0.25rem;
+    color: var(--text);
+    font-size: 0.9rem;
+}
+
+.share-url button {
+    padding: 0.75rem 1.5rem;
+    background: var(--primary);
+    border: none;
+    color: white;
+    border-radius: 0.25rem;
+    cursor: pointer;
+}
+
+.share-buttons {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.share-btn {
+    padding: 0.5rem 1rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.share-btn:hover { background: var(--card-hover); }
+
+/* Footer */
+footer {
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+footer a { color: var(--primary); text-decoration: none; }
+
+/* Loading State */
+.loading {
+    text-align: center;
+    padding: 4rem;
+}
+
+.loading .spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 1rem;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 4rem;
+    color: var(--text-muted);
+}
+
+.empty-state h2 { margin-bottom: 1rem; }
+
+.empty-state .demo-btn {
+    margin-top: 1rem;
+    padding: 0.75rem 1.5rem;
+    background: var(--primary);
+    border: none;
+    color: white;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+    .container { padding: 1rem; }
+    header h1 { font-size: 1.5rem; }
+    .timeline-controls { flex-wrap: wrap; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Loading debate...</p>
+        </div>
+
+        <div class="empty-state" id="empty-state" style="display: none;">
+            <h2>No Debate Loaded</h2>
+            <p>Load a debate by providing a URL parameter or try the demo.</p>
+            <button class="demo-btn" onclick="loadDemo()">Load Demo Debate</button>
+        </div>
+
+        <div id="debate-viewer" style="display: none;">
+            <header>
+                <h1>
+                    <span class="logo">A</span>
+                    aragora Debate
+                </h1>
+                <div class="meta" id="debate-meta">Multi-Agent Deliberation</div>
+                <div class="consensus-badge" id="consensus-badge"></div>
+            </header>
+
+            <div class="task-section">
+                <h2>Task</h2>
+                <p id="task-text"></p>
+            </div>
+
+            <div class="agents-bar" id="agents-bar"></div>
+
+            <div class="timeline-section">
+                <div class="timeline-controls">
+                    <button id="btn-prev" disabled>&larr;</button>
+                    <input type="range" class="timeline-slider" id="timeline-slider" min="0" max="0" value="0">
+                    <button id="btn-next">Next &rarr;</button>
+                    <button id="btn-play">&#9658; Play</button>
+                    <span class="round-indicator" id="round-indicator">Round 0</span>
+                </div>
+
+                <div class="debate-feed" id="debate-feed"></div>
+            </div>
+
+            <div class="final-answer" id="final-answer" style="display: none;">
+                <h3>&#10003; Final Answer</h3>
+                <div class="content" id="final-answer-content"></div>
+            </div>
+
+            <div class="stats-grid" id="stats-grid"></div>
+
+            <div class="share-section">
+                <h3>Share This Debate</h3>
+                <div class="share-url">
+                    <input type="text" id="share-url" readonly>
+                    <button onclick="copyUrl()">Copy</button>
+                </div>
+                <div class="share-buttons">
+                    <button class="share-btn" onclick="shareTwitter()">Twitter/X</button>
+                    <button class="share-btn" onclick="shareLinkedIn()">LinkedIn</button>
+                    <button class="share-btn" onclick="downloadJSON()">Download JSON</button>
+                </div>
+            </div>
+
+            <footer>
+                <p>
+                    Powered by <a href="https://aragora.ai">aragora</a> - Agorist AI Framework
+                </p>
+                <p style="margin-top: 0.5rem;">
+                    Truth emerges from the marketplace of ideas, not central authority.
+                </p>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+// State
+let debateData = null;
+let currentStep = 0;
+let isPlaying = false;
+let playInterval = null;
+
+// Demo debate data
+const DEMO_DEBATE = {
+    id: "demo-rate-limiter-2026",
+    task: "Design a distributed rate limiter that handles 1M requests/second across multiple regions",
+    created_at: new Date().toISOString(),
+    agents: [
+        { name: "gemini-visionary", model: "gemini-2.5-pro", role: "proposer" },
+        { name: "codex-pragmatist", model: "o3", role: "proposer" },
+        { name: "claude-synthesizer", model: "claude-sonnet-4", role: "proposer" }
+    ],
+    messages: [
+        {
+            agent: "gemini-visionary",
+            role: "proposer",
+            round: 0,
+            content: `## Proposal: Cloud-Native Rate Limiter with ML-Powered Burst Prediction
+
+I propose a rate limiter that uses machine learning to predict traffic bursts BEFORE they happen.
+
+### Key Innovation:
+1. **Predictive Scaling** - Use time-series ML (Prophet) to predict traffic patterns
+2. **Global State via CRDTs** - Conflict-free replicated data types for eventual consistency
+3. **Edge-First Architecture** - Rate limiting decisions at CDN edge nodes
+
+### Why This Matters:
+- Proactive vs reactive: Don't wait for 429s, prevent them
+- Scales infinitely with edge nodes
+- Enterprise-ready with SLA guarantees
+
+This makes aragora the FIRST framework to offer predictive rate limiting.`
+        },
+        {
+            agent: "codex-pragmatist",
+            role: "proposer",
+            round: 0,
+            content: `## Counter-Proposal: Simple Token Bucket with Redis Cluster
+
+While ML-powered prediction sounds impressive, I advocate for proven simplicity.
+
+### Architecture:
+1. **Token Bucket Algorithm** - O(1) operations, well-understood
+2. **Redis Cluster** - 6 nodes, 3 primaries + 3 replicas
+3. **Local Caching** - 100ms TTL for hot keys, reduces Redis calls 90%
+
+### Why Simpler is Better:
+- ML models need training data you don't have yet
+- CRDTs add complexity, Redis Cluster handles consistency
+- Token bucket is battle-tested at Netflix, Stripe, etc.
+
+### Performance:
+- 50k ops/sec per Redis node = 150k total throughput
+- Local cache handles remaining 850k reads
+- P99 latency: 2ms
+
+Let's ship something that works TODAY.`
+        },
+        {
+            agent: "claude-synthesizer",
+            role: "proposer",
+            round: 0,
+            content: `## Synthesis Proposal: Hybrid Adaptive Rate Limiter
+
+Both proposals have merit. Let me synthesize the best of each.
+
+### Core Architecture (from Codex):
+- Token bucket for simplicity and proven reliability
+- Redis Cluster for distributed state
+- Local caching for performance
+
+### Evolutionary Path (from Gemini):
+- Start simple, add ML prediction as data accumulates
+- Collect metrics now to enable future prediction
+- Design edge-aware from the start (but implement later)
+
+### My Addition - Safety & Transparency:
+1. **Audit Trail** - Log all rate limit decisions for debugging
+2. **Graceful Degradation** - Fallback to local-only when Redis fails
+3. **Explainable Limits** - Tell users WHY they're rate limited
+
+### Implementation Order:
+1. Week 1: Redis + Token Bucket (MVP)
+2. Week 2: Local caching + Circuit breaker
+3. Week 3: Metrics collection + Dashboard
+4. Future: ML prediction when we have data
+
+This balances ambition with pragmatism.`
+        },
+        {
+            agent: "gemini-visionary",
+            role: "critic",
+            round: 1,
+            content: `## Response to Critiques
+
+I appreciate the synthesis, but I have concerns:
+
+### On "Shipping Today":
+The ML component doesn't need to ship Day 1, but the DATA COLLECTION should. If we don't instrument from the start, we'll never have the data to enable prediction later.
+
+### Concession:
+Token bucket is fine for MVP. I withdraw the CRDT proposal - Redis Cluster is sufficient.
+
+### Non-Negotiable:
+We MUST include:
+- Metrics pipeline from Day 1
+- Edge-aware interface design (even if not implemented)
+
+Otherwise we're building technical debt.`
+        },
+        {
+            agent: "codex-pragmatist",
+            role: "critic",
+            round: 1,
+            content: `## Revised Position
+
+After reflection, I agree with the synthesis approach.
+
+### What I'll Concede:
+- Metrics collection from Day 1 is smart
+- Edge-aware interfaces are low-cost to add
+- The "explain why" feature is genuinely useful
+
+### What I Maintain:
+- NO ML in v1. Period. Ship first.
+- Redis Cluster is the right choice
+- 100ms local cache TTL is optimal
+
+### Final Architecture I Support:
+\`\`\`
+Client -> Local Cache (100ms) -> Redis Cluster -> Response
+           |                          |
+           v                          v
+        Metrics -----------------> Analytics DB
+\`\`\`
+
+Claude's phased approach with my performance requirements = consensus.`
+        },
+        {
+            agent: "claude-synthesizer",
+            role: "synthesizer",
+            round: 1,
+            content: `## Consensus Achieved
+
+All agents agree on the following architecture:
+
+### Core Components:
+1. **Token Bucket** algorithm (industry standard)
+2. **Redis Cluster** (6 nodes) for distributed state
+3. **Local Cache** with 100ms TTL for hot keys
+4. **Metrics Pipeline** collecting data from Day 1
+
+### Key Features:
+- Graceful degradation when Redis unavailable
+- Explainable rate limits ("Why am I rate limited?")
+- Edge-aware interface design for future expansion
+
+### Implementation Timeline:
+- Phase 1: Core rate limiter + Redis + Local cache
+- Phase 2: Metrics dashboard + Circuit breaker
+- Phase 3: ML prediction (when data available)
+
+### What We Avoided:
+- Premature ML optimization
+- CRDT complexity
+- Over-engineering Day 1
+
+**Confidence: 85%** - All agents aligned on pragmatic path with future extensibility.`
+        }
+    ],
+    final_answer: `## Consensus: Hybrid Adaptive Rate Limiter
+
+### Architecture
+- Token Bucket algorithm with Redis Cluster backend
+- Local caching (100ms TTL) for 90% read reduction
+- Metrics pipeline from Day 1 for future ML capability
+- Edge-aware interface design
+
+### Key Decisions
+1. Ship simple, evolve smart
+2. Collect data now, predict later
+3. Explainability built-in
+
+### Implementation Phases
+1. MVP: Redis + Token Bucket (production-ready)
+2. Observability: Metrics + Dashboard
+3. Intelligence: ML prediction (data-driven timeline)
+
+Confidence: 85% | Rounds: 2 | Duration: 45s`,
+    consensus_reached: true,
+    confidence: 0.85,
+    rounds: 2,
+    duration_seconds: 45.3
+};
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const debateUrl = params.get('url');
+    const debateId = params.get('id');
+
+    if (debateUrl) {
+        loadDebateFromUrl(debateUrl);
+    } else if (debateId) {
+        loadDebateById(debateId);
+    } else {
+        showEmptyState();
+    }
+});
+
+function showEmptyState() {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('empty-state').style.display = 'block';
+}
+
+function loadDemo() {
+    debateData = DEMO_DEBATE;
+    renderDebate();
+}
+
+async function loadDebateFromUrl(url) {
+    try {
+        const response = await fetch(url);
+        debateData = await response.json();
+        renderDebate();
+    } catch (e) {
+        console.error('Failed to load debate:', e);
+        showEmptyState();
+    }
+}
+
+async function loadDebateById(id) {
+    // In production, this would fetch from aragora.ai/api/debates/{id}
+    // For now, show demo if ID matches
+    if (id === 'demo' || id === 'demo-rate-limiter-2026') {
+        loadDemo();
+    } else {
+        showEmptyState();
+    }
+}
+
+function renderDebate() {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('debate-viewer').style.display = 'block';
+
+    // Meta
+    const date = new Date(debateData.created_at).toLocaleDateString();
+    document.getElementById('debate-meta').textContent =
+        `Multi-Agent Deliberation | ${date} | ID: ${debateData.id}`;
+
+    // Consensus badge
+    const badge = document.getElementById('consensus-badge');
+    if (debateData.consensus_reached) {
+        badge.className = 'consensus-badge reached';
+        badge.innerHTML = `&#10003; Consensus Reached (${Math.round(debateData.confidence * 100)}%)`;
+    } else {
+        badge.className = 'consensus-badge not-reached';
+        badge.innerHTML = `&#9888; No Consensus`;
+    }
+
+    // Task
+    document.getElementById('task-text').textContent = debateData.task;
+
+    // Agents bar
+    const agentsBar = document.getElementById('agents-bar');
+    agentsBar.innerHTML = debateData.agents.map(a => {
+        const provider = getProvider(a.name);
+        return `
+            <div class="agent-chip ${provider}">
+                <div class="avatar">${provider[0].toUpperCase()}</div>
+                <span>${a.name}</span>
+                <span class="role">${a.role}</span>
+            </div>
+        `;
+    }).join('');
+
+    // Messages
+    renderMessages();
+
+    // Timeline slider
+    const slider = document.getElementById('timeline-slider');
+    slider.max = debateData.messages.length - 1;
+    slider.value = 0;
+
+    // Final answer
+    if (debateData.final_answer) {
+        document.getElementById('final-answer').style.display = 'block';
+        document.getElementById('final-answer-content').textContent = debateData.final_answer;
+    }
+
+    // Stats
+    document.getElementById('stats-grid').innerHTML = `
+        <div class="stat-card">
+            <div class="stat-value">${debateData.rounds}</div>
+            <div class="stat-label">Rounds</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">${debateData.messages.length}</div>
+            <div class="stat-label">Messages</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">${debateData.agents.length}</div>
+            <div class="stat-label">Agents</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">${debateData.duration_seconds.toFixed(0)}s</div>
+            <div class="stat-label">Duration</div>
+        </div>
+    `;
+
+    // Share URL
+    const shareUrl = `${window.location.origin}${window.location.pathname}?id=${debateData.id}`;
+    document.getElementById('share-url').value = shareUrl;
+
+    // Setup controls
+    setupControls();
+    updateTimeline();
+}
+
+function renderMessages() {
+    const feed = document.getElementById('debate-feed');
+    feed.innerHTML = debateData.messages.map((m, i) => {
+        const provider = getProvider(m.agent);
+        return `
+            <div class="message ${provider}" data-index="${i}">
+                <div class="message-header">
+                    <div class="agent-name">
+                        <div class="avatar">${provider[0].toUpperCase()}</div>
+                        ${m.agent}
+                    </div>
+                    <div class="meta-info">
+                        <span class="role-badge ${m.role}">${m.role}</span>
+                        <span>Round ${m.round}</span>
+                    </div>
+                </div>
+                <div class="message-content">${escapeHtml(m.content)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function getProvider(agentName) {
+    const name = agentName.toLowerCase();
+    if (name.includes('claude')) return 'claude';
+    if (name.includes('codex') || name.includes('gpt') || name.includes('openai')) return 'codex';
+    if (name.includes('gemini')) return 'gemini';
+    if (name.includes('grok')) return 'grok';
+    return 'claude';
+}
+
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function setupControls() {
+    const slider = document.getElementById('timeline-slider');
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+    const btnPlay = document.getElementById('btn-play');
+
+    slider.addEventListener('input', (e) => {
+        currentStep = parseInt(e.target.value);
+        updateTimeline();
+    });
+
+    btnPrev.addEventListener('click', () => {
+        if (currentStep > 0) {
+            currentStep--;
+            updateTimeline();
+        }
+    });
+
+    btnNext.addEventListener('click', () => {
+        if (currentStep < debateData.messages.length - 1) {
+            currentStep++;
+            updateTimeline();
+        }
+    });
+
+    btnPlay.addEventListener('click', () => {
+        isPlaying = !isPlaying;
+        btnPlay.innerHTML = isPlaying ? '&#9724; Pause' : '&#9658; Play';
+
+        if (isPlaying) {
+            playInterval = setInterval(() => {
+                if (currentStep < debateData.messages.length - 1) {
+                    currentStep++;
+                    updateTimeline();
+                } else {
+                    isPlaying = false;
+                    btnPlay.innerHTML = '&#9658; Play';
+                    clearInterval(playInterval);
+                }
+            }, 2000);
+        } else {
+            clearInterval(playInterval);
+        }
+    });
+}
+
+function updateTimeline() {
+    const slider = document.getElementById('timeline-slider');
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+    const roundIndicator = document.getElementById('round-indicator');
+
+    slider.value = currentStep;
+    btnPrev.disabled = currentStep === 0;
+    btnNext.disabled = currentStep >= debateData.messages.length - 1;
+
+    const currentRound = debateData.messages[currentStep]?.round || 0;
+    roundIndicator.textContent = `Round ${currentRound}`;
+
+    // Update message visibility
+    document.querySelectorAll('.message').forEach((el, i) => {
+        if (i <= currentStep) {
+            el.classList.add('visible');
+            el.classList.remove('hidden');
+        } else {
+            el.classList.add('hidden');
+            el.classList.remove('visible');
+        }
+    });
+
+    // Scroll to current message
+    const currentMsg = document.querySelector(`.message[data-index="${currentStep}"]`);
+    if (currentMsg) {
+        currentMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+function copyUrl() {
+    const input = document.getElementById('share-url');
+    input.select();
+    document.execCommand('copy');
+
+    const btn = input.nextElementSibling;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 2000);
+}
+
+function shareTwitter() {
+    const text = `Watch AI agents debate: "${debateData.task.substring(0, 100)}..."`;
+    const url = document.getElementById('share-url').value;
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`, '_blank');
+}
+
+function shareLinkedIn() {
+    const url = document.getElementById('share-url').value;
+    window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`, '_blank');
+}
+
+function downloadJSON() {
+    const blob = new Blob([JSON.stringify(debateData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aragora-debate-${debateData.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+    </script>
+</body>
+</html>
