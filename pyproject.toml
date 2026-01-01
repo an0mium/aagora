@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aagora"
+version = "0.1.0"
+description = "Multi-Agent Debate Framework - A society of AI agents that discuss, critique, and improve each other's responses"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Agora Contributors"}
+]
+keywords = [
+    "ai",
+    "multi-agent",
+    "debate",
+    "llm",
+    "claude",
+    "gpt",
+    "consensus",
+    "self-improvement",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "black>=23.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+aagora = "aagora.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/aagora"
+Documentation = "https://github.com/yourusername/aagora#readme"
+Repository = "https://github.com/yourusername/aagora"
+Issues = "https://github.com/yourusername/aagora/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aagora*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
