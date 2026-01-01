@@ -1,12 +1,12 @@
-# aagora (Agent Agora): Multi-Agent Debate Framework
+# aragora (Agent Agora): Multi-Agent Debate Framework
 
 > A society of heterogeneous AI agents that discuss, critique, improve each other's responses, and learn from successful patterns.
 
-**Domain**: [aagora.ai](https://aagora.ai) (available)
+**Domain**: [aragora.ai](https://aragora.ai) (available)
 
 ## Inspiration
 
-aagora synthesizes ideas from:
+aragora synthesizes ideas from:
 - **[Stanford Generative Agents](https://github.com/joonspk-research/generative_agents)** - Memory + reflection architecture
 - **[ChatArena](https://github.com/chatarena/chatarena)** - Game environments for multi-agent interaction
 - **[LLM Multi-Agent Debate](https://github.com/composable-models/llm_multiagent_debate)** - ICML 2024 consensus mechanisms
@@ -25,15 +25,15 @@ aagora synthesizes ideas from:
 
 ```bash
 # Clone and install
-git clone https://github.com/an0mium/aagora.git
-cd aagora
+git clone https://github.com/an0mium/aragora.git
+cd aragora
 pip install -e .
 
 # Run a debate
-aagora ask "Design a rate limiter for 1M requests/sec" --agents codex,claude
+aragora ask "Design a rate limiter for 1M requests/sec" --agents codex,claude
 
 # With more agents and rounds
-aagora ask "Implement a secure auth system" \
+aragora ask "Implement a secure auth system" \
   --agents codex:proposer,claude:critic,openai:synthesizer \
   --rounds 4 \
   --consensus judge
@@ -112,10 +112,10 @@ pip install openai
 
 ```python
 import asyncio
-from aagora.agents import create_agent
-from aagora.debate import Arena, DebateProtocol
-from aagora.core import Environment
-from aagora.memory import CritiqueStore
+from aragora.agents import create_agent
+from aragora.debate import Arena, DebateProtocol
+from aragora.core import Environment
+from aragora.memory import CritiqueStore
 
 # Create heterogeneous agents
 agents = [
@@ -149,16 +149,16 @@ print(f"Consensus: {result.consensus_reached} ({result.confidence:.0%})")
 
 ```bash
 # Run a debate
-aagora ask "Your task here" --agents codex,claude --rounds 3
+aragora ask "Your task here" --agents codex,claude --rounds 3
 
 # View statistics
-aagora stats
+aragora stats
 
 # View learned patterns
-aagora patterns --type security --limit 20
+aragora patterns --type security --limit 20
 
 # Export for training
-aagora export --format jsonl > training_data.jsonl
+aragora export --format jsonl > training_data.jsonl
 ```
 
 ## Debate Protocol
@@ -181,7 +181,7 @@ Each debate follows this structure:
 
 ## Self-Improvement
 
-aagora learns from successful debates:
+aragora learns from successful debates:
 
 1. **Pattern Storage**: Successful critique→fix patterns are indexed by issue type
 2. **Retrieval**: Future debates can retrieve relevant patterns
@@ -190,7 +190,7 @@ aagora learns from successful debates:
 
 ```python
 # Retrieve successful patterns
-from aagora.memory import CritiqueStore
+from aragora.memory import CritiqueStore
 
 store = CritiqueStore("debates.db")
 security_patterns = store.retrieve_patterns(issue_type="security", min_success=3)

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Quick test of the aagora multi-agent debate framework.
+Quick test of the aragora multi-agent debate framework.
 """
 
 import asyncio
 import sys
-sys.path.insert(0, '/Users/armand/Development/aagora')
+sys.path.insert(0, '/Users/armand/Development/aragora')
 
-from aagora.agents import create_agent
-from aagora.debate import Arena, DebateProtocol
-from aagora.core import Environment
-from aagora.memory import CritiqueStore
+from aragora.agents import create_agent
+from aragora.debate import Arena, DebateProtocol
+from aragora.core import Environment
+from aragora.memory import CritiqueStore
 
 
 async def test_simple_debate():
@@ -35,7 +35,7 @@ async def test_simple_debate():
     )
 
     # Create memory store
-    memory = CritiqueStore("/tmp/aagora_test.db")
+    memory = CritiqueStore("/tmp/aragora_test.db")
 
     # Run debate
     arena = Arena(env, agents, protocol, memory)

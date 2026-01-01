@@ -1,6 +1,6 @@
 name: 'Aagora PR Review'
 description: 'Multi-agent AI debate for pull request code reviews'
-author: 'aagora'
+author: 'aragora'
 branding:
   icon: 'message-circle'
   color: 'purple'
@@ -44,9 +44,9 @@ runs:
       with:
         python-version: '3.11'
 
-    - name: Install aagora
+    - name: Install aragora
       shell: bash
-      run: pip install aagora
+      run: pip install aragora
 
     - name: Get PR diff
       id: diff
@@ -56,7 +56,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
 
-    - name: Run aagora review
+    - name: Run aragora review
       id: review
       shell: bash
       env:

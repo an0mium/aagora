@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Nomic Loop: Autonomous self-improvement cycle for aagora.
+Nomic Loop: Autonomous self-improvement cycle for aragora.
 
 Like a PCR machine for code evolution:
-1. DEBATE: All agents propose improvements to aagora
+1. DEBATE: All agents propose improvements to aragora
 2. CONSENSUS: Agents critique and refine until consensus
 3. DESIGN: Agents design the implementation
 4. IMPLEMENT: Agents write the code
@@ -31,18 +31,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Add aagora to path
+# Add aragora to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from aagora.debate.orchestrator import Arena, DebateProtocol
-from aagora.core import Environment
-from aagora.agents.api_agents import GeminiAgent
-from aagora.agents.cli_agents import CodexAgent, ClaudeAgent
+from aragora.debate.orchestrator import Arena, DebateProtocol
+from aragora.core import Environment
+from aragora.agents.api_agents import GeminiAgent
+from aragora.agents.cli_agents import CodexAgent, ClaudeAgent
 
 
 class NomicLoop:
     """
-    Autonomous self-improvement loop for aagora.
+    Autonomous self-improvement loop for aragora.
 
     Each cycle:
     1. Agents debate what to improve
@@ -54,12 +54,12 @@ class NomicLoop:
 
     def __init__(
         self,
-        aagora_path: str = None,
+        aragora_path: str = None,
         max_cycles: int = 10,
         require_human_approval: bool = True,
         auto_commit: bool = False,
     ):
-        self.aagora_path = Path(aagora_path or Path(__file__).parent.parent)
+        self.aragora_path = Path(aragora_path or Path(__file__).parent.parent)
         self.max_cycles = max_cycles
         self.require_human_approval = require_human_approval
         self.auto_commit = auto_commit
@@ -73,9 +73,9 @@ class NomicLoop:
             role='proposer',
             timeout=180,
         )
-        self.gemini.system_prompt = """You are a visionary product strategist for aagora.
+        self.gemini.system_prompt = """You are a visionary product strategist for aragora.
 Focus on: viral growth, developer excitement, novel capabilities, bold ideas.
-Think about what would make aagora famous and widely adopted."""
+Think about what would make aragora famous and widely adopted."""
 
         self.codex = CodexAgent(
             name='codex-engineer',
@@ -83,7 +83,7 @@ Think about what would make aagora famous and widely adopted."""
             role='proposer',
             timeout=300,  # Longer for code examination
         )
-        self.codex.system_prompt = """You are a pragmatic engineer for aagora.
+        self.codex.system_prompt = """You are a pragmatic engineer for aragora.
 Focus on: technical excellence, code quality, practical utility, implementation feasibility.
 You can examine the codebase deeply to understand what's possible."""
 
@@ -93,13 +93,13 @@ You can examine the codebase deeply to understand what's possible."""
             role='synthesizer',
             timeout=180,
         )
-        self.claude.system_prompt = """You are a thoughtful synthesizer for aagora.
+        self.claude.system_prompt = """You are a thoughtful synthesizer for aragora.
 Focus on: finding common ground, building consensus, balancing vision with pragmatism.
 Your role is to create actionable plans from the debate."""
 
     def get_current_features(self) -> str:
-        """Read current aagora state from the codebase."""
-        init_file = self.aagora_path / "aagora" / "__init__.py"
+        """Read current aragora state from the codebase."""
+        init_file = self.aragora_path / "aragora" / "__init__.py"
         if init_file.exists():
             content = init_file.read_text()
             # Extract docstring
@@ -113,7 +113,7 @@ Your role is to create actionable plans from the debate."""
         try:
             result = subprocess.run(
                 ["git", "log", "--oneline", "-10"],
-                cwd=self.aagora_path,
+                cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
             )
@@ -131,9 +131,9 @@ Your role is to create actionable plans from the debate."""
         recent_changes = self.get_recent_changes()
 
         env = Environment(
-            task=f"""What single improvement would most benefit aagora RIGHT NOW?
+            task=f"""What single improvement would most benefit aragora RIGHT NOW?
 
-Consider what would make aagora:
+Consider what would make aragora:
 - More INTERESTING (novel, creative, intellectually stimulating)
 - More POWERFUL (capable, versatile, effective)
 - More VIRAL (shareable, demonstrable, meme-worthy)
@@ -145,7 +145,7 @@ After debate, reach consensus on THE SINGLE BEST improvement to implement this c
 
 Recent changes:
 {recent_changes}""",
-            context=f"Current aagora features:\n{current_features}",
+            context=f"Current aragora features:\n{current_features}",
         )
 
         protocol = DebateProtocol(
@@ -179,12 +179,12 @@ Recent changes:
 Provide:
 1. FILE CHANGES: Which files to create or modify
 2. API DESIGN: Key classes, functions, signatures
-3. INTEGRATION: How it connects to existing aagora modules
+3. INTEGRATION: How it connects to existing aragora modules
 4. TEST PLAN: How to verify it works
 5. EXAMPLE USAGE: Code snippet showing the feature in action
 
 Be specific enough that an engineer could implement it.""",
-            context=f"Working directory: {self.aagora_path}",
+            context=f"Working directory: {self.aragora_path}",
         )
 
         protocol = DebateProtocol(
@@ -208,12 +208,12 @@ Be specific enough that an engineer could implement it.""",
         print("=" * 70)
 
         # Use codex directly with repo access
-        prompt = f"""Implement this design in the aagora codebase:
+        prompt = f"""Implement this design in the aragora codebase:
 
 {design}
 
 Write the actual code. Create or modify files as needed.
-Follow aagora's existing code style and patterns.
+Follow aragora's existing code style and patterns.
 Include docstrings and type hints.
 
 IMPORTANT: Only make changes that are safe and reversible.
@@ -222,7 +222,7 @@ Do not delete or break existing functionality."""
         try:
             # Run codex with full repo access
             result = subprocess.run(
-                ["codex", "exec", "-C", str(self.aagora_path), prompt],
+                ["codex", "exec", "-C", str(self.aragora_path), prompt],
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -233,7 +233,7 @@ Do not delete or break existing functionality."""
             # Check what changed
             diff_result = subprocess.run(
                 ["git", "diff", "--stat"],
-                cwd=self.aagora_path,
+                cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
             )
@@ -270,8 +270,8 @@ Do not delete or break existing functionality."""
         # 1. Python syntax check
         try:
             result = subprocess.run(
-                ["python", "-m", "py_compile", "aagora/__init__.py"],
-                cwd=self.aagora_path,
+                ["python", "-m", "py_compile", "aragora/__init__.py"],
+                cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
             )
@@ -286,8 +286,8 @@ Do not delete or break existing functionality."""
         # 2. Import check
         try:
             result = subprocess.run(
-                ["python", "-c", "import aagora; print('OK')"],
-                cwd=self.aagora_path,
+                ["python", "-c", "import aragora; print('OK')"],
+                cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -304,7 +304,7 @@ Do not delete or break existing functionality."""
         try:
             result = subprocess.run(
                 ["python", "-m", "pytest", "tests/", "-x", "--tb=short", "-q"],
-                cwd=self.aagora_path,
+                cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -337,7 +337,7 @@ Do not delete or break existing functionality."""
 
         if self.require_human_approval and not self.auto_commit:
             print("\nChanges ready for review:")
-            subprocess.run(["git", "diff", "--stat"], cwd=self.aagora_path)
+            subprocess.run(["git", "diff", "--stat"], cwd=self.aragora_path)
 
             response = input("\nCommit these changes? [y/N]: ")
             if response.lower() != 'y':
@@ -350,13 +350,13 @@ Do not delete or break existing functionality."""
         try:
             subprocess.run(
                 ["git", "add", "-A"],
-                cwd=self.aagora_path,
+                cwd=self.aragora_path,
                 check=True,
             )
 
             result = subprocess.run(
-                ["git", "commit", "-m", f"feat(nomic): {summary}\n\n🤖 Auto-generated by aagora nomic loop"],
-                cwd=self.aagora_path,
+                ["git", "commit", "-m", f"feat(nomic): {summary}\n\n🤖 Auto-generated by aragora nomic loop"],
+                cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
             )
@@ -434,7 +434,7 @@ Do not delete or break existing functionality."""
 
         if not verify_result.get("all_passed"):
             print("Verification failed. Rolling back.")
-            subprocess.run(["git", "checkout", "."], cwd=self.aagora_path)
+            subprocess.run(["git", "checkout", "."], cwd=self.aragora_path)
             cycle_result["outcome"] = "verification_failed"
             return cycle_result
 
@@ -500,12 +500,12 @@ async def main():
     parser = argparse.ArgumentParser(description="Aagora Nomic Loop - Self-improvement cycle")
     parser.add_argument("--cycles", type=int, default=3, help="Maximum cycles to run")
     parser.add_argument("--auto", action="store_true", help="Auto-commit without human approval")
-    parser.add_argument("--path", type=str, help="Path to aagora repository")
+    parser.add_argument("--path", type=str, help="Path to aragora repository")
 
     args = parser.parse_args()
 
     loop = NomicLoop(
-        aagora_path=args.path,
+        aragora_path=args.path,
         max_cycles=args.cycles,
         require_human_approval=not args.auto,
         auto_commit=args.auto,

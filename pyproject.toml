@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aagora"
+name = "aragora"
 version = "0.07"
 description = "Multi-Agent Debate Framework with traces, consensus proofs, red-team mode, self-improvement, templates, and GitHub Actions"
 readme = "README.md"
@@ -47,17 +47,17 @@ dev = [
 ]
 
 [project.scripts]
-aagora = "aagora.cli.main:main"
+aragora = "aragora.cli.main:main"
 
 [project.urls]
-Homepage = "https://aagora.ai"
-Documentation = "https://github.com/an0mium/aagora#readme"
-Repository = "https://github.com/an0mium/aagora"
-Issues = "https://github.com/an0mium/aagora/issues"
+Homepage = "https://aragora.ai"
+Documentation = "https://github.com/an0mium/aragora#readme"
+Repository = "https://github.com/an0mium/aragora"
+Issues = "https://github.com/an0mium/aragora/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["aagora*"]
+include = ["aragora*"]
 
 [tool.black]
 line-length = 100
