@@ -6,7 +6,7 @@ from typing import Literal, Union
 
 AgentType = Literal[
     # CLI-based
-    "codex", "claude", "openai",
+    "codex", "claude", "openai", "gemini-cli",
     # API-based
     "gemini", "ollama", "anthropic-api", "openai-api",
 ]
@@ -27,6 +27,7 @@ def create_agent(
             - "codex": OpenAI Codex CLI
             - "claude": Claude CLI (claude-code)
             - "openai": OpenAI CLI
+            - "gemini-cli": Google Gemini CLI
             - "gemini": Google Gemini API
             - "ollama": Local Ollama API
             - "anthropic-api": Direct Anthropic API
@@ -59,6 +60,13 @@ def create_agent(
         return OpenAIAgent(
             name=name or "openai",
             model=model or "gpt-4o",
+            role=role,
+        )
+    elif model_type == "gemini-cli":
+        from aagora.agents.cli_agents import GeminiCLIAgent
+        return GeminiCLIAgent(
+            name=name or "gemini",
+            model=model or "gemini-2.5-pro",
             role=role,
         )
 
@@ -98,7 +106,7 @@ def create_agent(
     else:
         raise ValueError(
             f"Unknown model type: {model_type}. "
-            f"Valid types: codex, claude, openai, gemini, ollama, anthropic-api, openai-api"
+            f"Valid types: codex, claude, openai, gemini-cli, gemini, ollama, anthropic-api, openai-api"
         )
 
 
@@ -119,6 +127,11 @@ def list_available_agents() -> dict:
             "type": "CLI",
             "requires": "openai CLI (pip install openai)",
             "env_vars": "OPENAI_API_KEY",
+        },
+        "gemini-cli": {
+            "type": "CLI",
+            "requires": "gemini CLI (npm install -g @google/gemini-cli)",
+            "env_vars": None,
         },
         "gemini": {
             "type": "API",
