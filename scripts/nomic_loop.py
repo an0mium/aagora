@@ -330,7 +330,7 @@ Aragora should grow more powerful over time, not be stripped down.""" + safety_f
             name='codex-engineer',
             model='gpt-5.2-codex',
             role='proposer',
-            timeout=300,
+            timeout=600,  # Increased from 300 - Codex has known latency issues
         )
         self.codex.system_prompt = """You are a pragmatic engineer for aragora.
 Focus on: technical excellence, code quality, practical utility, implementation feasibility.
@@ -742,7 +742,7 @@ CRITICAL SAFETY RULES:
                 ["codex", "exec", "-C", str(self.aragora_path), prompt],
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=600,  # Increased from 300 - Codex has known latency issues
             )
 
             return {
@@ -1037,7 +1037,7 @@ Provide specific, actionable fixes. Focus on:
 2. What specific code changes will fix it?
 3. Are there missing imports or dependencies?
 """
-            review_result = await executor.review_with_codex(review_prompt, timeout=600)
+            review_result = await executor.review_with_codex(review_prompt, timeout=1200)  # 20 min for thorough review
             iteration_result["codex_review"] = review_result
             self._log(f"    Codex review complete")
 

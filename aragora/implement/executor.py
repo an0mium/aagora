@@ -64,7 +64,7 @@ class HybridExecutor:
         self,
         repo_path: Path,
         claude_timeout: int = 600,
-        codex_timeout: int = 300,
+        codex_timeout: int = 600,  # Increased from 300 - Codex has known latency issues
     ):
         self.repo_path = repo_path
 
@@ -240,7 +240,7 @@ Make only the changes specified. Follow existing code style."""
 
         return results
 
-    async def review_with_codex(self, diff: str, timeout: int = 600) -> dict:
+    async def review_with_codex(self, diff: str, timeout: int = 1200) -> dict:  # 20 min - Codex is slow but thorough
         """
         Run Codex code review on implemented changes.
 
