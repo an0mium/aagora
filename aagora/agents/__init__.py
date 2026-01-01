@@ -5,7 +5,7 @@ Supports both CLI-based agents (codex, claude) and API-based agents
 (Gemini, Ollama, direct OpenAI/Anthropic APIs).
 """
 
-from aagora.agents.cli_agents import CodexAgent, ClaudeAgent, OpenAIAgent, GeminiCLIAgent
+from aagora.agents.cli_agents import CodexAgent, ClaudeAgent, OpenAIAgent, GeminiCLIAgent, GrokCLIAgent
 from aagora.agents.api_agents import (
     GeminiAgent,
     OllamaAgent,
@@ -20,6 +20,7 @@ __all__ = [
     "ClaudeAgent",
     "OpenAIAgent",
     "GeminiCLIAgent",
+    "GrokCLIAgent",
     # API-based
     "GeminiAgent",
     "OllamaAgent",

@@ -6,7 +6,7 @@ from typing import Literal, Union
 
 AgentType = Literal[
     # CLI-based
-    "codex", "claude", "openai", "gemini-cli",
+    "codex", "claude", "openai", "gemini-cli", "grok-cli",
     # API-based
     "gemini", "ollama", "anthropic-api", "openai-api",
 ]
@@ -28,6 +28,7 @@ def create_agent(
             - "claude": Claude CLI (claude-code)
             - "openai": OpenAI CLI
             - "gemini-cli": Google Gemini CLI
+            - "grok-cli": xAI Grok CLI
             - "gemini": Google Gemini API
             - "ollama": Local Ollama API
             - "anthropic-api": Direct Anthropic API
@@ -69,6 +70,13 @@ def create_agent(
             model=model or "gemini-2.5-pro",
             role=role,
         )
+    elif model_type == "grok-cli":
+        from aagora.agents.cli_agents import GrokCLIAgent
+        return GrokCLIAgent(
+            name=name or "grok",
+            model=model or "grok-3-latest",
+            role=role,
+        )
 
     # API-based agents
     elif model_type == "gemini":
@@ -106,7 +114,7 @@ def create_agent(
     else:
         raise ValueError(
             f"Unknown model type: {model_type}. "
-            f"Valid types: codex, claude, openai, gemini-cli, gemini, ollama, anthropic-api, openai-api"
+            f"Valid types: codex, claude, openai, gemini-cli, grok-cli, gemini, ollama, anthropic-api, openai-api"
         )
 
 
@@ -131,6 +139,11 @@ def list_available_agents() -> dict:
         "gemini-cli": {
             "type": "CLI",
             "requires": "gemini CLI (npm install -g @google/gemini-cli)",
+            "env_vars": None,
+        },
+        "grok-cli": {
+            "type": "CLI",
+            "requires": "grok CLI (npm install -g grok-cli)",
             "env_vars": None,
         },
         "gemini": {

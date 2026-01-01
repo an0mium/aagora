@@ -53,6 +53,9 @@ npm install -g @anthropic-ai/claude-code
 # Google Gemini CLI
 npm install -g @google/gemini-cli
 
+# xAI Grok CLI
+npm install -g grok-cli
+
 # OpenAI CLI
 pip install openai
 ```
@@ -64,10 +67,10 @@ pip install openai
 │                         AAGORA FRAMEWORK                         │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ │
-│  │   Claude   │  │   Codex    │  │   Gemini   │  │   OpenAI   │ │
-│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘ │
-│        └───────────────┴───────────────┴───────────────┘        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │
+│  │  Claude  │ │  Codex   │ │  Gemini  │ │   Grok   │ │ OpenAI │ │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └───┬────┘ │
+│       └────────────┴────────────┴────────────┴───────────┘      │
 │                             ▼                                   │
 │  ┌─────────────────────────────────────────────────────────┐    │
 │  │                    ARENA (Orchestrator)                  │    │
@@ -201,7 +204,7 @@ for pattern in security_patterns:
 
 Contributions welcome! Areas of interest:
 
-- Additional agent backends (Llama, Mistral, Grok)
+- Additional agent backends (Llama, Mistral, Deepseek)
 - Debate visualization
 - Benchmark datasets
 - Prompt engineering for better critiques

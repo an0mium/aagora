@@ -250,6 +250,44 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+class GrokCLIAgent(CLIAgent):
+    """Agent that uses xAI Grok CLI."""
+
+    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+        """Generate a response using grok CLI."""
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+
+        if self.system_prompt:
+            full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
+
+        # Use grok with -p flag for prompt mode (non-interactive)
+        result = await self._run_cli([
+            "grok", "-p", full_prompt
+        ])
+
+        return result
+
+    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+        """Critique a proposal using grok."""
+        critique_prompt = f"""Analyze this proposal critically for the given task.
+
+Task: {task}
+
+Proposal:
+{proposal}
+
+Provide structured feedback:
+- ISSUES: Specific problems (bullet points)
+- SUGGESTIONS: Improvements (bullet points)
+- SEVERITY: 0.0-1.0 rating
+- REASONING: Brief explanation"""
+
+        response = await self.generate(critique_prompt, context)
+        return self._parse_critique(response, "proposal", proposal)
+
+
 class OpenAIAgent(CLIAgent):
     """Agent that uses OpenAI CLI."""
 
