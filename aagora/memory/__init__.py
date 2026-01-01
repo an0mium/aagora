@@ -5,6 +5,8 @@ Provides:
 - CritiqueStore: SQLite-based storage for debate results and patterns
 - SemanticRetriever: Embedding-based similarity search
 - Pattern: Dataclass for critique patterns
+- ConsensusMemory: Persistent storage of debate outcomes
+- DissentRetriever: Retrieval of historical dissenting views
 """
 
 from aagora.memory.store import CritiqueStore, Pattern
@@ -14,6 +16,15 @@ from aagora.memory.embeddings import (
     GeminiEmbedding,
     OllamaEmbedding,
 )
+from aagora.memory.consensus import (
+    ConsensusMemory,
+    ConsensusRecord,
+    ConsensusStrength,
+    DissentRecord,
+    DissentType,
+    DissentRetriever,
+    SimilarDebate,
+)
 
 __all__ = [
     "CritiqueStore",
@@ -22,4 +33,12 @@ __all__ = [
     "OpenAIEmbedding",
     "GeminiEmbedding",
     "OllamaEmbedding",
+    # Consensus Memory
+    "ConsensusMemory",
+    "ConsensusRecord",
+    "ConsensusStrength",
+    "DissentRecord",
+    "DissentType",
+    "DissentRetriever",
+    "SimilarDebate",
 ]

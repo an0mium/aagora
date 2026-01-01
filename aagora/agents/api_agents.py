@@ -102,12 +102,16 @@ class APIAgent(Agent):
 
 
 class GeminiAgent(APIAgent):
-    """Agent that uses Google Gemini API."""
+    """Agent that uses Google Gemini API directly (not CLI).
+
+    Note: The gemini CLI sends massive folder context by default and
+    can exhaust quota quickly. This API agent is much more efficient.
+    """
 
     def __init__(
         self,
         name: str = "gemini",
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "gemini-2.5-flash",  # Fast, capable, good for debates
         role: str = "proposer",
         timeout: int = 120,
         api_key: str = None,

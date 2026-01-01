@@ -1,0 +1,740 @@
+"""
+Consensus Memory - Persistent storage and retrieval of debate outcomes.
+
+Stores historical debate results including:
+- Consensus decisions and confidence levels
+- Dissenting views and minority positions
+- Topic/domain clustering for similarity search
+- Decision evolution over time
+
+Enables:
+- Learning from past debates on similar topics
+- Retrieving relevant dissenting views
+- Tracking how consensus evolves
+- Avoiding repeated debates on settled topics
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Optional
+import hashlib
+import json
+import sqlite3
+import uuid
+
+
+class ConsensusStrength(Enum):
+    """Strength of consensus reached."""
+    UNANIMOUS = "unanimous"  # All agents agreed
+    STRONG = "strong"  # >80% agreement
+    MODERATE = "moderate"  # 60-80% agreement
+    WEAK = "weak"  # 50-60% agreement
+    SPLIT = "split"  # No majority
+    CONTESTED = "contested"  # Active disagreement
+
+
+class DissentType(Enum):
+    """Type of dissenting view."""
+    MINOR_QUIBBLE = "minor_quibble"  # Small disagreement
+    ALTERNATIVE_APPROACH = "alternative_approach"  # Different method, same goal
+    FUNDAMENTAL_DISAGREEMENT = "fundamental_disagreement"  # Core disagreement
+    EDGE_CASE_CONCERN = "edge_case_concern"  # Specific scenario concern
+    RISK_WARNING = "risk_warning"  # Caution about approach
+    ABSTENTION = "abstention"  # Agent declined to agree
+
+
+@dataclass
+class DissentRecord:
+    """A recorded dissenting view from a debate."""
+    id: str
+    debate_id: str
+    agent_id: str
+    dissent_type: DissentType
+    content: str
+    reasoning: str
+    confidence: float = 0.0
+    acknowledged: bool = False  # Was this addressed by majority?
+    rebuttal: str = ""  # Majority's rebuttal if any
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "debate_id": self.debate_id,
+            "agent_id": self.agent_id,
+            "dissent_type": self.dissent_type.value,
+            "content": self.content,
+            "reasoning": self.reasoning,
+            "confidence": self.confidence,
+            "acknowledged": self.acknowledged,
+            "rebuttal": self.rebuttal,
+            "timestamp": self.timestamp.isoformat(),
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DissentRecord":
+        return cls(
+            id=data["id"],
+            debate_id=data["debate_id"],
+            agent_id=data["agent_id"],
+            dissent_type=DissentType(data["dissent_type"]),
+            content=data["content"],
+            reasoning=data["reasoning"],
+            confidence=data.get("confidence", 0.0),
+            acknowledged=data.get("acknowledged", False),
+            rebuttal=data.get("rebuttal", ""),
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class ConsensusRecord:
+    """A recorded consensus outcome from a debate."""
+    id: str
+    topic: str
+    topic_hash: str  # For similarity matching
+    conclusion: str
+    strength: ConsensusStrength
+    confidence: float
+
+    # Participants
+    participating_agents: list[str] = field(default_factory=list)
+    agreeing_agents: list[str] = field(default_factory=list)
+    dissenting_agents: list[str] = field(default_factory=list)
+
+    # Details
+    key_claims: list[str] = field(default_factory=list)
+    supporting_evidence: list[str] = field(default_factory=list)
+    dissent_ids: list[str] = field(default_factory=list)
+
+    # Context
+    domain: str = "general"
+    tags: list[str] = field(default_factory=list)
+
+    # Timing
+    timestamp: datetime = field(default_factory=datetime.now)
+    debate_duration_seconds: float = 0.0
+    rounds: int = 0
+
+    # Evolution
+    supersedes: Optional[str] = None  # ID of consensus this replaces
+    superseded_by: Optional[str] = None
+
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def compute_agreement_ratio(self) -> float:
+        """Compute the ratio of agreeing to total agents."""
+        total = len(self.participating_agents)
+        if total == 0:
+            return 0.0
+        return len(self.agreeing_agents) / total
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "topic": self.topic,
+            "topic_hash": self.topic_hash,
+            "conclusion": self.conclusion,
+            "strength": self.strength.value,
+            "confidence": self.confidence,
+            "participating_agents": self.participating_agents,
+            "agreeing_agents": self.agreeing_agents,
+            "dissenting_agents": self.dissenting_agents,
+            "key_claims": self.key_claims,
+            "supporting_evidence": self.supporting_evidence,
+            "dissent_ids": self.dissent_ids,
+            "domain": self.domain,
+            "tags": self.tags,
+            "timestamp": self.timestamp.isoformat(),
+            "debate_duration_seconds": self.debate_duration_seconds,
+            "rounds": self.rounds,
+            "supersedes": self.supersedes,
+            "superseded_by": self.superseded_by,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ConsensusRecord":
+        return cls(
+            id=data["id"],
+            topic=data["topic"],
+            topic_hash=data["topic_hash"],
+            conclusion=data["conclusion"],
+            strength=ConsensusStrength(data["strength"]),
+            confidence=data.get("confidence", 0.0),
+            participating_agents=data.get("participating_agents", []),
+            agreeing_agents=data.get("agreeing_agents", []),
+            dissenting_agents=data.get("dissenting_agents", []),
+            key_claims=data.get("key_claims", []),
+            supporting_evidence=data.get("supporting_evidence", []),
+            dissent_ids=data.get("dissent_ids", []),
+            domain=data.get("domain", "general"),
+            tags=data.get("tags", []),
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+            debate_duration_seconds=data.get("debate_duration_seconds", 0.0),
+            rounds=data.get("rounds", 0),
+            supersedes=data.get("supersedes"),
+            superseded_by=data.get("superseded_by"),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
+class SimilarDebate:
+    """A similar past debate found in memory."""
+    consensus: ConsensusRecord
+    similarity_score: float
+    dissents: list[DissentRecord]
+    relevance_notes: str = ""
+
+
+class ConsensusMemory:
+    """
+    Persistent storage for debate consensus and dissent.
+
+    Uses SQLite for storage with optional embedding-based
+    similarity search for finding related past debates.
+    """
+
+    def __init__(self, db_path: str = "consensus_memory.db"):
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize database schema."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS consensus (
+                id TEXT PRIMARY KEY,
+                topic TEXT NOT NULL,
+                topic_hash TEXT NOT NULL,
+                conclusion TEXT NOT NULL,
+                strength TEXT NOT NULL,
+                confidence REAL,
+                domain TEXT,
+                tags TEXT,
+                timestamp TEXT,
+                data TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dissent (
+                id TEXT PRIMARY KEY,
+                debate_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                dissent_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                confidence REAL,
+                timestamp TEXT,
+                data TEXT NOT NULL,
+                FOREIGN KEY (debate_id) REFERENCES consensus(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_consensus_topic_hash
+            ON consensus(topic_hash)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_consensus_domain
+            ON consensus(domain)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_dissent_debate
+            ON dissent(debate_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_dissent_type
+            ON dissent(dissent_type)
+        """)
+
+        conn.commit()
+        conn.close()
+
+    def _hash_topic(self, topic: str) -> str:
+        """Create a hash for topic similarity matching."""
+        # Normalize: lowercase, remove punctuation, sort words
+        words = sorted(set(topic.lower().split()))
+        normalized = " ".join(words)
+        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+    def store_consensus(
+        self,
+        topic: str,
+        conclusion: str,
+        strength: ConsensusStrength,
+        confidence: float,
+        participating_agents: list[str],
+        agreeing_agents: list[str],
+        dissenting_agents: Optional[list[str]] = None,
+        key_claims: Optional[list[str]] = None,
+        domain: str = "general",
+        tags: Optional[list[str]] = None,
+        debate_duration: float = 0.0,
+        rounds: int = 0,
+        metadata: Optional[dict] = None,
+    ) -> ConsensusRecord:
+        """Store a new consensus record."""
+
+        record = ConsensusRecord(
+            id=str(uuid.uuid4()),
+            topic=topic,
+            topic_hash=self._hash_topic(topic),
+            conclusion=conclusion,
+            strength=strength,
+            confidence=confidence,
+            participating_agents=participating_agents,
+            agreeing_agents=agreeing_agents,
+            dissenting_agents=dissenting_agents or [],
+            key_claims=key_claims or [],
+            domain=domain,
+            tags=tags or [],
+            debate_duration_seconds=debate_duration,
+            rounds=rounds,
+            metadata=metadata or {},
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO consensus (id, topic, topic_hash, conclusion, strength,
+                                   confidence, domain, tags, timestamp, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.topic,
+                record.topic_hash,
+                record.conclusion,
+                record.strength.value,
+                record.confidence,
+                record.domain,
+                json.dumps(record.tags),
+                record.timestamp.isoformat(),
+                json.dumps(record.to_dict()),
+            ),
+        )
+
+        conn.commit()
+        conn.close()
+
+        return record
+
+    def store_dissent(
+        self,
+        debate_id: str,
+        agent_id: str,
+        dissent_type: DissentType,
+        content: str,
+        reasoning: str,
+        confidence: float = 0.0,
+        acknowledged: bool = False,
+        rebuttal: str = "",
+        metadata: Optional[dict] = None,
+    ) -> DissentRecord:
+        """Store a dissenting view."""
+
+        record = DissentRecord(
+            id=str(uuid.uuid4()),
+            debate_id=debate_id,
+            agent_id=agent_id,
+            dissent_type=dissent_type,
+            content=content,
+            reasoning=reasoning,
+            confidence=confidence,
+            acknowledged=acknowledged,
+            rebuttal=rebuttal,
+            metadata=metadata or {},
+        )
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO dissent (id, debate_id, agent_id, dissent_type,
+                                content, confidence, timestamp, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.debate_id,
+                record.agent_id,
+                record.dissent_type.value,
+                record.content,
+                record.confidence,
+                record.timestamp.isoformat(),
+                json.dumps(record.to_dict()),
+            ),
+        )
+
+        # Update consensus record with dissent ID
+        cursor.execute(
+            "SELECT data FROM consensus WHERE id = ?",
+            (debate_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            consensus_data = json.loads(row[0])
+            consensus_data["dissent_ids"] = consensus_data.get("dissent_ids", []) + [record.id]
+            cursor.execute(
+                "UPDATE consensus SET data = ? WHERE id = ?",
+                (json.dumps(consensus_data), debate_id),
+            )
+
+        conn.commit()
+        conn.close()
+
+        return record
+
+    def get_consensus(self, consensus_id: str) -> Optional[ConsensusRecord]:
+        """Get a consensus record by ID."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT data FROM consensus WHERE id = ?", (consensus_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return ConsensusRecord.from_dict(json.loads(row[0]))
+        return None
+
+    def get_dissents(self, debate_id: str) -> list[DissentRecord]:
+        """Get all dissenting views for a debate."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT data FROM dissent WHERE debate_id = ?",
+            (debate_id,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [DissentRecord.from_dict(json.loads(row[0])) for row in rows]
+
+    def find_similar_debates(
+        self,
+        topic: str,
+        domain: Optional[str] = None,
+        min_confidence: float = 0.0,
+        limit: int = 10,
+    ) -> list[SimilarDebate]:
+        """Find similar past debates on a topic."""
+
+        topic_hash = self._hash_topic(topic)
+        topic_words = set(topic.lower().split())
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        query = """
+            SELECT data FROM consensus
+            WHERE confidence >= ?
+        """
+        params: list = [min_confidence]
+
+        if domain:
+            query += " AND domain = ?"
+            params.append(domain)
+
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit * 3)  # Get more for filtering
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Score similarity
+        candidates = []
+        for row in rows:
+            consensus = ConsensusRecord.from_dict(json.loads(row[0]))
+
+            # Compute similarity (simple word overlap for now)
+            consensus_words = set(consensus.topic.lower().split())
+            if topic_words and consensus_words:
+                intersection = len(topic_words & consensus_words)
+                union = len(topic_words | consensus_words)
+                similarity = intersection / union if union > 0 else 0.0
+            else:
+                similarity = 0.0
+
+            # Boost exact hash match
+            if consensus.topic_hash == topic_hash:
+                similarity = 1.0
+
+            if similarity > 0.1:  # Minimum threshold
+                dissents = self.get_dissents(consensus.id)
+                candidates.append(
+                    SimilarDebate(
+                        consensus=consensus,
+                        similarity_score=similarity,
+                        dissents=dissents,
+                    )
+                )
+
+        # Sort by similarity and limit
+        candidates.sort(key=lambda x: -x.similarity_score)
+        return candidates[:limit]
+
+    def find_relevant_dissent(
+        self,
+        topic: str,
+        dissent_types: Optional[list[DissentType]] = None,
+        min_confidence: float = 0.0,
+        limit: int = 10,
+    ) -> list[DissentRecord]:
+        """Find dissenting views relevant to a topic."""
+
+        # First find similar debates
+        similar = self.find_similar_debates(topic, limit=limit * 2)
+
+        dissents = []
+        for s in similar:
+            for d in s.dissents:
+                if d.confidence >= min_confidence:
+                    if dissent_types is None or d.dissent_type in dissent_types:
+                        dissents.append(d)
+
+        # Sort by confidence
+        dissents.sort(key=lambda x: -x.confidence)
+        return dissents[:limit]
+
+    def get_domain_consensus_history(
+        self,
+        domain: str,
+        limit: int = 50,
+    ) -> list[ConsensusRecord]:
+        """Get consensus history for a domain."""
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT data FROM consensus
+            WHERE domain = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (domain, limit),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [ConsensusRecord.from_dict(json.loads(row[0])) for row in rows]
+
+    def supersede_consensus(
+        self,
+        old_consensus_id: str,
+        new_topic: str,
+        new_conclusion: str,
+        **kwargs,
+    ) -> ConsensusRecord:
+        """Create a new consensus that supersedes an old one."""
+
+        # Create new consensus
+        new_record = self.store_consensus(
+            topic=new_topic,
+            conclusion=new_conclusion,
+            metadata={"supersedes": old_consensus_id},
+            **kwargs,
+        )
+
+        # Update old record
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT data FROM consensus WHERE id = ?",
+            (old_consensus_id,),
+        )
+        row = cursor.fetchone()
+
+        if row:
+            old_data = json.loads(row[0])
+            old_data["superseded_by"] = new_record.id
+            cursor.execute(
+                "UPDATE consensus SET data = ? WHERE id = ?",
+                (json.dumps(old_data), old_consensus_id),
+            )
+
+        conn.commit()
+        conn.close()
+
+        return new_record
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Get statistics about stored consensus."""
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        stats = {}
+
+        # Total counts
+        cursor.execute("SELECT COUNT(*) FROM consensus")
+        stats["total_consensus"] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM dissent")
+        stats["total_dissents"] = cursor.fetchone()[0]
+
+        # By strength
+        cursor.execute(
+            "SELECT strength, COUNT(*) FROM consensus GROUP BY strength"
+        )
+        stats["by_strength"] = dict(cursor.fetchall())
+
+        # By domain
+        cursor.execute(
+            "SELECT domain, COUNT(*) FROM consensus GROUP BY domain ORDER BY COUNT(*) DESC LIMIT 10"
+        )
+        stats["by_domain"] = dict(cursor.fetchall())
+
+        # By dissent type
+        cursor.execute(
+            "SELECT dissent_type, COUNT(*) FROM dissent GROUP BY dissent_type"
+        )
+        stats["by_dissent_type"] = dict(cursor.fetchall())
+
+        # Average confidence
+        cursor.execute("SELECT AVG(confidence) FROM consensus")
+        stats["avg_confidence"] = cursor.fetchone()[0] or 0.0
+
+        conn.close()
+        return stats
+
+
+class DissentRetriever:
+    """
+    Specialized retriever for finding relevant dissenting views.
+
+    Helps debates benefit from past minority positions that
+    may have been overlooked or become more relevant.
+    """
+
+    def __init__(self, memory: ConsensusMemory):
+        self.memory = memory
+
+    def retrieve_for_new_debate(
+        self,
+        topic: str,
+        domain: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Retrieve relevant historical context for a new debate."""
+
+        # Find similar past debates
+        similar = self.memory.find_similar_debates(topic, domain=domain, limit=5)
+
+        # Find relevant dissents
+        dissents = self.memory.find_relevant_dissent(topic, limit=10)
+
+        # Categorize dissents by type
+        dissent_by_type: dict[str, list] = {}
+        for d in dissents:
+            dtype = d.dissent_type.value
+            if dtype not in dissent_by_type:
+                dissent_by_type[dtype] = []
+            dissent_by_type[dtype].append(d)
+
+        # Find unacknowledged dissents (potentially important)
+        unacknowledged = [d for d in dissents if not d.acknowledged]
+
+        return {
+            "similar_debates": [
+                {
+                    "topic": s.consensus.topic,
+                    "conclusion": s.consensus.conclusion,
+                    "strength": s.consensus.strength.value,
+                    "similarity": s.similarity_score,
+                    "dissent_count": len(s.dissents),
+                }
+                for s in similar
+            ],
+            "relevant_dissents": [d.to_dict() for d in dissents],
+            "dissent_by_type": {
+                k: [d.to_dict() for d in v]
+                for k, v in dissent_by_type.items()
+            },
+            "unacknowledged_dissents": [d.to_dict() for d in unacknowledged],
+            "total_similar": len(similar),
+            "total_dissents": len(dissents),
+        }
+
+    def find_contrarian_views(
+        self,
+        consensus_position: str,
+        domain: Optional[str] = None,
+        limit: int = 5,
+    ) -> list[DissentRecord]:
+        """Find historical dissents that contradict a position."""
+
+        # Look for fundamental disagreements
+        dissents = self.memory.find_relevant_dissent(
+            topic=consensus_position,
+            dissent_types=[
+                DissentType.FUNDAMENTAL_DISAGREEMENT,
+                DissentType.ALTERNATIVE_APPROACH,
+            ],
+            limit=limit * 2,
+        )
+
+        return dissents[:limit]
+
+    def find_risk_warnings(
+        self,
+        topic: str,
+        domain: Optional[str] = None,
+        limit: int = 5,
+    ) -> list[DissentRecord]:
+        """Find historical risk warnings relevant to a topic."""
+
+        return self.memory.find_relevant_dissent(
+            topic=topic,
+            dissent_types=[DissentType.RISK_WARNING, DissentType.EDGE_CASE_CONCERN],
+            limit=limit,
+        )
+
+    def get_debate_preparation_context(
+        self,
+        topic: str,
+        domain: Optional[str] = None,
+    ) -> str:
+        """Generate a context string to inform a new debate."""
+
+        context = self.retrieve_for_new_debate(topic, domain)
+
+        lines = [f"# Historical Context for: {topic}\n"]
+
+        if context["similar_debates"]:
+            lines.append("## Similar Past Debates")
+            for s in context["similar_debates"][:3]:
+                lines.append(f"- **{s['topic']}** ({s['strength']}, {s['similarity']:.0%} similar)")
+                lines.append(f"  Conclusion: {s['conclusion'][:100]}...")
+                if s["dissent_count"] > 0:
+                    lines.append(f"  ⚠️ {s['dissent_count']} dissenting view(s)")
+            lines.append("")
+
+        if context["unacknowledged_dissents"]:
+            lines.append("## Unaddressed Historical Concerns")
+            for d in context["unacknowledged_dissents"][:3]:
+                lines.append(f"- [{d['dissent_type']}] {d['content'][:100]}...")
+            lines.append("")
+
+        if context["relevant_dissents"]:
+            lines.append(f"## {len(context['relevant_dissents'])} Relevant Historical Dissents Available")
+
+        return "\n".join(lines)

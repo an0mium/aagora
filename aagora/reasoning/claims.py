@@ -457,6 +457,137 @@ class ClaimsKernel:
             rel["relation_type"] = rel["relation_type"].value if isinstance(rel["relation_type"], RelationType) else rel["relation_type"]
         return json.dumps(data, indent=indent, default=str)
 
+    async def verify_claim_formally(
+        self,
+        claim_id: str,
+        llm_translator: Optional[Callable] = None,
+        timeout_seconds: float = 60.0,
+    ) -> Optional[TypedEvidence]:
+        """
+        Attempt formal verification of a claim using Z3.
+
+        If the claim can be expressed in decidable logic, this attempts
+        to prove it using the Z3 SMT solver. If successful, adds verified
+        evidence to the claim.
+
+        Args:
+            claim_id: ID of the claim to verify
+            llm_translator: Optional async callable(prompt, context) -> str
+                           for LLM-assisted translation to SMT-LIB2
+            timeout_seconds: Maximum time for proof search
+
+        Returns:
+            TypedEvidence if verification succeeded, None otherwise
+        """
+        from aagora.verification.formal import (
+            Z3Backend,
+            FormalProofStatus,
+        )
+
+        if claim_id not in self.claims:
+            return None
+
+        claim = self.claims[claim_id]
+
+        # Create Z3 backend with optional LLM translator
+        backend = Z3Backend(llm_translator=llm_translator)
+
+        if not backend.is_available:
+            return None
+
+        # Check if claim is suitable for formal verification
+        claim_type_hint = claim.claim_type.value
+        if not backend.can_verify(claim.statement, claim_type_hint):
+            return None
+
+        # Attempt translation
+        context = f"Debate: {self.debate_id}, Author: {claim.author}"
+        formal_statement = await backend.translate(claim.statement, context)
+
+        if formal_statement is None:
+            return None
+
+        # Attempt proof
+        result = await backend.prove(formal_statement, timeout_seconds)
+
+        if result.status == FormalProofStatus.PROOF_FOUND:
+            # Create verified evidence
+            self._evidence_counter += 1
+            evidence = TypedEvidence(
+                evidence_id=f"{self.debate_id}-e{self._evidence_counter:04d}",
+                evidence_type=EvidenceType.TOOL_OUTPUT,
+                content=f"Formally verified: {result.proof_text}",
+                source=SourceReference(
+                    source_type="formal_verification",
+                    identifier=f"{result.language.value}:{result.proof_hash or 'unknown'}",
+                    metadata={
+                        "prover_version": result.prover_version,
+                        "formal_statement": result.formal_statement,
+                        "proof_search_time_ms": result.proof_search_time_ms,
+                    },
+                ),
+                strength=1.0,  # Formal proofs have maximum strength
+                verified=True,
+                verification_method=f"formal:{result.language.value}",
+            )
+
+            claim.evidence.append(evidence)
+            return evidence
+
+        elif result.status == FormalProofStatus.PROOF_FAILED:
+            # Claim is false - add negative evidence
+            self._evidence_counter += 1
+            evidence = TypedEvidence(
+                evidence_id=f"{self.debate_id}-e{self._evidence_counter:04d}",
+                evidence_type=EvidenceType.TOOL_OUTPUT,
+                content=f"Formally disproven: {result.proof_text}",
+                source=SourceReference(
+                    source_type="formal_verification",
+                    identifier=f"{result.language.value}:counterexample",
+                    metadata={
+                        "prover_version": result.prover_version,
+                        "formal_statement": result.formal_statement,
+                        "counterexample": result.proof_text,
+                    },
+                ),
+                strength=0.0,  # Disproven claim
+                verified=True,
+                verification_method=f"formal:{result.language.value}:disproven",
+            )
+
+            claim.evidence.append(evidence)
+            claim.status = "refuted"  # Mark as refuted
+            return evidence
+
+        return None
+
+    async def verify_all_claims_formally(
+        self,
+        llm_translator: Optional[Callable] = None,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, str]:
+        """
+        Attempt formal verification of all claims.
+
+        Returns:
+            Dict mapping claim_id -> verification status
+        """
+        results = {}
+
+        for claim_id in self.claims:
+            evidence = await self.verify_claim_formally(
+                claim_id, llm_translator, timeout_seconds
+            )
+
+            if evidence is None:
+                results[claim_id] = "not_verifiable"
+            elif evidence.strength == 1.0:
+                results[claim_id] = "verified"
+            else:
+                results[claim_id] = "disproven"
+
+        return results
+
     def generate_summary(self) -> str:
         """Generate a text summary of the argument structure."""
         lines = [

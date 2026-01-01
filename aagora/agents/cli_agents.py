@@ -213,7 +213,7 @@ Provide structured feedback:
 
 
 class GeminiCLIAgent(CLIAgent):
-    """Agent that uses Google Gemini CLI."""
+    """Agent that uses Google Gemini CLI (v0.22+)."""
 
     async def generate(self, prompt: str, context: list[Message] = None) -> str:
         """Generate a response using gemini CLI."""
@@ -224,12 +224,16 @@ class GeminiCLIAgent(CLIAgent):
         if self.system_prompt:
             full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
 
-        # Use gemini with -p flag for prompt mode (non-interactive)
+        # Use gemini with positional prompt and --yolo for auto-approval
+        # Output format json for easier parsing, text for human-readable
         result = await self._run_cli([
-            "gemini", "-p", full_prompt
+            "gemini", "--yolo", "-o", "text", full_prompt
         ])
 
-        return result
+        # Filter out YOLO mode message if present
+        lines = result.split('\n')
+        filtered = [l for l in lines if not l.startswith('YOLO mode is enabled')]
+        return '\n'.join(filtered).strip()
 
     async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
         """Critique a proposal using gemini."""

@@ -1,7 +1,8 @@
 """
 Reasoning primitives for structured debates.
 
-Provides typed claims, evidence tracking, and logical inference.
+Provides typed claims, evidence tracking, logical inference,
+and cryptographic provenance for evidence.
 """
 
 from aagora.reasoning.claims import (
@@ -15,8 +16,20 @@ from aagora.reasoning.claims import (
     ArgumentChain,
     SourceReference,
 )
+from aagora.reasoning.provenance import (
+    ProvenanceManager,
+    ProvenanceChain,
+    ProvenanceRecord,
+    ProvenanceVerifier,
+    CitationGraph,
+    Citation,
+    MerkleTree,
+    SourceType,
+    TransformationType,
+)
 
 __all__ = [
+    # Claims
     "ClaimsKernel",
     "TypedClaim",
     "TypedEvidence",
@@ -26,4 +39,14 @@ __all__ = [
     "ClaimRelation",
     "ArgumentChain",
     "SourceReference",
+    # Provenance
+    "ProvenanceManager",
+    "ProvenanceChain",
+    "ProvenanceRecord",
+    "ProvenanceVerifier",
+    "CitationGraph",
+    "Citation",
+    "MerkleTree",
+    "SourceType",
+    "TransformationType",
 ]

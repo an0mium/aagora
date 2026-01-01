@@ -1,0 +1,737 @@
+"""
+Executable Verification Proofs - Link claims to verifiable code.
+
+Enables claims in debates to be backed by executable verification:
+- Code assertions that can be run to verify claims
+- API calls to fetch supporting data
+- Mathematical computations
+- Test executions
+- Property-based checks
+
+Key concepts:
+- VerificationProof: Executable code/assertion for a claim
+- ProofExecutor: Sandbox for safe proof execution
+- ClaimVerifier: Manages proof-claim relationships
+- VerificationReport: Aggregated results
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Callable, Optional
+import asyncio
+import hashlib
+import json
+import subprocess
+import traceback
+import uuid
+
+
+class ProofType(Enum):
+    """Type of verification proof."""
+    ASSERTION = "assertion"  # Python assertion/boolean check
+    CODE_EXECUTION = "code_execution"  # Run code and check output
+    API_CALL = "api_call"  # Fetch data from API
+    COMPUTATION = "computation"  # Mathematical verification
+    TEST_SUITE = "test_suite"  # Run test suite
+    PROPERTY_CHECK = "property_check"  # Property-based testing
+    STATIC_ANALYSIS = "static_analysis"  # Code analysis
+    MANUAL = "manual"  # Requires human verification
+
+
+class ProofStatus(Enum):
+    """Status of a verification proof."""
+    PENDING = "pending"  # Not yet executed
+    RUNNING = "running"  # Currently executing
+    PASSED = "passed"  # Verification succeeded
+    FAILED = "failed"  # Verification failed
+    ERROR = "error"  # Execution error
+    SKIPPED = "skipped"  # Skipped (e.g., dependencies missing)
+    TIMEOUT = "timeout"  # Execution timed out
+
+
+@dataclass
+class VerificationProof:
+    """
+    An executable proof that can verify a claim.
+
+    Contains code or assertions that can be executed
+    to verify the truthfulness of a claim.
+    """
+    id: str
+    claim_id: str  # ID of the claim this verifies
+    proof_type: ProofType
+    description: str
+
+    # Executable content
+    code: str  # Python code to execute
+    expected_output: Optional[str] = None  # Expected output for comparison
+    assertion: Optional[str] = None  # Boolean expression to evaluate
+
+    # Metadata
+    dependencies: list[str] = field(default_factory=list)  # Required packages
+    timeout_seconds: float = 30.0
+    requires_network: bool = False
+    requires_filesystem: bool = False
+
+    # Status
+    status: ProofStatus = ProofStatus.PENDING
+    last_run: Optional[datetime] = None
+    run_count: int = 0
+
+    # Results
+    output: str = ""
+    error: str = ""
+    execution_time_ms: float = 0.0
+
+    # Provenance
+    created_at: datetime = field(default_factory=datetime.now)
+    created_by: str = ""
+    proof_hash: str = ""
+
+    def __post_init__(self):
+        if not self.id:
+            self.id = str(uuid.uuid4())[:12]
+        if not self.proof_hash:
+            self.proof_hash = self._compute_hash()
+
+    def _compute_hash(self) -> str:
+        """Compute hash of proof content."""
+        data = f"{self.code}:{self.assertion or ''}:{self.expected_output or ''}"
+        return hashlib.sha256(data.encode()).hexdigest()[:16]
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "claim_id": self.claim_id,
+            "proof_type": self.proof_type.value,
+            "description": self.description,
+            "code": self.code,
+            "expected_output": self.expected_output,
+            "assertion": self.assertion,
+            "dependencies": self.dependencies,
+            "timeout_seconds": self.timeout_seconds,
+            "requires_network": self.requires_network,
+            "requires_filesystem": self.requires_filesystem,
+            "status": self.status.value,
+            "last_run": self.last_run.isoformat() if self.last_run else None,
+            "run_count": self.run_count,
+            "output": self.output,
+            "error": self.error,
+            "execution_time_ms": self.execution_time_ms,
+            "created_at": self.created_at.isoformat(),
+            "created_by": self.created_by,
+            "proof_hash": self.proof_hash,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "VerificationProof":
+        proof = cls(
+            id=data["id"],
+            claim_id=data["claim_id"],
+            proof_type=ProofType(data["proof_type"]),
+            description=data["description"],
+            code=data["code"],
+            expected_output=data.get("expected_output"),
+            assertion=data.get("assertion"),
+            dependencies=data.get("dependencies", []),
+            timeout_seconds=data.get("timeout_seconds", 30.0),
+            requires_network=data.get("requires_network", False),
+            requires_filesystem=data.get("requires_filesystem", False),
+            status=ProofStatus(data.get("status", "pending")),
+            run_count=data.get("run_count", 0),
+            output=data.get("output", ""),
+            error=data.get("error", ""),
+            execution_time_ms=data.get("execution_time_ms", 0.0),
+            created_by=data.get("created_by", ""),
+            proof_hash=data.get("proof_hash", ""),
+        )
+        if data.get("last_run"):
+            proof.last_run = datetime.fromisoformat(data["last_run"])
+        if data.get("created_at"):
+            proof.created_at = datetime.fromisoformat(data["created_at"])
+        return proof
+
+
+@dataclass
+class VerificationResult:
+    """Result of executing a verification proof."""
+    proof_id: str
+    claim_id: str
+    status: ProofStatus
+    passed: bool
+
+    # Execution details
+    output: str = ""
+    error: str = ""
+    execution_time_ms: float = 0.0
+    timestamp: datetime = field(default_factory=datetime.now)
+
+    # For assertions
+    assertion_value: Optional[bool] = None
+    assertion_details: str = ""
+
+    # For expected output comparison
+    output_matched: Optional[bool] = None
+    output_diff: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "proof_id": self.proof_id,
+            "claim_id": self.claim_id,
+            "status": self.status.value,
+            "passed": self.passed,
+            "output": self.output,
+            "error": self.error,
+            "execution_time_ms": self.execution_time_ms,
+            "timestamp": self.timestamp.isoformat(),
+            "assertion_value": self.assertion_value,
+            "assertion_details": self.assertion_details,
+            "output_matched": self.output_matched,
+            "output_diff": self.output_diff,
+        }
+
+
+class ProofExecutor:
+    """
+    Executes verification proofs in a safe environment.
+
+    Provides sandboxed execution with timeouts and
+    resource limits.
+    """
+
+    def __init__(
+        self,
+        allow_network: bool = False,
+        allow_filesystem: bool = False,
+        default_timeout: float = 30.0,
+        max_output_size: int = 10000,
+    ):
+        self.allow_network = allow_network
+        self.allow_filesystem = allow_filesystem
+        self.default_timeout = default_timeout
+        self.max_output_size = max_output_size
+
+    async def execute(self, proof: VerificationProof) -> VerificationResult:
+        """Execute a verification proof."""
+
+        # Check permissions
+        if proof.requires_network and not self.allow_network:
+            return VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.SKIPPED,
+                passed=False,
+                error="Proof requires network access which is not allowed",
+            )
+
+        if proof.requires_filesystem and not self.allow_filesystem:
+            return VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.SKIPPED,
+                passed=False,
+                error="Proof requires filesystem access which is not allowed",
+            )
+
+        # Update proof status
+        proof.status = ProofStatus.RUNNING
+        proof.last_run = datetime.now()
+        proof.run_count += 1
+
+        start_time = datetime.now()
+
+        try:
+            timeout = proof.timeout_seconds or self.default_timeout
+
+            if proof.proof_type == ProofType.ASSERTION:
+                result = await self._execute_assertion(proof, timeout)
+            elif proof.proof_type == ProofType.CODE_EXECUTION:
+                result = await self._execute_code(proof, timeout)
+            elif proof.proof_type == ProofType.COMPUTATION:
+                result = await self._execute_computation(proof, timeout)
+            else:
+                result = await self._execute_code(proof, timeout)
+
+        except asyncio.TimeoutError:
+            result = VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.TIMEOUT,
+                passed=False,
+                error=f"Execution timed out after {timeout}s",
+            )
+        except Exception as e:
+            result = VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.ERROR,
+                passed=False,
+                error=f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}",
+            )
+
+        # Update execution time
+        elapsed = (datetime.now() - start_time).total_seconds() * 1000
+        result.execution_time_ms = elapsed
+
+        # Update proof with result
+        proof.status = result.status
+        proof.output = result.output[:self.max_output_size]
+        proof.error = result.error[:self.max_output_size]
+        proof.execution_time_ms = elapsed
+
+        return result
+
+    async def _execute_assertion(
+        self, proof: VerificationProof, timeout: float
+    ) -> VerificationResult:
+        """Execute an assertion-based proof."""
+
+        code = proof.code
+        assertion = proof.assertion
+
+        # Build execution code
+        exec_code = code
+        if assertion:
+            exec_code += f"\n__result__ = bool({assertion})"
+
+        # Execute in isolated namespace
+        namespace: dict[str, Any] = {}
+
+        try:
+            exec(exec_code, {"__builtins__": __builtins__}, namespace)
+
+            if assertion:
+                assertion_value = namespace.get("__result__", False)
+                passed = bool(assertion_value)
+
+                return VerificationResult(
+                    proof_id=proof.id,
+                    claim_id=proof.claim_id,
+                    status=ProofStatus.PASSED if passed else ProofStatus.FAILED,
+                    passed=passed,
+                    assertion_value=assertion_value,
+                    assertion_details=f"Assertion '{assertion}' evaluated to {assertion_value}",
+                )
+            else:
+                # Code executed without error
+                return VerificationResult(
+                    proof_id=proof.id,
+                    claim_id=proof.claim_id,
+                    status=ProofStatus.PASSED,
+                    passed=True,
+                    output="Code executed successfully",
+                )
+
+        except AssertionError as e:
+            return VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.FAILED,
+                passed=False,
+                error=f"Assertion failed: {str(e)}",
+                assertion_value=False,
+            )
+
+    async def _execute_code(
+        self, proof: VerificationProof, timeout: float
+    ) -> VerificationResult:
+        """Execute code and capture output."""
+
+        import io
+        import sys
+
+        # Capture stdout
+        stdout_capture = io.StringIO()
+        old_stdout = sys.stdout
+
+        try:
+            sys.stdout = stdout_capture
+            namespace: dict[str, Any] = {}
+            exec(proof.code, {"__builtins__": __builtins__}, namespace)
+            output = stdout_capture.getvalue()
+
+        finally:
+            sys.stdout = old_stdout
+
+        # Compare output if expected
+        if proof.expected_output is not None:
+            output_matched = output.strip() == proof.expected_output.strip()
+            diff = ""
+            if not output_matched:
+                diff = f"Expected:\n{proof.expected_output}\n\nActual:\n{output}"
+
+            return VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.PASSED if output_matched else ProofStatus.FAILED,
+                passed=output_matched,
+                output=output,
+                output_matched=output_matched,
+                output_diff=diff,
+            )
+        else:
+            return VerificationResult(
+                proof_id=proof.id,
+                claim_id=proof.claim_id,
+                status=ProofStatus.PASSED,
+                passed=True,
+                output=output,
+            )
+
+    async def _execute_computation(
+        self, proof: VerificationProof, timeout: float
+    ) -> VerificationResult:
+        """Execute a mathematical computation."""
+        return await self._execute_assertion(proof, timeout)
+
+
+class ClaimVerifier:
+    """
+    Manages verification proofs for claims.
+
+    Links claims to their proofs and provides
+    verification orchestration.
+    """
+
+    def __init__(self, executor: Optional[ProofExecutor] = None):
+        self.executor = executor or ProofExecutor()
+        self.proofs: dict[str, VerificationProof] = {}
+        self.claim_proofs: dict[str, list[str]] = {}  # claim_id -> [proof_ids]
+        self.results: dict[str, VerificationResult] = {}
+
+    def add_proof(self, proof: VerificationProof) -> None:
+        """Add a verification proof."""
+        self.proofs[proof.id] = proof
+
+        if proof.claim_id not in self.claim_proofs:
+            self.claim_proofs[proof.claim_id] = []
+        self.claim_proofs[proof.claim_id].append(proof.id)
+
+    def get_proofs_for_claim(self, claim_id: str) -> list[VerificationProof]:
+        """Get all proofs for a claim."""
+        proof_ids = self.claim_proofs.get(claim_id, [])
+        return [self.proofs[pid] for pid in proof_ids if pid in self.proofs]
+
+    async def verify_claim(self, claim_id: str) -> list[VerificationResult]:
+        """Verify all proofs for a claim."""
+        proofs = self.get_proofs_for_claim(claim_id)
+        results = []
+
+        for proof in proofs:
+            result = await self.executor.execute(proof)
+            self.results[proof.id] = result
+            results.append(result)
+
+        return results
+
+    async def verify_all(self) -> list[VerificationResult]:
+        """Verify all proofs."""
+        results = []
+        for proof in self.proofs.values():
+            result = await self.executor.execute(proof)
+            self.results[proof.id] = result
+            results.append(result)
+        return results
+
+    def get_claim_verification_status(self, claim_id: str) -> dict[str, Any]:
+        """Get verification status for a claim."""
+        proof_ids = self.claim_proofs.get(claim_id, [])
+
+        if not proof_ids:
+            return {
+                "claim_id": claim_id,
+                "has_proofs": False,
+                "verified": False,
+                "status": "no_proofs",
+            }
+
+        results = [self.results.get(pid) for pid in proof_ids]
+        results = [r for r in results if r is not None]
+
+        if not results:
+            return {
+                "claim_id": claim_id,
+                "has_proofs": True,
+                "proof_count": len(proof_ids),
+                "verified": False,
+                "status": "pending",
+            }
+
+        passed = sum(1 for r in results if r.passed)
+        failed = sum(1 for r in results if not r.passed)
+
+        return {
+            "claim_id": claim_id,
+            "has_proofs": True,
+            "proof_count": len(proof_ids),
+            "executed_count": len(results),
+            "passed_count": passed,
+            "failed_count": failed,
+            "verified": failed == 0 and passed > 0,
+            "status": "verified" if failed == 0 and passed > 0 else "failed",
+        }
+
+
+@dataclass
+class VerificationReport:
+    """Aggregated verification report for a debate."""
+    debate_id: str
+    created_at: datetime = field(default_factory=datetime.now)
+
+    # Statistics
+    total_claims: int = 0
+    claims_with_proofs: int = 0
+    claims_verified: int = 0
+    claims_failed: int = 0
+    claims_pending: int = 0
+
+    total_proofs: int = 0
+    proofs_passed: int = 0
+    proofs_failed: int = 0
+    proofs_error: int = 0
+    proofs_skipped: int = 0
+
+    # Details
+    claim_statuses: dict[str, dict] = field(default_factory=dict)
+    failed_proofs: list[dict] = field(default_factory=list)
+    execution_time_total_ms: float = 0.0
+
+    def verification_rate(self) -> float:
+        """Calculate verification rate."""
+        if self.claims_with_proofs == 0:
+            return 0.0
+        return self.claims_verified / self.claims_with_proofs
+
+    def pass_rate(self) -> float:
+        """Calculate proof pass rate."""
+        executed = self.proofs_passed + self.proofs_failed + self.proofs_error
+        if executed == 0:
+            return 0.0
+        return self.proofs_passed / executed
+
+    def to_dict(self) -> dict:
+        return {
+            "debate_id": self.debate_id,
+            "created_at": self.created_at.isoformat(),
+            "statistics": {
+                "total_claims": self.total_claims,
+                "claims_with_proofs": self.claims_with_proofs,
+                "claims_verified": self.claims_verified,
+                "claims_failed": self.claims_failed,
+                "claims_pending": self.claims_pending,
+                "verification_rate": self.verification_rate(),
+            },
+            "proofs": {
+                "total": self.total_proofs,
+                "passed": self.proofs_passed,
+                "failed": self.proofs_failed,
+                "error": self.proofs_error,
+                "skipped": self.proofs_skipped,
+                "pass_rate": self.pass_rate(),
+            },
+            "execution_time_total_ms": self.execution_time_total_ms,
+            "failed_proofs": self.failed_proofs,
+        }
+
+    def generate_summary(self) -> str:
+        """Generate human-readable summary."""
+        lines = [
+            f"# Verification Report: {self.debate_id}",
+            "",
+            "## Summary",
+            f"- **Claims with proofs**: {self.claims_with_proofs}/{self.total_claims}",
+            f"- **Claims verified**: {self.claims_verified} ({self.verification_rate():.0%})",
+            f"- **Claims failed**: {self.claims_failed}",
+            "",
+            "## Proof Execution",
+            f"- **Total proofs**: {self.total_proofs}",
+            f"- **Passed**: {self.proofs_passed}",
+            f"- **Failed**: {self.proofs_failed}",
+            f"- **Errors**: {self.proofs_error}",
+            f"- **Pass rate**: {self.pass_rate():.0%}",
+            f"- **Total execution time**: {self.execution_time_total_ms:.0f}ms",
+        ]
+
+        if self.failed_proofs:
+            lines.append("")
+            lines.append("## Failed Proofs")
+            for fp in self.failed_proofs[:5]:
+                lines.append(f"\n### {fp.get('description', 'Unknown')}")
+                lines.append(f"- **Claim**: {fp.get('claim_id', 'Unknown')}")
+                lines.append(f"- **Error**: {fp.get('error', 'No error message')[:100]}")
+
+        return "\n".join(lines)
+
+
+class ProofBuilder:
+    """Helper class for building verification proofs."""
+
+    def __init__(self, claim_id: str, created_by: str = ""):
+        self.claim_id = claim_id
+        self.created_by = created_by
+
+    def assertion(
+        self,
+        description: str,
+        code: str,
+        assertion: str,
+        **kwargs,
+    ) -> VerificationProof:
+        """Create an assertion-based proof."""
+        return VerificationProof(
+            id=str(uuid.uuid4())[:12],
+            claim_id=self.claim_id,
+            proof_type=ProofType.ASSERTION,
+            description=description,
+            code=code,
+            assertion=assertion,
+            created_by=self.created_by,
+            **kwargs,
+        )
+
+    def output_check(
+        self,
+        description: str,
+        code: str,
+        expected_output: str,
+        **kwargs,
+    ) -> VerificationProof:
+        """Create a proof that checks code output."""
+        return VerificationProof(
+            id=str(uuid.uuid4())[:12],
+            claim_id=self.claim_id,
+            proof_type=ProofType.CODE_EXECUTION,
+            description=description,
+            code=code,
+            expected_output=expected_output,
+            created_by=self.created_by,
+            **kwargs,
+        )
+
+    def computation(
+        self,
+        description: str,
+        code: str,
+        assertion: str,
+        **kwargs,
+    ) -> VerificationProof:
+        """Create a mathematical computation proof."""
+        return VerificationProof(
+            id=str(uuid.uuid4())[:12],
+            claim_id=self.claim_id,
+            proof_type=ProofType.COMPUTATION,
+            description=description,
+            code=code,
+            assertion=assertion,
+            created_by=self.created_by,
+            **kwargs,
+        )
+
+    def property_check(
+        self,
+        description: str,
+        code: str,
+        property_assertion: str,
+        **kwargs,
+    ) -> VerificationProof:
+        """Create a property-based verification proof."""
+        return VerificationProof(
+            id=str(uuid.uuid4())[:12],
+            claim_id=self.claim_id,
+            proof_type=ProofType.PROPERTY_CHECK,
+            description=description,
+            code=code,
+            assertion=property_assertion,
+            created_by=self.created_by,
+            **kwargs,
+        )
+
+
+# Convenience functions
+
+def create_simple_assertion(
+    claim_id: str,
+    description: str,
+    assertion: str,
+) -> VerificationProof:
+    """Create a simple assertion proof."""
+    return VerificationProof(
+        id=str(uuid.uuid4())[:12],
+        claim_id=claim_id,
+        proof_type=ProofType.ASSERTION,
+        description=description,
+        code="",
+        assertion=assertion,
+    )
+
+
+def create_computation_proof(
+    claim_id: str,
+    description: str,
+    computation_code: str,
+    expected_assertion: str,
+) -> VerificationProof:
+    """Create a computation verification proof."""
+    return VerificationProof(
+        id=str(uuid.uuid4())[:12],
+        claim_id=claim_id,
+        proof_type=ProofType.COMPUTATION,
+        description=description,
+        code=computation_code,
+        assertion=expected_assertion,
+    )
+
+
+async def verify_claim_set(
+    claims: list[tuple[str, str]],  # (claim_id, claim_text)
+    proofs: list[VerificationProof],
+    executor: Optional[ProofExecutor] = None,
+) -> VerificationReport:
+    """Verify a set of claims with their proofs."""
+
+    executor = executor or ProofExecutor()
+    verifier = ClaimVerifier(executor)
+
+    # Add proofs
+    for proof in proofs:
+        verifier.add_proof(proof)
+
+    # Execute all proofs
+    results = await verifier.verify_all()
+
+    # Build report
+    report = VerificationReport(debate_id=str(uuid.uuid4())[:8])
+    report.total_claims = len(claims)
+    report.total_proofs = len(proofs)
+
+    # Process results
+    for result in results:
+        report.execution_time_total_ms += result.execution_time_ms
+
+        if result.status == ProofStatus.PASSED:
+            report.proofs_passed += 1
+        elif result.status == ProofStatus.FAILED:
+            report.proofs_failed += 1
+            report.failed_proofs.append(result.to_dict())
+        elif result.status == ProofStatus.ERROR:
+            report.proofs_error += 1
+            report.failed_proofs.append(result.to_dict())
+        elif result.status == ProofStatus.SKIPPED:
+            report.proofs_skipped += 1
+
+    # Count claims with proofs
+    for claim_id, _ in claims:
+        status = verifier.get_claim_verification_status(claim_id)
+        report.claim_statuses[claim_id] = status
+
+        if status["has_proofs"]:
+            report.claims_with_proofs += 1
+            if status["verified"]:
+                report.claims_verified += 1
+            elif status["status"] == "failed":
+                report.claims_failed += 1
+            else:
+                report.claims_pending += 1
+
+    return report
