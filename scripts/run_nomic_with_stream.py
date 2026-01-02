@@ -71,8 +71,9 @@ async def run_with_streaming(
         nomic_dir=nomic_dir,
     )
 
-    # Get the emitter for the nomic loop
+    # Get the emitter for the nomic loop and set loop_id for event tagging
     emitter = server.emitter
+    emitter.set_loop_id(loop_id)  # Tag all events with this loop's ID
 
     print("=" * 60)
     print("ARAGORA NOMIC LOOP WITH LIVE STREAMING")

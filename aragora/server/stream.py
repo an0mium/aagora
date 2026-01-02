@@ -55,15 +55,19 @@ class StreamEvent:
     timestamp: float = field(default_factory=time.time)
     round: int = 0
     agent: str = ""
+    loop_id: str = ""  # For multi-loop tracking
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "type": self.type.value,
             "data": self.data,
             "timestamp": self.timestamp,
             "round": self.round,
             "agent": self.agent,
         }
+        if self.loop_id:
+            result["loop_id"] = self.loop_id
+        return result
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
@@ -77,12 +81,20 @@ class SyncEventEmitter:
     This pattern avoids needing to rewrite Arena to be fully async.
     """
 
-    def __init__(self):
+    def __init__(self, loop_id: str = ""):
         self._queue: queue.Queue[StreamEvent] = queue.Queue()
         self._subscribers: list[Callable[[StreamEvent], None]] = []
+        self._loop_id = loop_id  # Default loop_id for all events
+
+    def set_loop_id(self, loop_id: str) -> None:
+        """Set the loop_id to attach to all emitted events."""
+        self._loop_id = loop_id
 
     def emit(self, event: StreamEvent) -> None:
         """Emit event (safe to call from sync code)."""
+        # Add loop_id to event if not already set
+        if self._loop_id and not event.loop_id:
+            event.loop_id = self._loop_id
         self._queue.put(event)
         for sub in self._subscribers:
             try:

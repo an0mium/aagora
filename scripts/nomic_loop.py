@@ -118,7 +118,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from aragora.debate.orchestrator import Arena, DebateProtocol
 from aragora.core import Environment
 from aragora.agents.api_agents import GeminiAgent
-from aragora.agents.cli_agents import CodexAgent, ClaudeAgent
+from aragora.agents.cli_agents import CodexAgent, ClaudeAgent, GrokCLIAgent
 
 # Genesis module for fractal debates with agent evolution
 GENESIS_AVAILABLE = False
@@ -459,7 +459,7 @@ CRITICAL: You are part of a self-improving system. You MUST:
 
         self.gemini = GeminiAgent(
             name='gemini-visionary',
-            model='gemini-2.5-flash',
+            model='gemini-3-pro-preview',  # Gemini 3 Pro
             role='proposer',
             timeout=360,
         )
@@ -498,6 +498,19 @@ Think about what would make aragora the most powerful and delightful multi-agent
 IMPORTANT: You are a guardian of aragora's core functionality.
 Your proposals should ADD capabilities and improve the system.
 Never propose removing the nomic loop or core debate infrastructure.""" + safety_footer
+
+        self.grok = GrokCLIAgent(
+            name='grok-lateral-thinker',
+            model='grok-4',  # Grok 4 full
+            role='proposer',
+            timeout=600,  # 10 min
+        )
+        self.grok.system_prompt = """You are a lateral-thinking synthesizer for aragora.
+Focus on: unconventional approaches, novel patterns, creative breakthroughs.
+Connect ideas in surprising ways that others might miss.
+
+IMPORTANT: Your role is to BUILD and EXTEND, not to remove or break.
+Propose additions that unlock new capabilities and create emergent value.""" + safety_footer
 
     def get_current_features(self) -> str:
         """Read current aragora state from the codebase."""
@@ -554,12 +567,13 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
             except Exception as e:
                 return (name, f"Error: {e}")
 
-        # Run all 3 agents in parallel
+        # Run all 4 agents in parallel
         import asyncio
         reviews = await asyncio.gather(
             review_with_agent(self.gemini, "gemini"),
             review_with_agent(self.codex, "codex"),
             review_with_agent(self.claude, "claude"),
+            review_with_agent(self.grok, "grok"),
             return_exceptions=True,
         )
 
@@ -732,7 +746,7 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
         self._log("\n" + "=" * 70)
         self._log("PHASE 1: IMPROVEMENT DEBATE")
         self._log("=" * 70)
-        self._stream_emit("on_phase_start", "debate", self.cycle_count, {"agents": 3})
+        self._stream_emit("on_phase_start", "debate", self.cycle_count, {"agents": 4})
 
         current_features = self.get_current_features()
         recent_changes = self.get_recent_changes()
@@ -778,10 +792,10 @@ Recent changes:
         protocol = DebateProtocol(
             rounds=2,
             consensus="judge",
-            proposer_count=3,  # All agents are visionaries initially
+            proposer_count=4,  # All 4 agents participate
         )
 
-        arena = Arena(env, [self.gemini, self.codex, self.claude], protocol)
+        arena = Arena(env, [self.gemini, self.codex, self.claude, self.grok], protocol)
         result = await self._run_arena_with_logging(arena, "debate")
 
         phase_duration = (datetime.now() - phase_start).total_seconds()
@@ -804,7 +818,7 @@ Recent changes:
         self._log("\n" + "=" * 70)
         self._log("PHASE 2: IMPLEMENTATION DESIGN")
         self._log("=" * 70)
-        self._stream_emit("on_phase_start", "design", self.cycle_count, {"agents": 3})
+        self._stream_emit("on_phase_start", "design", self.cycle_count, {"agents": 4})
 
         env = Environment(
             task=f"""{SAFETY_PREAMBLE}
@@ -828,11 +842,11 @@ The implementation MUST preserve all existing aragora functionality.""",
         protocol = DebateProtocol(
             rounds=1,
             consensus="judge",
-            proposer_count=3,  # All agents participate as proposers
+            proposer_count=4,  # All 4 agents participate as proposers
         )
 
-        # All 3 agents participate in design (same as debate phase)
-        arena = Arena(env, [self.gemini, self.codex, self.claude], protocol)
+        # All 4 agents participate in design
+        arena = Arena(env, [self.gemini, self.codex, self.claude, self.grok], protocol)
         result = await self._run_arena_with_logging(arena, "design")
 
         phase_duration = (datetime.now() - phase_start).total_seconds()
