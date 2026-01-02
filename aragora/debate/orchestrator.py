@@ -18,6 +18,7 @@ from aragora.debate.convergence import (
     ConvergenceResult,
     get_similarity_backend,
 )
+from aragora.spectate.stream import SpectatorStream
 
 
 @dataclass
@@ -72,6 +73,9 @@ class DebateProtocol:
     judge_termination: bool = False
     min_rounds_before_judge_check: int = 2  # Check only after this many rounds
 
+    # Human participation settings
+    user_vote_weight: float = 0.5  # Weight of user votes relative to agent votes (0.5 = half weight)
+
 
 class Arena:
     """
@@ -92,12 +96,25 @@ class Arena:
         protocol: DebateProtocol = None,
         memory=None,  # CritiqueStore instance
         event_hooks: dict = None,  # Optional hooks for streaming events
+        event_emitter=None,  # Optional event emitter for subscribing to user events
+        spectator: SpectatorStream = None,  # Optional spectator stream for real-time events
     ):
         self.env = environment
         self.agents = agents
         self.protocol = protocol or DebateProtocol()
         self.memory = memory
         self.hooks = event_hooks or {}
+        self.event_emitter = event_emitter
+        self.spectator = spectator or SpectatorStream(enabled=False)
+
+        # User participation tracking
+        self.user_votes: list[dict] = []  # List of user vote events
+        self.user_suggestions: list[dict] = []  # List of user suggestion events
+
+        # Subscribe to user participation events if emitter provided
+        if event_emitter:
+            from aragora.server.stream import StreamEventType
+            event_emitter.subscribe(self._handle_user_event)
 
         # Assign roles if not already set
         self._assign_roles()
@@ -107,6 +124,20 @@ class Arena:
 
         # Apply agreement intensity guidance to all agents
         self._apply_agreement_intensity()
+
+    def _handle_user_event(self, event) -> None:
+        """Handle incoming user participation events."""
+        from aragora.server.stream import StreamEventType
+
+        if event.type == StreamEventType.USER_VOTE:
+            self.user_votes.append(event.data)
+        elif event.type == StreamEventType.USER_SUGGESTION:
+            self.user_suggestions.append(event.data)
+
+    def _notify_spectator(self, event_type: str, **kwargs):
+        """Helper method to emit spectator events."""
+        if self.spectator:
+            self.spectator.emit(event_type, **kwargs)
 
         # Initialize convergence detector if enabled
         self.convergence_detector = None
@@ -234,24 +265,39 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         if "on_debate_start" in self.hooks:
             self.hooks["on_debate_start"](self.env.task, [a.name for a in self.agents])
 
-        # Generate initial proposals
+        # Notify spectator of debate start
+        self._notify_spectator("debate_start", details=f"Task: {self.env.task[:50]}...", agent="system")
+
+        # Generate initial proposals (stream output as each completes)
         print("Round 0: Initial Proposals")
         print("-" * 40)
 
-        proposal_tasks = []
-        for agent in proposers:
+        # Create tasks with agent reference for streaming output
+        async def generate_proposal(agent):
+            """Generate proposal and return (agent, result_or_error)."""
             prompt = self._build_proposal_prompt(agent)
-            proposal_tasks.append(self._generate_with_agent(agent, prompt, context))
+            print(f"  {agent.name}: generating...", flush=True)
+            try:
+                result = await self._generate_with_agent(agent, prompt, context)
+                return (agent, result)
+            except Exception as e:
+                return (agent, e)
 
-        proposal_results = await asyncio.gather(*proposal_tasks, return_exceptions=True)
+        # Use asyncio.as_completed to stream output as each agent finishes
+        tasks = [asyncio.create_task(generate_proposal(agent)) for agent in proposers]
 
-        for agent, result_or_error in zip(proposers, proposal_results):
+        for completed_task in asyncio.as_completed(tasks):
+            agent, result_or_error = await completed_task
+
             if isinstance(result_or_error, Exception):
                 print(f"  {agent.name}: ERROR - {result_or_error}")
                 proposals[agent.name] = f"[Error generating proposal: {result_or_error}]"
             else:
                 proposals[agent.name] = result_or_error
                 print(f"  {agent.name}: {result_or_error}")  # Full content
+
+                # Notify spectator of proposal
+                self._notify_spectator("propose", agent=agent.name, details=f"Initial proposal ({len(result_or_error)} chars)", metric=len(result_or_error))
 
             msg = Message(
                 role="proposer",
@@ -276,6 +322,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             print(f"\nRound {round_num}: Critique & Revise")
             print("-" * 40)
 
+            # Notify spectator of round start
+            self._notify_spectator("round", details=f"Starting Round {round_num}", agent="system")
+
             # Rotate stances if asymmetric debate is enabled
             if self.protocol.asymmetric_stances and self.protocol.rotate_stances:
                 self._assign_stances(round_num)
@@ -293,63 +342,74 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 # The loop below already skips self-critique via "if critic.name != proposal_agent"
                 critics = list(self.agents)
 
-            # === Critique Phase ===
+            # === Critique Phase (stream output as each critique completes) ===
+            async def generate_critique(critic, proposal_agent, proposal):
+                """Generate critique and return (critic, proposal_agent, result_or_error)."""
+                print(f"  {critic.name} -> {proposal_agent}: critiquing...", flush=True)
+                try:
+                    crit_result = await self._critique_with_agent(critic, proposal, self.env.task, context)
+                    return (critic, proposal_agent, crit_result)
+                except Exception as e:
+                    return (critic, proposal_agent, e)
+
+            # Create all critique tasks
+            critique_tasks = []
             for proposal_agent, proposal in proposals.items():
-                critique_tasks = []
                 for critic in critics:
                     if critic.name != proposal_agent:  # Don't critique yourself
                         critique_tasks.append(
-                            self._critique_with_agent(critic, proposal, self.env.task, context)
+                            asyncio.create_task(generate_critique(critic, proposal_agent, proposal))
                         )
 
-                if critique_tasks:
-                    critique_results = await asyncio.gather(*critique_tasks, return_exceptions=True)
+            # Stream output as each critique completes
+            for completed_task in asyncio.as_completed(critique_tasks):
+                critic, proposal_agent, crit_result = await completed_task
 
-                    for critic, crit_result in zip(
-                        [c for c in critics if c.name != proposal_agent], critique_results
-                    ):
-                        if isinstance(crit_result, Exception):
-                            print(f"  {critic.name} -> {proposal_agent}: ERROR - {crit_result}")
-                        else:
-                            result.critiques.append(crit_result)
-                            print(
-                                f"  {critic.name} -> {proposal_agent}: "
-                                f"{len(crit_result.issues)} issues, "
-                                f"severity {crit_result.severity:.1f}"
-                            )
+                if isinstance(crit_result, Exception):
+                    print(f"  {critic.name} -> {proposal_agent}: ERROR - {crit_result}")
+                else:
+                    result.critiques.append(crit_result)
+                    print(
+                        f"  {critic.name} -> {proposal_agent}: "
+                        f"{len(crit_result.issues)} issues, "
+                        f"severity {crit_result.severity:.1f}"
+                    )
 
-                            # Get full critique content
-                            critique_content = crit_result.to_prompt()
+                    # Notify spectator of critique
+                    self._notify_spectator("critique", agent=critic.name, details=f"Critiqued {proposal_agent}: {len(crit_result.issues)} issues", metric=crit_result.severity)
 
-                            # Emit critique event with full content
-                            if "on_critique" in self.hooks:
-                                self.hooks["on_critique"](
-                                    agent=critic.name,
-                                    target=proposal_agent,
-                                    issues=crit_result.issues,
-                                    severity=crit_result.severity,
-                                    round_num=round_num,
-                                    full_content=critique_content,
-                                )
+                    # Get full critique content
+                    critique_content = crit_result.to_prompt()
 
-                            # Also emit as a message for the activity feed
-                            if "on_message" in self.hooks:
-                                self.hooks["on_message"](
-                                    agent=critic.name,
-                                    content=critique_content,
-                                    role="critic",
-                                    round_num=round_num,
-                                )
+                    # Emit critique event with full content
+                    if "on_critique" in self.hooks:
+                        self.hooks["on_critique"](
+                            agent=critic.name,
+                            target=proposal_agent,
+                            issues=crit_result.issues,
+                            severity=crit_result.severity,
+                            round_num=round_num,
+                            full_content=critique_content,
+                        )
 
-                            # Add critique to context
-                            msg = Message(
-                                role="critic",
-                                agent=critic.name,
-                                content=critique_content,
-                                round=round_num,
-                            )
-                            context.append(msg)
-                            result.messages.append(msg)
+                    # Also emit as a message for the activity feed
+                    if "on_message" in self.hooks:
+                        self.hooks["on_message"](
+                            agent=critic.name,
+                            content=critique_content,
+                            role="critic",
+                            round_num=round_num,
+                        )
+
+                    # Add critique to context
+                    msg = Message(
+                        role="critic",
+                        agent=critic.name,
+                        content=critique_content,
+                        round=round_num,
+                    )
+                    context.append(msg)
+                    result.messages.append(msg)
 
             # === Revision Phase ===
             # Get critiques for each proposer and let them revise
@@ -366,6 +426,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         revised = await self._generate_with_agent(agent, revision_prompt, context)
                         proposals[agent.name] = revised
                         print(f"  {agent.name} revised: {revised}")  # Full content
+
+                        # Notify spectator of revision
+                        self._notify_spectator("propose", agent=agent.name, details=f"Revised proposal ({len(revised)} chars)", metric=len(revised))
 
                         msg = Message(
                             role="proposer",
@@ -403,6 +466,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     result.per_agent_similarity = convergence.per_agent_similarity
 
                     print(f"  Convergence: {convergence.status} ({convergence.avg_similarity:.0%} avg)")
+
+                    # Notify spectator of convergence
+                    self._notify_spectator("convergence", details=f"{convergence.status}", metric=convergence.avg_similarity)
 
                     # Emit convergence event
                     if "on_convergence_check" in self.hooks:
@@ -450,18 +516,29 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             result.confidence = 0.5
 
         elif self.protocol.consensus == "majority":
-            # All agents vote
-            vote_tasks = [
-                self._vote_with_agent(agent, proposals, self.env.task) for agent in self.agents
-            ]
-            votes = await asyncio.gather(*vote_tasks, return_exceptions=True)
+            # All agents vote (stream output as each vote completes)
+            async def cast_vote(agent):
+                """Cast vote and return (agent, result_or_error)."""
+                print(f"  {agent.name}: voting...", flush=True)
+                try:
+                    vote_result = await self._vote_with_agent(agent, proposals, self.env.task)
+                    return (agent, vote_result)
+                except Exception as e:
+                    return (agent, e)
 
-            for agent, vote_result in zip(self.agents, votes):
+            vote_tasks = [asyncio.create_task(cast_vote(agent)) for agent in self.agents]
+
+            for completed_task in asyncio.as_completed(vote_tasks):
+                agent, vote_result = await completed_task
+
                 if isinstance(vote_result, Exception):
                     print(f"  {agent.name}: ERROR voting - {vote_result}")
                 else:
                     result.votes.append(vote_result)
                     print(f"  {agent.name} votes: {vote_result.choice} ({vote_result.confidence:.0%})")
+
+                    # Notify spectator of vote
+                    self._notify_spectator("vote", agent=agent.name, details=f"Voted for {vote_result.choice}", metric=vote_result.confidence)
 
                     # Emit vote event
                     if "on_vote" in self.hooks:
@@ -481,16 +558,29 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
             # Count votes using canonical choices
             vote_counts = Counter()
+            total_agent_votes = 0
             for v in result.votes:
                 if not isinstance(v, Exception):
                     canonical = choice_mapping.get(v.choice, v.choice)
                     vote_counts[canonical] += 1
+                    total_agent_votes += 1
+
+            # Include user votes with configurable weight
+            user_vote_weight = getattr(self.protocol, 'user_vote_weight', 0.5)  # Default: users count as half an agent
+            for user_vote in self.user_votes:
+                choice = user_vote.get("choice", "")
+                if choice:
+                    canonical = choice_mapping.get(choice, choice)
+                    vote_counts[canonical] += user_vote_weight
+                    print(f"  User {user_vote.get('user_id', 'anonymous')} votes: {choice}")
+
+            total_votes = total_agent_votes + len(self.user_votes) * user_vote_weight
 
             if vote_counts:
                 winner, count = vote_counts.most_common(1)[0]
                 result.final_answer = proposals.get(winner, list(proposals.values())[0])
-                result.consensus_reached = count / len(self.agents) >= self.protocol.consensus_threshold
-                result.confidence = count / len(self.agents)
+                result.consensus_reached = count / total_votes >= self.protocol.consensus_threshold
+                result.confidence = count / total_votes
 
                 # Calculate consensus variance and strength
                 if len(vote_counts) > 1:
@@ -517,6 +607,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         result.dissenting_views.append(f"[{agent}]: {prop}")
 
                 print(f"\n  Winner: {winner} ({count}/{len(self.agents)} votes)")
+
+                # Notify spectator of consensus
+                self._notify_spectator("consensus", details=f"Majority vote: {winner}", metric=result.confidence)
             else:
                 result.final_answer = list(proposals.values())[0]
                 result.consensus_reached = False
@@ -526,6 +619,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             # Select judge based on protocol setting (random, voted, or last)
             judge = await self._select_judge(proposals, context)
             print(f"  Judge selected: {judge.name} (via {self.protocol.judge_selection})")
+
+            # Notify spectator of judge selection
+            self._notify_spectator("judge", agent=judge.name, details=f"Selected as judge via {self.protocol.judge_selection}")
 
             # Emit judge selection event
             if "on_judge_selected" in self.hooks:
@@ -538,6 +634,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 result.consensus_reached = True
                 result.confidence = 0.8
                 print(f"  Judge ({judge.name}): {synthesis}")  # Full content
+
+                # Notify spectator of judge synthesis
+                self._notify_spectator("consensus", agent=judge.name, details=f"Judge synthesis ({len(synthesis)} chars)", metric=0.8)
 
                 # Emit judge's synthesis as a message for the activity feed
                 if "on_message" in self.hooks:
@@ -574,6 +673,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 duration=result.duration_seconds,
                 rounds=result.rounds_used,
             )
+
+        # Notify spectator of debate end
+        self._notify_spectator("debate_end", details=f"Complete in {result.duration_seconds:.1f}s", metric=result.confidence)
 
         print(f"\n{'='*60}")
         print(f"DEBATE COMPLETE in {result.duration_seconds:.1f}s")
