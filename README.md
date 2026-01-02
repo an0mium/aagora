@@ -1,6 +1,8 @@
 # aragora (Agent Agora): Multi-Agent Debate Framework
 
-> A society of heterogeneous AI agents that discuss, critique, improve each other's responses, and learn from successful patterns.
+> *"The truth is the whole."* — Hegel
+
+A society of heterogeneous AI agents that discuss, critique, improve each other's responses, and learn from successful patterns. Aragora implements dialectical reasoning: truth emerges not from any single perspective, but through the productive tension of contradiction and synthesis.
 
 **Domain**: [aragora.ai](https://aragora.ai) (available)
 
@@ -12,6 +14,20 @@ aragora synthesizes ideas from:
 - **[LLM Multi-Agent Debate](https://github.com/composable-models/llm_multiagent_debate)** - ICML 2024 consensus mechanisms
 - **[UniversalBackrooms](https://github.com/scottviteri/UniversalBackrooms)** - Multi-model infinite conversations
 - **[Project Sid](https://github.com/altera-al/project-sid)** - Emergent civilization with 1000+ agents
+
+## Philosophical Foundation
+
+Aragora's architecture embodies principles from Hegelian dialectics:
+
+| Dialectical Concept | Aragora Implementation |
+|---------------------|------------------------|
+| **Thesis → Antithesis → Synthesis** | Propose → Critique → Revise loop |
+| **Aufhebung** (sublation) | Judge synthesizes best elements, preserving value while transcending limitations |
+| **Contradiction as motor** | Critiques (disagreement) drive improvement, not consensus-seeking |
+| **Negation of negation** | Proposal → Critique (negation) → Revision (higher unity) |
+| **Truth as totality** | No single agent has complete truth; it emerges from multi-perspectival synthesis |
+
+The **nomic loop** (self-modifying rules) mirrors Hegel's concept of Spirit developing through its own internal contradictions—the system's structure becomes an object of its own dialectical process.
 
 ## Key Features
 
@@ -163,30 +179,33 @@ aragora export --format jsonl > training_data.jsonl
 
 ## Debate Protocol
 
-Each debate follows this structure:
+Each debate follows the dialectical structure of thesis → antithesis → synthesis:
 
-1. **Round 0: Initial Proposals**
+1. **Round 0: Thesis (Initial Proposals)**
    - Proposer agents generate initial responses to the task
+   - Multiple perspectives on the same problem
 
-2. **Rounds 1-N: Critique & Revise**
-   - Critic agents analyze each proposal
-   - Identify issues (severity 0-1)
+2. **Rounds 1-N: Antithesis (Critique & Revise)**
+   - Agents critique each other's proposals (productive negation)
+   - Identify issues with severity scores (0-1)
    - Provide concrete suggestions
-   - Proposers revise based on critiques
+   - Proposers revise, incorporating valid critiques (negation of negation)
 
-3. **Consensus Phase**
+3. **Synthesis (Consensus Phase)**
    - All agents vote on best proposal
-   - Synthesizer may combine best elements
-   - Final answer selected by consensus mechanism
+   - Judge synthesizes best elements from competing proposals (*Aufhebung*)
+   - Judge selection is randomized or voted to prevent systematic bias
+   - Final answer transcends individual limitations
 
-## Self-Improvement
+## Self-Improvement (Reflexive Development)
 
-aragora learns from successful debates:
+Aragora learns from successful debates through a process analogous to Hegel's self-developing Spirit—the system examines its own patterns, finds inadequacies, and transcends to higher forms:
 
 1. **Pattern Storage**: Successful critique→fix patterns are indexed by issue type
-2. **Retrieval**: Future debates can retrieve relevant patterns
-3. **Prompt Evolution**: Agent system prompts can be updated based on what works
-4. **Export**: Patterns can be exported for fine-tuning
+2. **Retrieval**: Future debates can retrieve relevant patterns (learning from history)
+3. **Prompt Evolution**: Agent system prompts evolve based on what works
+4. **Nomic Loop**: The system debates *changes to itself*, making its own rules an object of dialectical inquiry
+5. **Export**: Patterns can be exported for fine-tuning
 
 ```python
 # Retrieve successful patterns
@@ -230,5 +249,8 @@ This project was inspired by a conversation exploring the intersection of:
 - Competitive-collaborative dynamics
 - Self-improvement through critique
 - Emergent behavior in AI societies
+- Hegelian dialectics and the structure of reason
 
-Special thanks to the researchers behind Generative Agents, ChatArena, and Project Sid for pioneering this space.
+The name "aragora" evokes the Greek *agora* (ἀγορά)—the public assembly where citizens debated and reached collective decisions through reasoned discourse.
+
+Special thanks to the researchers behind Generative Agents, ChatArena, and Project Sid for pioneering this space, and to Hegel for the insight that contradiction is not a flaw to avoid but the engine of development.
