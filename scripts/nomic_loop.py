@@ -410,6 +410,60 @@ Never propose removing the nomic loop or core debate infrastructure.""" + safety
         except Exception:
             return "Unable to read git history"
 
+    async def _parallel_implementation_review(self, diff: str) -> Optional[str]:
+        """
+        All 3 agents review implementation changes in parallel.
+
+        This provides balanced participation in the implementation stage
+        while keeping the actual implementation specialized to Claude.
+
+        Returns:
+            Combined concerns from all agents, or None if all approve.
+        """
+        review_prompt = f"""Quick review of these code changes. Are there any obvious issues?
+
+## Code Changes (git diff)
+```
+{diff[:3000]}
+```
+
+Reply with ONE of:
+- APPROVED: <brief reason>
+- CONCERN: <specific issue>
+
+Be concise (1-2 sentences). Focus on correctness and safety issues only.
+"""
+
+        async def review_with_agent(agent, name: str) -> tuple[str, str]:
+            """Run review with one agent, returning (name, result)."""
+            try:
+                result = await agent.generate(review_prompt, context=[])
+                return (name, result[:200] if result else "No response")
+            except Exception as e:
+                return (name, f"Error: {e}")
+
+        # Run all 3 agents in parallel
+        import asyncio
+        reviews = await asyncio.gather(
+            review_with_agent(self.gemini, "gemini"),
+            review_with_agent(self.codex, "codex"),
+            review_with_agent(self.claude, "claude"),
+            return_exceptions=True,
+        )
+
+        # Collect concerns
+        concerns = []
+        for result in reviews:
+            if isinstance(result, Exception):
+                continue
+            name, response = result
+            if response and "CONCERN" in response.upper():
+                concerns.append(f"{name}: {response}")
+
+        if concerns:
+            return "\n".join(concerns)
+        return None
+
     def _create_arena_hooks(self, phase_name: str) -> dict:
         """Create event hooks for real-time Arena logging and streaming."""
         # Get streaming hooks if available
@@ -566,12 +620,12 @@ Recent changes:
         }
 
     async def phase_design(self, improvement: str) -> dict:
-        """Phase 2: Agents design the implementation."""
+        """Phase 2: All agents design the implementation together."""
         phase_start = datetime.now()
         self._log("\n" + "=" * 70)
         self._log("PHASE 2: IMPLEMENTATION DESIGN")
         self._log("=" * 70)
-        self._stream_emit("on_phase_start", "design", self.cycle_count, {"agents": 2})
+        self._stream_emit("on_phase_start", "design", self.cycle_count, {"agents": 3})
 
         env = Environment(
             task=f"""{SAFETY_PREAMBLE}
@@ -595,9 +649,11 @@ The implementation MUST preserve all existing aragora functionality.""",
         protocol = DebateProtocol(
             rounds=1,
             consensus="judge",
+            proposer_count=3,  # All agents participate as proposers
         )
 
-        arena = Arena(env, [self.codex, self.claude], protocol)
+        # All 3 agents participate in design (same as debate phase)
+        arena = Arena(env, [self.gemini, self.codex, self.claude], protocol)
         result = await self._run_arena_with_logging(arena, "design")
 
         phase_duration = (datetime.now() - phase_start).total_seconds()
@@ -774,6 +830,17 @@ The implementation MUST preserve all existing aragora functionality.""",
             if all_success and tasks_completed == len(plan.tasks):
                 clear_progress(self.aragora_path)
                 self._log(f"  All {tasks_completed} tasks completed successfully")
+
+                # Pre-verification review: All 3 agents review implementation in parallel
+                self._log("\n  Pre-verification review (all agents)...")
+                diff = self._get_git_diff()
+                if diff and len(diff) > 100:  # Only review if there are substantial changes
+                    review_concerns = await self._parallel_implementation_review(diff)
+                    if review_concerns:
+                        self._log(f"    Review concerns: {review_concerns[:200]}...")
+                    else:
+                        self._log("    All agents approve the implementation")
+
                 phase_duration = (datetime.now() - phase_start).total_seconds()
                 self._stream_emit(
                     "on_phase_end", "implement", self.cycle_count, True,
@@ -784,7 +851,7 @@ The implementation MUST preserve all existing aragora functionality.""",
                     "success": True,
                     "tasks_completed": tasks_completed,
                     "tasks_total": len(plan.tasks),
-                    "diff": self._get_git_diff(),
+                    "diff": diff,
                     "results": [r.to_dict() for r in results],
                 }
             else:
