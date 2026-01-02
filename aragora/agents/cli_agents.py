@@ -288,6 +288,118 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+class KiloCodeAgent(CLIAgent):
+    """
+    Agent that uses Kilo Code CLI for codebase exploration.
+
+    Kilo Code is an agentic coding assistant that can explore codebases
+    autonomously. It supports multiple AI providers including Gemini and Grok
+    via direct API or OpenRouter.
+
+    This agent is particularly useful for context gathering phases where
+    the AI needs to read and understand the codebase structure.
+
+    Provider IDs (configured in ~/.kilocode/cli/config.json):
+    - gemini-explorer: Gemini 3 Pro via direct API
+    - grok-explorer: Grok via xAI API
+    - openrouter-gemini: Gemini via OpenRouter
+    - openrouter-grok: Grok via OpenRouter
+    """
+
+    def __init__(
+        self,
+        name: str,
+        provider_id: str = "gemini-explorer",
+        model: str = None,
+        role: str = "proposer",
+        timeout: int = 600,
+        mode: str = "architect",
+    ):
+        # Model name is informational - actual model is set by provider_id
+        super().__init__(name, model or provider_id, role, timeout)
+        self.provider_id = provider_id
+        self.mode = mode  # architect, code, ask, debug
+
+    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+        """Generate a response using kilocode CLI with codebase access."""
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+
+        if self.system_prompt:
+            full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
+
+        # Use kilocode with:
+        # --auto: autonomous mode (non-interactive)
+        # --yolo: auto-approve tool permissions
+        # --json: output as JSON for parsing
+        # --provider: select the configured provider
+        # --mode: architect mode for exploration
+        # --timeout: prevent hanging
+        cmd = [
+            "kilocode",
+            "--auto",
+            "--yolo",
+            "--json",
+            "-pv", self.provider_id,
+            "-m", self.mode,
+            "-t", str(self.timeout),
+            full_prompt,
+        ]
+
+        result = await self._run_cli(cmd)
+        return self._extract_kilocode_response(result)
+
+    def _extract_kilocode_response(self, output: str) -> str:
+        """Extract the assistant response from Kilo Code JSON output."""
+        # Kilocode with --json outputs JSON lines
+        lines = output.strip().split('\n')
+        responses = []
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                # Look for assistant messages
+                if msg.get("role") == "assistant":
+                    content = msg.get("content", "")
+                    if content:
+                        responses.append(content)
+                # Also check for 'text' field in some message formats
+                elif msg.get("type") == "text":
+                    text = msg.get("text", "")
+                    if text:
+                        responses.append(text)
+            except json.JSONDecodeError:
+                # If not JSON, might be plain text
+                continue
+
+        # Return combined responses or raw output if nothing extracted
+        if responses:
+            return "\n\n".join(responses)
+        return output
+
+    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+        """Critique a proposal using kilocode."""
+        critique_prompt = f"""Analyze this proposal critically for the given task.
+
+Task: {task}
+
+Proposal:
+{proposal}
+
+Provide structured feedback:
+- ISSUES: Specific problems (bullet points)
+- SUGGESTIONS: Improvements (bullet points)
+- SEVERITY: 0.0-1.0 rating
+- REASONING: Brief explanation"""
+
+        response = await self.generate(critique_prompt, context)
+        return self._parse_critique(response, "proposal", proposal)
+
+
 class GrokCLIAgent(CLIAgent):
     """Agent that uses xAI Grok CLI."""
 

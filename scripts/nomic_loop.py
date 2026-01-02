@@ -118,7 +118,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from aragora.debate.orchestrator import Arena, DebateProtocol
 from aragora.core import Environment
 from aragora.agents.api_agents import GeminiAgent
-from aragora.agents.cli_agents import CodexAgent, ClaudeAgent, GrokCLIAgent
+from aragora.agents.cli_agents import CodexAgent, ClaudeAgent, GrokCLIAgent, KiloCodeAgent
+
+# Check if Kilo Code CLI is available for Gemini/Grok codebase exploration
+KILOCODE_AVAILABLE = False
+try:
+    import subprocess
+    result = subprocess.run(["which", "kilocode"], capture_output=True, text=True)
+    KILOCODE_AVAILABLE = result.returncode == 0
+except Exception:
+    pass
 
 # Genesis module for fractal debates with agent evolution
 GENESIS_AVAILABLE = False
@@ -750,20 +759,35 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
 
     async def phase_context_gathering(self) -> dict:
         """
-        Phase 0: Claude and Codex explore codebase to gather context.
+        Phase 0: All agents explore codebase to gather context.
 
-        This phase runs BEFORE the main debate. Claude and Codex have built-in
-        codebase exploration abilities, while Gemini and Grok do not. By having
-        the capable agents gather context first, we ensure ALL agents in the
-        debate have accurate, up-to-date information about existing features.
+        Each agent uses its native codebase exploration harness:
+        - Claude → Claude Code CLI (native codebase access)
+        - Codex → Codex CLI (native codebase access)
+        - Gemini → Kilo Code CLI (agentic codebase exploration)
+        - Grok → Kilo Code CLI (agentic codebase exploration)
 
-        This prevents agents from proposing features that already exist.
+        This ensures ALL agents have first-hand knowledge of the codebase,
+        preventing proposals for features that already exist.
         """
         phase_start = datetime.now()
-        self._log("\n" + "=" * 70)
-        self._log("PHASE 0: CONTEXT GATHERING (Claude + Codex)")
-        self._log("=" * 70)
-        self._stream_emit("on_phase_start", "context", self.cycle_count, {"agents": 2})
+
+        # Determine how many agents will participate
+        agents_count = 2  # Claude + Codex always
+        if KILOCODE_AVAILABLE:
+            agents_count = 4  # + Gemini + Grok via Kilo Code
+            self._log("\n" + "=" * 70)
+            self._log("PHASE 0: CONTEXT GATHERING (All 4 agents with codebase access)")
+            self._log("  Claude → Claude Code | Codex → Codex CLI")
+            self._log("  Gemini → Kilo Code  | Grok → Kilo Code")
+            self._log("=" * 70)
+        else:
+            self._log("\n" + "=" * 70)
+            self._log("PHASE 0: CONTEXT GATHERING (Claude + Codex)")
+            self._log("  Note: Install kilocode CLI to enable Gemini/Grok exploration")
+            self._log("=" * 70)
+
+        self._stream_emit("on_phase_start", "context", self.cycle_count, {"agents": agents_count})
 
         # Prompt for codebase exploration
         explore_prompt = f"""Explore the aragora codebase and provide a comprehensive summary of EXISTING features.
@@ -793,34 +817,62 @@ What's genuinely missing (not already implemented).
 
 CRITICAL: Be thorough. Features you miss here may be accidentally proposed for recreation."""
 
-        async def gather_with_agent(agent, name: str) -> tuple[str, str]:
+        async def gather_with_agent(agent, name: str, harness: str) -> tuple[str, str, str]:
             """Run exploration with one agent."""
             try:
-                self._log(f"  {name}: exploring codebase...")
+                self._log(f"  {name} ({harness}): exploring codebase...")
                 result = await agent.generate(explore_prompt, context=[])
                 self._log(f"  {name}: complete ({len(result) if result else 0} chars)")
-                return (name, result if result else "No response")
+                return (name, harness, result if result else "No response")
             except Exception as e:
                 self._log(f"  {name}: error - {e}")
-                return (name, f"Error: {e}")
+                return (name, harness, f"Error: {e}")
 
-        # Run Claude and Codex in parallel (they have codebase access)
-        results = await asyncio.gather(
-            gather_with_agent(self.claude, "claude"),
-            gather_with_agent(self.codex, "codex"),
-            return_exceptions=True,
-        )
+        # Build list of exploration tasks
+        exploration_tasks = [
+            gather_with_agent(self.claude, "claude", "Claude Code"),
+            gather_with_agent(self.codex, "codex", "Codex CLI"),
+        ]
 
-        # Combine the context from both agents
+        # Add Gemini and Grok via Kilo Code if available
+        if KILOCODE_AVAILABLE:
+            # Create temporary Kilo Code agents for exploration
+            gemini_explorer = KiloCodeAgent(
+                name="gemini-explorer",
+                provider_id="gemini-explorer",
+                model="gemini-3-pro",
+                role="explorer",
+                timeout=600,
+                mode="architect",
+            )
+            grok_explorer = KiloCodeAgent(
+                name="grok-explorer",
+                provider_id="grok-explorer",
+                model="grok-code-fast-1",
+                role="explorer",
+                timeout=600,
+                mode="architect",
+            )
+            exploration_tasks.extend([
+                gather_with_agent(gemini_explorer, "gemini", "Kilo Code"),
+                gather_with_agent(grok_explorer, "grok", "Kilo Code"),
+            ])
+
+        # Run all agents in parallel
+        results = await asyncio.gather(*exploration_tasks, return_exceptions=True)
+
+        # Combine the context from all agents
         combined_context = []
         for result in results:
             if isinstance(result, Exception):
                 continue
-            name, content = result
+            name, harness, content = result
             if content and "Error:" not in content:
-                combined_context.append(f"=== {name.upper()}'S CODEBASE ANALYSIS ===\n{content}")
+                combined_context.append(
+                    f"=== {name.upper()}'S CODEBASE ANALYSIS (via {harness}) ===\n{content}"
+                )
 
-        # If both failed, fall back to basic context
+        # If all failed, fall back to basic context
         if not combined_context:
             self._log("  Warning: Context gathering failed, using basic context")
             combined_context = [f"Current features (from docstring):\n{self.get_current_features()}"]
@@ -828,16 +880,17 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
         gathered_context = "\n\n".join(combined_context)
 
         phase_duration = (datetime.now() - phase_start).total_seconds()
-        self._log(f"  Context gathered in {phase_duration:.1f}s")
+        self._log(f"  Context gathered from {len(combined_context)} agents in {phase_duration:.1f}s")
         self._stream_emit(
             "on_phase_end", "context", self.cycle_count, True,
-            phase_duration, {"agents": 2, "context_length": len(gathered_context)}
+            phase_duration, {"agents": len(combined_context), "context_length": len(gathered_context)}
         )
 
         return {
             "phase": "context",
             "context": gathered_context,
             "duration": phase_duration,
+            "agents_succeeded": len(combined_context),
         }
 
     async def phase_debate(self, codebase_context: str = None) -> dict:
