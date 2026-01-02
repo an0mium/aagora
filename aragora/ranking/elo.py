@@ -21,6 +21,9 @@ from typing import Optional
 DEFAULT_ELO = 1500
 K_FACTOR = 32  # How quickly ratings change
 
+# Calibration scoring constants
+CALIBRATION_MIN_COUNT = 10  # Minimum predictions for meaningful score
+
 
 @dataclass
 class AgentRating:
@@ -35,6 +38,10 @@ class AgentRating:
     debates_count: int = 0
     critiques_accepted: int = 0
     critiques_total: int = 0
+    # Calibration scoring fields
+    calibration_correct: int = 0
+    calibration_total: int = 0
+    calibration_brier_sum: float = 0.0
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property
@@ -52,6 +59,34 @@ class AgentRating:
     def games_played(self) -> int:
         """Total games played."""
         return self.wins + self.losses + self.draws
+
+    @property
+    def calibration_accuracy(self) -> float:
+        """Fraction of correct winner predictions."""
+        if self.calibration_total == 0:
+            return 0.0
+        return self.calibration_correct / self.calibration_total
+
+    @property
+    def calibration_brier_score(self) -> float:
+        """Average Brier score (lower is better, 0 = perfect)."""
+        if self.calibration_total == 0:
+            return 1.0
+        return self.calibration_brier_sum / self.calibration_total
+
+    @property
+    def calibration_score(self) -> float:
+        """
+        Combined calibration score (higher is better).
+
+        Uses (1 - Brier) weighted by confidence from sample size.
+        Requires minimum predictions for meaningful score.
+        """
+        if self.calibration_total < CALIBRATION_MIN_COUNT:
+            return 0.0
+        # Confidence scales from 0.5 at min_count to 1.0 at 50+ predictions
+        confidence = min(1.0, 0.5 + 0.5 * (self.calibration_total - CALIBRATION_MIN_COUNT) / 40)
+        return (1 - self.calibration_brier_score) * confidence
 
 
 @dataclass
@@ -123,6 +158,29 @@ class EloSystem:
             )
         """)
 
+        # Calibration predictions table (for tracking pre-tournament predictions)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS calibration_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tournament_id TEXT NOT NULL,
+                predictor_agent TEXT NOT NULL,
+                predicted_winner TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tournament_id, predictor_agent)
+            )
+        """)
+
+        # Safe schema migration: add calibration columns if missing
+        cursor.execute("PRAGMA table_info(ratings)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if "calibration_correct" not in columns:
+            cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_correct INTEGER DEFAULT 0")
+        if "calibration_total" not in columns:
+            cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_total INTEGER DEFAULT 0")
+        if "calibration_brier_sum" not in columns:
+            cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_brier_sum REAL DEFAULT 0.0")
+
         conn.commit()
         conn.close()
 
@@ -134,7 +192,9 @@ class EloSystem:
         cursor.execute(
             """
             SELECT agent_name, elo, domain_elos, wins, losses, draws,
-                   debates_count, critiques_accepted, critiques_total, updated_at
+                   debates_count, critiques_accepted, critiques_total,
+                   calibration_correct, calibration_total, calibration_brier_sum,
+                   updated_at
             FROM ratings WHERE agent_name = ?
             """,
             (agent_name,),
@@ -155,7 +215,10 @@ class EloSystem:
             debates_count=row[6],
             critiques_accepted=row[7],
             critiques_total=row[8],
-            updated_at=row[9],
+            calibration_correct=row[9] or 0,
+            calibration_total=row[10] or 0,
+            calibration_brier_sum=row[11] or 0.0,
+            updated_at=row[12],
         )
 
     def _save_rating(self, rating: AgentRating):
@@ -166,8 +229,10 @@ class EloSystem:
         cursor.execute(
             """
             INSERT INTO ratings (agent_name, elo, domain_elos, wins, losses, draws,
-                                debates_count, critiques_accepted, critiques_total, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                debates_count, critiques_accepted, critiques_total,
+                                calibration_correct, calibration_total, calibration_brier_sum,
+                                updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_name) DO UPDATE SET
                 elo = excluded.elo,
                 domain_elos = excluded.domain_elos,
@@ -177,6 +242,9 @@ class EloSystem:
                 debates_count = excluded.debates_count,
                 critiques_accepted = excluded.critiques_accepted,
                 critiques_total = excluded.critiques_total,
+                calibration_correct = excluded.calibration_correct,
+                calibration_total = excluded.calibration_total,
+                calibration_brier_sum = excluded.calibration_brier_sum,
                 updated_at = excluded.updated_at
             """,
             (
@@ -189,6 +257,9 @@ class EloSystem:
                 rating.debates_count,
                 rating.critiques_accepted,
                 rating.critiques_total,
+                rating.calibration_correct,
+                rating.calibration_total,
+                rating.calibration_brier_sum,
                 rating.updated_at,
             ),
         )
@@ -463,3 +534,163 @@ class EloSystem:
             "min_elo": ratings_row[3] or DEFAULT_ELO,
             "total_matches": matches_row[0] or 0,
         }
+
+    # =========================================================================
+    # Tournament Winner Calibration Scoring
+    # =========================================================================
+
+    def record_winner_prediction(
+        self,
+        tournament_id: str,
+        predictor_agent: str,
+        predicted_winner: str,
+        confidence: float,
+    ):
+        """
+        Record an agent's prediction for a tournament winner.
+
+        Args:
+            tournament_id: Unique tournament identifier
+            predictor_agent: Agent making the prediction
+            predicted_winner: Agent predicted to win
+            confidence: Confidence level (0.0 to 1.0)
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO calibration_predictions
+                (tournament_id, predictor_agent, predicted_winner, confidence)
+            VALUES (?, ?, ?, ?)
+            """,
+            (tournament_id, predictor_agent, predicted_winner, min(1.0, max(0.0, confidence))),
+        )
+
+        conn.commit()
+        conn.close()
+
+    def resolve_tournament_calibration(
+        self,
+        tournament_id: str,
+        actual_winner: str,
+    ) -> dict[str, float]:
+        """
+        Resolve a tournament and update calibration scores for predictors.
+
+        Uses Brier score: (predicted_probability - actual_outcome)^2
+        Lower Brier = better calibration.
+
+        Args:
+            tournament_id: Tournament that completed
+            actual_winner: Agent who actually won
+
+        Returns:
+            Dict of predictor_agent -> brier_score for this prediction
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT predictor_agent, predicted_winner, confidence
+            FROM calibration_predictions
+            WHERE tournament_id = ?
+            """,
+            (tournament_id,),
+        )
+        predictions = cursor.fetchall()
+        conn.close()
+
+        brier_scores = {}
+
+        for predictor, predicted, confidence in predictions:
+            # Brier score: (confidence - outcome)^2 where outcome is 1 if correct, 0 if wrong
+            correct = 1.0 if predicted == actual_winner else 0.0
+            brier = (confidence - correct) ** 2
+            brier_scores[predictor] = brier
+
+            # Update the predictor's calibration stats
+            rating = self.get_rating(predictor)
+            rating.calibration_total += 1
+            if predicted == actual_winner:
+                rating.calibration_correct += 1
+            rating.calibration_brier_sum += brier
+            rating.updated_at = datetime.now().isoformat()
+            self._save_rating(rating)
+
+        return brier_scores
+
+    def get_calibration_leaderboard(self, limit: int = 20) -> list[AgentRating]:
+        """
+        Get agents ranked by calibration score.
+
+        Only includes agents with minimum predictions.
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT agent_name, elo, domain_elos, wins, losses, draws,
+                   debates_count, critiques_accepted, critiques_total,
+                   calibration_correct, calibration_total, calibration_brier_sum,
+                   updated_at
+            FROM ratings
+            WHERE calibration_total >= ?
+            ORDER BY (1.0 - calibration_brier_sum / calibration_total) DESC
+            LIMIT ?
+            """,
+            (CALIBRATION_MIN_COUNT, limit),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            AgentRating(
+                agent_name=row[0],
+                elo=row[1],
+                domain_elos=json.loads(row[2]) if row[2] else {},
+                wins=row[3],
+                losses=row[4],
+                draws=row[5],
+                debates_count=row[6],
+                critiques_accepted=row[7],
+                critiques_total=row[8],
+                calibration_correct=row[9] or 0,
+                calibration_total=row[10] or 0,
+                calibration_brier_sum=row[11] or 0.0,
+                updated_at=row[12],
+            )
+            for row in rows
+        ]
+
+    def get_agent_calibration_history(
+        self, agent_name: str, limit: int = 50
+    ) -> list[dict]:
+        """Get recent predictions made by an agent."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT tournament_id, predicted_winner, confidence, created_at
+            FROM calibration_predictions
+            WHERE predictor_agent = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (agent_name, limit),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            {
+                "tournament_id": row[0],
+                "predicted_winner": row[1],
+                "confidence": row[2],
+                "created_at": row[3],
+            }
+            for row in rows
+        ]

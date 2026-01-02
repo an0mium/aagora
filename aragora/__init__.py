@@ -87,6 +87,12 @@ from aragora.evolution.evolver import PromptEvolver, EvolutionStrategy
 
 # Agents
 from aragora.agents.personas import Persona, PersonaManager
+from aragora.agents.laboratory import (
+    PersonaLaboratory,
+    PersonaExperiment,
+    EmergentTrait,
+    TraitTransfer,
+)
 
 # Ranking
 from aragora.ranking import EloSystem, AgentRating, MatchResult
@@ -225,6 +231,11 @@ __all__ = [
     # Personas
     "Persona",
     "PersonaManager",
+    # Persona Laboratory
+    "PersonaLaboratory",
+    "PersonaExperiment",
+    "EmergentTrait",
+    "TraitTransfer",
     # Ranking
     "EloSystem",
     "AgentRating",

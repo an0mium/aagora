@@ -3,6 +3,9 @@ Agent implementations for various AI models.
 
 Supports both CLI-based agents (codex, claude) and API-based agents
 (Gemini, Ollama, direct OpenAI/Anthropic APIs).
+
+Also includes persona management and the Emergent Persona Laboratory
+for evolving agent specializations.
 """
 
 from aragora.agents.cli_agents import (
@@ -21,6 +24,13 @@ from aragora.agents.api_agents import (
     OpenAIAPIAgent,
 )
 from aragora.agents.base import create_agent
+from aragora.agents.personas import Persona, PersonaManager, EXPERTISE_DOMAINS, PERSONALITY_TRAITS
+from aragora.agents.laboratory import (
+    PersonaLaboratory,
+    PersonaExperiment,
+    EmergentTrait,
+    TraitTransfer,
+)
 
 __all__ = [
     # CLI-based
@@ -38,4 +48,14 @@ __all__ = [
     "OpenAIAPIAgent",
     # Factory
     "create_agent",
+    # Personas
+    "Persona",
+    "PersonaManager",
+    "EXPERTISE_DOMAINS",
+    "PERSONALITY_TRAITS",
+    # Laboratory
+    "PersonaLaboratory",
+    "PersonaExperiment",
+    "EmergentTrait",
+    "TraitTransfer",
 ]
