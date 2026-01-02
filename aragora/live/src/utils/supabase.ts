@@ -1,0 +1,199 @@
+'use client';
+
+import { createClient } from '@supabase/supabase-js';
+
+// Supabase configuration from environment variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+// Create client (can be null if not configured)
+export const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
+
+export const isSupabaseConfigured = (): boolean => {
+  return supabase !== null;
+};
+
+// Types matching the database schema
+export interface NomicCycle {
+  id: string;
+  loop_id: string;
+  cycle_number: number;
+  phase: string;
+  stage: string | null;
+  started_at: string;
+  completed_at: string | null;
+  success: boolean | null;
+  git_commit: string | null;
+  task_description: string | null;
+  total_tasks: number;
+  completed_tasks: number;
+  error_message: string | null;
+}
+
+export interface StreamEventRow {
+  id: string;
+  loop_id: string;
+  cycle: number;
+  event_type: string;
+  event_data: Record<string, unknown>;
+  agent: string | null;
+  timestamp: string;
+}
+
+export interface DebateArtifact {
+  id: string;
+  loop_id: string;
+  cycle_number: number;
+  phase: string;
+  task: string;
+  agents: string[];
+  transcript: Record<string, unknown>[];
+  consensus_reached: boolean;
+  confidence: number;
+  winning_proposal: string | null;
+  vote_tally: Record<string, number> | null;
+  created_at: string;
+}
+
+// Fetch recent loops (distinct loop_ids)
+export async function fetchRecentLoops(limit = 20): Promise<string[]> {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('nomic_cycles')
+    .select('loop_id')
+    .order('started_at', { ascending: false })
+    .limit(limit * 5); // Get more to ensure we have enough unique
+
+  if (error) {
+    console.error('Error fetching loops:', error);
+    return [];
+  }
+
+  // Get unique loop_ids while preserving order
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const row of data || []) {
+    if (!seen.has(row.loop_id)) {
+      seen.add(row.loop_id);
+      unique.push(row.loop_id);
+      if (unique.length >= limit) break;
+    }
+  }
+  return unique;
+}
+
+// Fetch cycles for a specific loop
+export async function fetchCyclesForLoop(loopId: string): Promise<NomicCycle[]> {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('nomic_cycles')
+    .select('*')
+    .eq('loop_id', loopId)
+    .order('started_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching cycles:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Fetch events for a specific loop
+export async function fetchEventsForLoop(
+  loopId: string,
+  limit = 500
+): Promise<StreamEventRow[]> {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('stream_events')
+    .select('*')
+    .eq('loop_id', loopId)
+    .order('timestamp', { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    console.error('Error fetching events:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Fetch debates for a specific loop
+export async function fetchDebatesForLoop(loopId: string): Promise<DebateArtifact[]> {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('debate_artifacts')
+    .select('*')
+    .eq('loop_id', loopId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching debates:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Subscribe to real-time events for a loop
+export function subscribeToEvents(
+  loopId: string,
+  onEvent: (event: StreamEventRow) => void
+): (() => void) | null {
+  if (!supabase) return null;
+
+  const channel = supabase
+    .channel(`events:${loopId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'stream_events',
+        filter: `loop_id=eq.${loopId}`,
+      },
+      (payload) => {
+        onEvent(payload.new as StreamEventRow);
+      }
+    )
+    .subscribe();
+
+  // Return unsubscribe function
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// Subscribe to all new events (for global monitoring)
+export function subscribeToAllEvents(
+  onEvent: (event: StreamEventRow) => void
+): (() => void) | null {
+  if (!supabase) return null;
+
+  const channel = supabase
+    .channel('all-events')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'stream_events',
+      },
+      (payload) => {
+        onEvent(payload.new as StreamEventRow);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}

@@ -6,6 +6,7 @@ import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { MetricsCards } from '@/components/MetricsCards';
 import { PhaseProgress } from '@/components/PhaseProgress';
 import { AgentPanel } from '@/components/AgentPanel';
+import { HistoryPanel } from '@/components/HistoryPanel';
 import type { NomicState } from '@/types/events';
 
 // WebSocket URL - can be overridden via environment variable
@@ -151,10 +152,15 @@ export default function Home() {
         <MetricsCards nomicState={nomicState} events={events} />
 
         {/* Main Panels */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Agent Activity */}
           <div className="lg:col-span-2 min-h-[500px]">
             <AgentPanel events={events} />
+          </div>
+
+          {/* History Panel (Supabase) */}
+          <div className="lg:col-span-1">
+            <HistoryPanel />
           </div>
         </div>
 
