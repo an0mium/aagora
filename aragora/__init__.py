@@ -4,31 +4,71 @@ aragora (Agent Agora): A Multi-Agent Debate Framework
 A society of heterogeneous AI agents that discuss, critique, improve
 each other's responses, and learn from successful patterns.
 
-Features (v0.7.0):
+=== CORE FEATURES (v0.8.0) ===
+
+DEBATE ENGINE:
 - Multi-agent debate with propose/critique/synthesize protocol
 - CLI agents: claude, codex, gemini, grok, qwen, deepseek
+- Agreement intensity modulation (0-10 scale)
+- Asymmetric debate roles (affirmative/negative/neutral stances)
+- Semantic convergence detection (SentenceTransformer/TF-IDF/Jaccard)
+- Vote option grouping (merge semantically similar choices)
+- Model-controlled early stopping (agents vote to continue/stop)
+- Judge-based termination for conclusive debates
+- Consensus variance tracking (strong/medium/weak/unanimous)
+
+REAL-TIME STREAMING (ALREADY EXISTS - DO NOT RECREATE):
+- WebSocket server for live debate events (aragora/server/stream.py)
+- Live dashboard at https://live.aragora.ai
+- Cloudflare tunnel for public access (api.aragora.ai)
+- Event types: debate_start, round_start, agent_message, critique, vote, consensus
+- SyncEventEmitter for bridging sync debate code to async WebSocket
+
+PERSISTENCE:
+- Supabase integration for historical data (aragora/persistence/)
+- Stores: nomic_cycles, debate_artifacts, stream_events, agent_metrics
+- Real-time subscriptions for multiple dashboard viewers
+
+NOMIC LOOP (SELF-IMPROVEMENT):
+- scripts/nomic_loop.py - Autonomous self-improvement loop
+- scripts/run_nomic_with_stream.py - Run with live streaming
+- 5-phase cycle: debate → design → implement → verify → commit
+- Multi-agent code review with Claude/Codex/Gemini/Grok
+- Protected files system (CLAUDE.md, core.py, etc.)
+- Automatic rollback on verification failure
+- Work preservation in git branches before rollback
+
+MEMORY & LEARNING:
 - Memory streams for persistent agent memory
+- Critique store for pattern learning
+- Semantic retrieval with embeddings
+- Consensus memory with dissent retrieval
+
+ADVANCED FEATURES:
 - ELO ranking and tournament systems
 - Debate forking when agents disagree
 - Meta-critique for process analysis
 - Red-team mode for adversarial testing
 - Human intervention breakpoints
 - Domain-specific debate templates
-- Adaptive agent selection
-- Self-improvement mode for code editing
-- GitHub Action for PR reviews
 - Graph-based debates with counterfactual branching
 - Evidence provenance chains
-- Consensus memory with dissent retrieval
 - Scenario matrix debates
 - Executable verification proofs
+
+=== IMPORTANT FOR NOMIC LOOP ===
+Before proposing new features, check if they already exist:
+- Real-time visualization? → Already exists (live.aragora.ai)
+- Spectator mode? → Already exists (WebSocket streaming)
+- Event streaming? → Already exists (stream.py)
+- Persistence? → Already exists (Supabase)
 
 Inspired by:
 - Stanford Generative Agents (memory + reflection)
 - ChatArena (game environments)
 - LLM Multi-Agent Debate (consensus mechanisms)
-- UniversalBackrooms (multi-model conversations)
-- Project Sid (emergent civilization)
+- ai-counsel (convergence detection, vote grouping)
+- DebateLLM (agreement intensity, asymmetric roles)
 """
 
 # Core
@@ -159,7 +199,7 @@ from aragora.verification import (
     FormalLanguage,
 )
 
-__version__ = "0.07"
+__version__ = "0.8.0"
 __all__ = [
     # Core
     "Agent",
