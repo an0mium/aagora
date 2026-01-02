@@ -1068,7 +1068,7 @@ Working directory: {self.aragora_path}
                     name="claude-fixer",
                     model="claude",
                     role="fixer",
-                    timeout=600,  # Increased from 300 - fixes can be complex
+                    timeout=300,
                 )
                 await fix_agent.generate(fix_prompt, context=[])
                 iteration_result["fix_applied"] = True
@@ -1076,25 +1076,6 @@ Working directory: {self.aragora_path}
             except Exception as e:
                 iteration_result["fix_error"] = str(e)
                 self._log(f"    Fix failed: {e}")
-
-            # Step 3: Gemini quick review (optional sanity check)
-            self._log("\n  Step 3: Gemini quick review...")
-            try:
-                gemini_review_prompt = f"""Quick review of fix attempt. Are these changes correct?
-
-## Changes Made (by Claude)
-{self._get_git_diff()[:2000]}
-
-## Original Test Failures
-{test_output[:500]}
-
-Reply with: LOOKS_GOOD or ISSUES: <brief description>
-"""
-                gemini_result = await self.gemini.generate(gemini_review_prompt, context=[])
-                iteration_result["gemini_review"] = gemini_result[:200] if gemini_result else "No response"
-                self._log(f"    Gemini: {gemini_result[:100] if gemini_result else 'No response'}...")
-            except Exception as e:
-                self._log(f"    Gemini review skipped: {e}")
 
             cycle_result["fix_iterations"].append(iteration_result)
 
