@@ -119,6 +119,20 @@ from aragora.debate.orchestrator import Arena, DebateProtocol
 from aragora.core import Environment
 from aragora.agents.api_agents import GeminiAgent
 from aragora.agents.cli_agents import CodexAgent, ClaudeAgent
+
+# Genesis module for fractal debates with agent evolution
+GENESIS_AVAILABLE = False
+try:
+    from aragora.genesis import (
+        FractalOrchestrator,
+        PopulationManager,
+        GenesisLedger,
+        create_genesis_hooks,
+        create_logging_hooks,
+    )
+    GENESIS_AVAILABLE = True
+except ImportError:
+    pass
 from aragora.implement import (
     generate_implement_plan,
     create_single_task_plan,
@@ -167,6 +181,7 @@ class NomicLoop:
         auto_commit: bool = False,
         initial_proposal: str = None,
         stream_emitter: "SyncEventEmitter" = None,
+        use_genesis: bool = False,
     ):
         self.aragora_path = Path(aragora_path or Path(__file__).parent.parent)
         self.max_cycles = max_cycles
@@ -175,6 +190,14 @@ class NomicLoop:
         self.initial_proposal = initial_proposal
         self.cycle_count = 0
         self.history = []
+
+        # Genesis mode: fractal debates with agent evolution
+        self.use_genesis = use_genesis and GENESIS_AVAILABLE
+        self.genesis_ledger = None
+        self.population_manager = None
+        if self.use_genesis:
+            self.genesis_ledger = GenesisLedger(str(self.aragora_path / ".nomic" / "genesis.db"))
+            self.population_manager = PopulationManager(str(self.aragora_path / ".nomic" / "genesis.db"))
 
         # Setup logging infrastructure
         self.nomic_dir = self.aragora_path / ".nomic"
@@ -190,6 +213,11 @@ class NomicLoop:
             self.stream_hooks = create_nomic_hooks(stream_emitter)
         else:
             self.stream_hooks = {}
+
+        # Add genesis hooks if available
+        if self.use_genesis:
+            genesis_hooks = create_logging_hooks(lambda msg: self._log(f"    [genesis] {msg}"))
+            self.stream_hooks.update(genesis_hooks)
 
         # Clear log file on start
         with open(self.log_file, "w") as f:
@@ -546,6 +574,73 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
             self._log(f"  {phase_name} arena ERROR: {e}")
             self._save_state({"phase": phase_name, "stage": "arena_error", "error": str(e)})
             raise
+
+    async def _run_fractal_with_logging(self, task: str, agents: list, phase_name: str) -> "DebateResult":
+        """Run a fractal debate with agent evolution and real-time logging."""
+        if not self.use_genesis or not GENESIS_AVAILABLE:
+            # Fall back to regular arena
+            env = Environment(task=task)
+            protocol = DebateProtocol(rounds=2, consensus="majority")
+            arena = Arena(environment=env, agents=agents, protocol=protocol)
+            return await self._run_arena_with_logging(arena, phase_name)
+
+        self._log(f"  Starting {phase_name} fractal debate (genesis mode)...")
+        self._save_state({"phase": phase_name, "stage": "fractal_starting", "genesis": True})
+
+        # Create fractal orchestrator with hooks
+        orchestrator = FractalOrchestrator(
+            max_depth=2,
+            tension_threshold=0.6,
+            evolve_agents=True,
+            population_manager=self.population_manager,
+            event_hooks=self.stream_hooks,
+        )
+
+        try:
+            # Get or create population from agent names
+            agent_names = [a.name.split("_")[0] for a in agents]
+            population = self.population_manager.get_or_create_population(agent_names)
+
+            self._log(f"    Population: {population.size} genomes, gen {population.generation}")
+
+            # Run fractal debate
+            fractal_result = await orchestrator.run(
+                task=task,
+                agents=agents,
+                population=population,
+            )
+
+            self._log(f"  {phase_name} fractal debate complete")
+            self._log(f"    Total depth: {fractal_result.total_depth}")
+            self._log(f"    Sub-debates: {len(fractal_result.sub_debates)}")
+            self._log(f"    Tensions resolved: {fractal_result.tensions_resolved}")
+            self._log(f"    Evolved genomes: {len(fractal_result.evolved_genomes)}")
+
+            # Log evolved genomes
+            for genome in fractal_result.evolved_genomes:
+                self._log(f"      - {genome.name} (gen {genome.generation})")
+
+            self._save_state({
+                "phase": phase_name,
+                "stage": "fractal_complete",
+                "genesis": True,
+                "total_depth": fractal_result.total_depth,
+                "sub_debates": len(fractal_result.sub_debates),
+                "evolved_genomes": len(fractal_result.evolved_genomes),
+                "consensus_reached": fractal_result.main_result.consensus_reached,
+            })
+
+            return fractal_result.main_result
+
+        except Exception as e:
+            self._log(f"  {phase_name} fractal debate ERROR: {e}")
+            self._save_state({"phase": phase_name, "stage": "fractal_error", "error": str(e)})
+            # Fall back to regular arena on error
+            self._log(f"  Falling back to regular arena...")
+            env = Environment(task=task)
+            protocol = DebateProtocol(rounds=2, consensus="majority")
+            arena = Arena(environment=env, agents=agents, protocol=protocol)
+            return await self._run_arena_with_logging(arena, phase_name)
 
     async def phase_debate(self) -> dict:
         """Phase 1: Agents debate what to improve."""
@@ -1505,6 +1600,10 @@ async def main():
         "--proposal-file", "-f", type=str,
         help="File containing initial proposal (alternative to --proposal)"
     )
+    run_parser.add_argument(
+        "--genesis", action="store_true",
+        help="Enable genesis mode: fractal debates with agent evolution"
+    )
 
     # Backup management subcommands
     list_parser = subparsers.add_parser("list-backups", help="List available backups")
@@ -1525,6 +1624,10 @@ async def main():
     parser.add_argument(
         "--proposal-file", "-f", type=str,
         help="File containing initial proposal (alternative to --proposal)"
+    )
+    parser.add_argument(
+        "--genesis", action="store_true",
+        help="Enable genesis mode: fractal debates with agent evolution"
     )
 
     args = parser.parse_args()
@@ -1547,13 +1650,19 @@ async def main():
         with open(args.proposal_file) as f:
             initial_proposal = f.read()
 
+    use_genesis = getattr(args, 'genesis', False)
+
     loop = NomicLoop(
         aragora_path=args.path,
         max_cycles=args.cycles,
         require_human_approval=not args.auto,
         auto_commit=args.auto,
         initial_proposal=initial_proposal,
+        use_genesis=use_genesis,
     )
+
+    if use_genesis:
+        print("Genesis mode enabled: fractal debates with agent evolution")
 
     await loop.run()
 
