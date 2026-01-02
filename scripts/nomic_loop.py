@@ -636,6 +636,12 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
                 ),
                 "on_consensus"
             ),
+            "on_vote": make_combined_hook(
+                lambda agent, vote, confidence: self._log(
+                    f"    [vote] {agent}: {vote} ({confidence:.0%})"
+                ),
+                "on_vote"
+            ),
             "on_debate_end": make_combined_hook(
                 lambda duration, rounds: self._log(f"    Completed in {duration:.1f}s ({rounds} rounds)"),
                 "on_debate_end"

@@ -151,10 +151,12 @@ class Arena:
             if "on_round_start" in self.hooks:
                 self.hooks["on_round_start"](round_num)
 
-            # Get critics
+            # Get critics - when all agents are proposers, they all critique each other
             critics = [a for a in self.agents if a.role in ("critic", "synthesizer")]
             if not critics:
-                critics = [a for a in self.agents if a not in proposers]
+                # When no dedicated critics exist, all agents critique each other
+                # The loop below already skips self-critique via "if critic.name != proposal_agent"
+                critics = list(self.agents)
 
             # === Critique Phase ===
             for proposal_agent, proposal in proposals.items():
@@ -278,6 +280,10 @@ class Arena:
                     result.votes.append(vote_result)
                     print(f"  {agent.name} votes: {vote_result.choice} ({vote_result.confidence:.0%})")
 
+                    # Emit vote event
+                    if "on_vote" in self.hooks:
+                        self.hooks["on_vote"](agent.name, vote_result.choice, vote_result.confidence)
+
             # Count votes
             vote_counts = Counter(v.choice for v in result.votes if not isinstance(v, Exception))
             if vote_counts:
@@ -286,10 +292,10 @@ class Arena:
                 result.consensus_reached = count / len(self.agents) >= self.protocol.consensus_threshold
                 result.confidence = count / len(self.agents)
 
-                # Track dissenting views
+                # Track dissenting views (full content)
                 for agent, prop in proposals.items():
                     if agent != winner:
-                        result.dissenting_views.append(f"[{agent}]: {prop[:200]}...")
+                        result.dissenting_views.append(f"[{agent}]: {prop}")
 
                 print(f"\n  Winner: {winner} ({count}/{len(self.agents)} votes)")
             else:
