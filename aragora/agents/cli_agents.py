@@ -13,6 +13,11 @@ from typing import Optional
 
 from aragora.core import Agent, Critique, Message
 
+# Context window limits (in characters, ~4 chars per token)
+# Use 60% of available window to leave room for response
+MAX_CONTEXT_CHARS = 120_000  # ~30k tokens, safe for most models
+MAX_MESSAGE_CHARS = 20_000   # Individual message truncation limit
+
 
 class CLIAgent(Agent):
     """Base class for CLI-based agents."""
@@ -46,14 +51,41 @@ class CLIAgent(Agent):
             raise TimeoutError(f"CLI command timed out after {self.timeout}s")
 
     def _build_context_prompt(self, context: list[Message] = None) -> str:
-        """Build context from previous messages."""
+        """Build context from previous messages with truncation for large contexts."""
         if not context:
             return ""
 
-        context_str = "\n\n".join([
-            f"[Round {m.round}] {m.role} ({m.agent}):\n{m.content}"
-            for m in context[-10:]  # Last 10 messages to avoid context overflow
-        ])
+        # Build messages with individual truncation
+        messages = []
+        total_chars = 0
+
+        for m in context[-10:]:  # Last 10 messages
+            content = m.content
+            # Truncate individual messages that are too long
+            if len(content) > MAX_MESSAGE_CHARS:
+                # Keep start and end, truncate middle
+                half = MAX_MESSAGE_CHARS // 2 - 50
+                content = (
+                    content[:half] +
+                    f"\n\n[... {len(m.content) - MAX_MESSAGE_CHARS} chars truncated ...]\n\n" +
+                    content[-half:]
+                )
+
+            msg_str = f"[Round {m.round}] {m.role} ({m.agent}):\n{content}"
+
+            # Check if adding this message would exceed total limit
+            if total_chars + len(msg_str) > MAX_CONTEXT_CHARS:
+                # Truncate and stop adding more
+                remaining = MAX_CONTEXT_CHARS - total_chars - 100
+                if remaining > 500:
+                    msg_str = msg_str[:remaining] + "\n[... truncated ...]"
+                    messages.append(msg_str)
+                break
+
+            messages.append(msg_str)
+            total_chars += len(msg_str) + 4  # +4 for separator
+
+        context_str = "\n\n".join(messages)
         return f"\n\nPrevious discussion:\n{context_str}\n\n"
 
     def _parse_critique(self, response: str, target_agent: str, target_content: str) -> Critique:
@@ -187,9 +219,11 @@ class ClaudeAgent(CLIAgent):
             full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
 
         # Use claude with --print flag for non-interactive output
-        result = await self._run_cli([
-            "claude", "--print", "-p", full_prompt
-        ])
+        # Pass prompt via stdin to avoid shell argument length limits on large prompts
+        result = await self._run_cli(
+            ["claude", "--print", "-p", "-"],
+            input_text=full_prompt
+        )
 
         return result
 

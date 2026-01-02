@@ -405,7 +405,7 @@ Safe refactors: renaming, extracting, improving types. Unsafe: removing features
             name='claude-visionary',
             model='claude',
             role='proposer',
-            timeout=360,
+            timeout=600,  # 10 min - increased for judge role with large context
         )
         self.claude.system_prompt = """You are a visionary architect for aragora.
 Focus on: elegant design, user experience, novel AI patterns, system cohesion.
