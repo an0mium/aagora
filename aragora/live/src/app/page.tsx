@@ -1,0 +1,146 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useNomicStream } from '@/hooks/useNomicStream';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { MetricsCards } from '@/components/MetricsCards';
+import { PhaseProgress } from '@/components/PhaseProgress';
+import { AgentPanel } from '@/components/AgentPanel';
+import type { NomicState } from '@/types/events';
+
+// WebSocket URL - can be overridden via environment variable
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://api.aragora.ai';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
+
+export default function Home() {
+  const { events, connected } = useNomicStream(WS_URL);
+  const [nomicState, setNomicState] = useState<NomicState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch initial nomic state on mount
+  useEffect(() => {
+    const fetchState = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/nomic/state`);
+        if (response.ok) {
+          const data = await response.json();
+          setNomicState(data);
+        }
+      } catch (err) {
+        // API might not be available, that's OK
+        console.log('Could not fetch initial state:', err);
+      }
+    };
+
+    fetchState();
+  }, []);
+
+  // Update nomic state from events
+  useEffect(() => {
+    if (events.length === 0) return;
+
+    const lastEvent = events[events.length - 1];
+
+    // Update state based on event type
+    switch (lastEvent.type) {
+      case 'cycle_start':
+        setNomicState((prev) => ({
+          ...prev,
+          cycle: lastEvent.data.cycle as number,
+          phase: 'debate',
+          last_success: undefined,
+        }));
+        break;
+      case 'phase_start':
+        setNomicState((prev) => ({
+          ...prev,
+          phase: lastEvent.data.phase as string,
+        }));
+        break;
+      case 'task_complete':
+        setNomicState((prev) => ({
+          ...prev,
+          completed_tasks: (prev?.completed_tasks || 0) + 1,
+        }));
+        break;
+      case 'cycle_end':
+        setNomicState((prev) => ({
+          ...prev,
+          last_success: lastEvent.data.success as boolean,
+        }));
+        break;
+      case 'error':
+        setError(lastEvent.data.error as string);
+        break;
+    }
+  }, [events]);
+
+  // Derive current phase from state or latest phase event
+  const currentPhase = nomicState?.phase || 'idle';
+
+  return (
+    <main className="min-h-screen bg-bg text-text">
+      {/* Header */}
+      <header className="border-b border-border">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">
+              <span className="text-accent">aragora</span>
+              <span className="text-text-muted font-normal ml-2">live</span>
+            </h1>
+          </div>
+          <ConnectionStatus connected={connected} />
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="container mx-auto px-4 py-6 space-y-6">
+        {/* Error Banner */}
+        {error && (
+          <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-warning text-xl">⚠️</span>
+              <span className="text-warning">{error}</span>
+            </div>
+            <button
+              onClick={() => setError(null)}
+              className="text-warning hover:text-warning/80"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Phase Progress */}
+        <PhaseProgress events={events} currentPhase={currentPhase} />
+
+        {/* Metrics */}
+        <MetricsCards nomicState={nomicState} events={events} />
+
+        {/* Main Panels */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Agent Activity */}
+          <div className="lg:col-span-2 min-h-[500px]">
+            <AgentPanel events={events} />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <footer className="text-center text-text-muted text-sm py-8 border-t border-border">
+          <p>
+            Watching aragora's self-improving nomic loop in real-time.
+            <br />
+            <a
+              href="https://aragora.ai"
+              className="text-accent hover:underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Learn more about aragora →
+            </a>
+          </p>
+        </footer>
+      </div>
+    </main>
+  );
+}

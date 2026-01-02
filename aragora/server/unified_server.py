@@ -1,0 +1,287 @@
+"""
+Unified server combining HTTP API and WebSocket streaming.
+
+Provides a single entry point for:
+- HTTP API at /api/* endpoints
+- WebSocket streaming at ws://host:port/ws
+- Static file serving for the live dashboard
+"""
+
+import asyncio
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from threading import Thread
+from typing import Optional
+from urllib.parse import urlparse, parse_qs
+
+from .stream import DebateStreamServer, SyncEventEmitter
+from .storage import DebateStorage
+
+
+class UnifiedHandler(BaseHTTPRequestHandler):
+    """HTTP handler with API endpoints and static file serving."""
+
+    storage: Optional[DebateStorage] = None
+    static_dir: Optional[Path] = None
+    stream_emitter: Optional[SyncEventEmitter] = None
+    nomic_state_file: Optional[Path] = None
+
+    def do_GET(self) -> None:
+        """Handle GET requests."""
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # API routes
+        if path.startswith('/api/debates/'):
+            slug = path.split('/')[-1]
+            self._get_debate(slug)
+        elif path == '/api/debates':
+            limit = int(query.get('limit', [20])[0])
+            self._list_debates(limit)
+        elif path == '/api/health':
+            self._health_check()
+        elif path == '/api/nomic/state':
+            self._get_nomic_state()
+        elif path == '/api/nomic/log':
+            lines = int(query.get('lines', [100])[0])
+            self._get_nomic_log(lines)
+
+        # Static file serving
+        elif path in ('/', '/index.html'):
+            self._serve_file('index.html')
+        elif path.endswith(('.html', '.css', '.js', '.json', '.ico', '.svg', '.png')):
+            self._serve_file(path.lstrip('/'))
+        else:
+            # Try serving as a static file
+            self._serve_file(path.lstrip('/'))
+
+    def do_OPTIONS(self) -> None:
+        """Handle CORS preflight."""
+        self.send_response(200)
+        self._add_cors_headers()
+        self.end_headers()
+
+    def _get_debate(self, slug: str) -> None:
+        """Get a single debate by slug."""
+        if not self.storage:
+            self.send_error(500, "Storage not configured")
+            return
+
+        debate = self.storage.get_by_slug(slug)
+        if debate:
+            self._send_json(debate)
+        else:
+            self.send_error(404, f"Debate not found: {slug}")
+
+    def _list_debates(self, limit: int = 20) -> None:
+        """List recent debates."""
+        if not self.storage:
+            self._send_json([])
+            return
+
+        debates = self.storage.list_recent(limit)
+        self._send_json([{
+            "slug": d.slug,
+            "task": d.task[:100] + "..." if len(d.task) > 100 else d.task,
+            "agents": d.agents,
+            "consensus": d.consensus_reached,
+            "confidence": d.confidence,
+            "views": d.view_count,
+            "created": d.created_at.isoformat(),
+        } for d in debates])
+
+    def _health_check(self) -> None:
+        """Health check endpoint."""
+        self._send_json({
+            "status": "ok",
+            "storage": self.storage is not None,
+            "streaming": self.stream_emitter is not None,
+            "static_dir": str(self.static_dir) if self.static_dir else None,
+        })
+
+    def _get_nomic_state(self) -> None:
+        """Get current nomic loop state."""
+        if not self.nomic_state_file or not self.nomic_state_file.exists():
+            self._send_json({"status": "idle", "message": "No active nomic loop"})
+            return
+
+        try:
+            with open(self.nomic_state_file) as f:
+                state = json.load(f)
+            self._send_json(state)
+        except Exception as e:
+            self._send_json({"status": "error", "message": str(e)})
+
+    def _get_nomic_log(self, lines: int = 100) -> None:
+        """Get last N lines of nomic loop log."""
+        if not self.nomic_state_file:
+            self._send_json({"lines": []})
+            return
+
+        log_file = self.nomic_state_file.parent / "nomic_loop.log"
+        if not log_file.exists():
+            self._send_json({"lines": []})
+            return
+
+        try:
+            with open(log_file) as f:
+                all_lines = f.readlines()
+            self._send_json({"lines": all_lines[-lines:]})
+        except Exception as e:
+            self._send_json({"lines": [], "error": str(e)})
+
+    def _serve_file(self, filename: str) -> None:
+        """Serve a static file."""
+        if not self.static_dir:
+            self.send_error(404, "Static directory not configured")
+            return
+
+        filepath = self.static_dir / filename
+        if not filepath.exists():
+            # Try index.html for SPA routing
+            filepath = self.static_dir / "index.html"
+            if not filepath.exists():
+                self.send_error(404, f"File not found: {filename}")
+                return
+
+        # Determine content type
+        content_type = 'text/html'
+        if filename.endswith('.css'):
+            content_type = 'text/css'
+        elif filename.endswith('.js'):
+            content_type = 'application/javascript'
+        elif filename.endswith('.json'):
+            content_type = 'application/json'
+        elif filename.endswith('.ico'):
+            content_type = 'image/x-icon'
+        elif filename.endswith('.svg'):
+            content_type = 'image/svg+xml'
+        elif filename.endswith('.png'):
+            content_type = 'image/png'
+
+        try:
+            content = filepath.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', len(content))
+            self._add_cors_headers()
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as e:
+            self.send_error(500, str(e))
+
+    def _send_json(self, data) -> None:
+        """Send JSON response."""
+        content = json.dumps(data).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', len(content))
+        self._add_cors_headers()
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _add_cors_headers(self) -> None:
+        """Add CORS headers for cross-origin requests."""
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+
+    def log_message(self, format: str, *args) -> None:
+        """Suppress default logging."""
+        pass
+
+
+class UnifiedServer:
+    """
+    Combined HTTP + WebSocket server for the nomic loop dashboard.
+
+    Usage:
+        server = UnifiedServer(
+            http_port=8080,
+            ws_port=8765,
+            static_dir=Path("aragora/live/out"),
+            nomic_dir=Path("/path/to/aragora/.nomic"),
+        )
+        await server.start()  # Starts both servers
+    """
+
+    def __init__(
+        self,
+        http_port: int = 8080,
+        ws_port: int = 8765,
+        ws_host: str = "0.0.0.0",
+        http_host: str = "",
+        static_dir: Optional[Path] = None,
+        nomic_dir: Optional[Path] = None,
+        storage: Optional[DebateStorage] = None,
+    ):
+        self.http_port = http_port
+        self.ws_port = ws_port
+        self.ws_host = ws_host
+        self.http_host = http_host
+        self.static_dir = static_dir
+        self.nomic_dir = nomic_dir
+        self.storage = storage
+
+        # Create WebSocket server
+        self.stream_server = DebateStreamServer(host=ws_host, port=ws_port)
+
+        # Setup HTTP handler
+        UnifiedHandler.storage = storage
+        UnifiedHandler.static_dir = static_dir
+        UnifiedHandler.stream_emitter = self.stream_server.emitter
+        if nomic_dir:
+            UnifiedHandler.nomic_state_file = nomic_dir / "nomic_state.json"
+
+    @property
+    def emitter(self) -> SyncEventEmitter:
+        """Get the event emitter for nomic loop integration."""
+        return self.stream_server.emitter
+
+    def _run_http_server(self) -> None:
+        """Run HTTP server in a thread."""
+        server = HTTPServer((self.http_host, self.http_port), UnifiedHandler)
+        server.serve_forever()
+
+    async def start(self) -> None:
+        """Start both HTTP and WebSocket servers."""
+        print(f"Starting unified server...")
+        print(f"  HTTP API:   http://localhost:{self.http_port}")
+        print(f"  WebSocket:  ws://localhost:{self.ws_port}")
+        if self.static_dir:
+            print(f"  Static dir: {self.static_dir}")
+        if self.nomic_dir:
+            print(f"  Nomic dir:  {self.nomic_dir}")
+
+        # Start HTTP server in background thread
+        http_thread = Thread(target=self._run_http_server, daemon=True)
+        http_thread.start()
+
+        # Start WebSocket server in foreground
+        await self.stream_server.start()
+
+
+async def run_unified_server(
+    http_port: int = 8080,
+    ws_port: int = 8765,
+    static_dir: Optional[Path] = None,
+    nomic_dir: Optional[Path] = None,
+) -> None:
+    """
+    Convenience function to run the unified server.
+
+    Args:
+        http_port: Port for HTTP API (default 8080)
+        ws_port: Port for WebSocket streaming (default 8765)
+        static_dir: Directory containing static files (dashboard build)
+        nomic_dir: Path to .nomic directory for state access
+    """
+    server = UnifiedServer(
+        http_port=http_port,
+        ws_port=ws_port,
+        static_dir=static_dir,
+        nomic_dir=nomic_dir,
+    )
+    await server.start()

@@ -15,7 +15,8 @@ from typing import Callable, Optional, Any
 
 
 class StreamEventType(Enum):
-    """Types of events emitted during a debate."""
+    """Types of events emitted during debates and nomic loop execution."""
+    # Debate events
     DEBATE_START = "debate_start"
     ROUND_START = "round_start"
     AGENT_MESSAGE = "agent_message"
@@ -23,6 +24,22 @@ class StreamEventType(Enum):
     VOTE = "vote"
     CONSENSUS = "consensus"
     DEBATE_END = "debate_end"
+
+    # Nomic loop events
+    CYCLE_START = "cycle_start"
+    CYCLE_END = "cycle_end"
+    PHASE_START = "phase_start"
+    PHASE_END = "phase_end"
+    TASK_START = "task_start"
+    TASK_COMPLETE = "task_complete"
+    TASK_RETRY = "task_retry"
+    VERIFICATION_START = "verification_start"
+    VERIFICATION_RESULT = "verification_result"
+    COMMIT = "commit"
+    BACKUP_CREATED = "backup_created"
+    BACKUP_RESTORED = "backup_restored"
+    ERROR = "error"
+    LOG_MESSAGE = "log_message"
 
 
 @dataclass
@@ -205,14 +222,16 @@ def create_arena_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
         ))
 
     def on_critique(
-        agent: str, target: str, issues: list[str], severity: float, round_num: int
+        agent: str, target: str, issues: list[str], severity: float, round_num: int,
+        full_content: str = None
     ) -> None:
         emitter.emit(StreamEvent(
             type=StreamEventType.CRITIQUE,
             data={
                 "target": target,
-                "issues": issues[:3],  # Limit for brevity
+                "issues": issues,  # Full issue list
                 "severity": severity,
+                "content": full_content or "\n".join(f"• {issue}" for issue in issues),
             },
             round=round_num,
             agent=agent,
@@ -231,7 +250,7 @@ def create_arena_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
             data={
                 "reached": reached,
                 "confidence": confidence,
-                "answer": answer[:1000],  # Truncate for streaming
+                "answer": answer,  # Full answer - no truncation
             },
         ))
 

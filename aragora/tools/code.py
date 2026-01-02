@@ -433,7 +433,7 @@ class CodeWriter:
                 ["python", "-m", "pytest", "--tb=short", "-q"],
                 cwd=self.root,
                 capture_output=True,
-                timeout=60,
+                timeout=180,  # Minimum 3 min (was 60)
             )
             if result.returncode != 0:
                 warnings.append("Some tests may have failed")

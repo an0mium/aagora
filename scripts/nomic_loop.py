@@ -129,6 +129,17 @@ from aragora.implement import (
     ImplementProgress,
 )
 
+# Optional streaming support
+try:
+    from aragora.server.stream import SyncEventEmitter, create_arena_hooks
+    from aragora.server.nomic_stream import create_nomic_hooks
+    STREAMING_AVAILABLE = True
+except ImportError:
+    STREAMING_AVAILABLE = False
+    SyncEventEmitter = None
+    create_nomic_hooks = None
+    create_arena_hooks = None
+
 
 class NomicLoop:
     """
@@ -155,6 +166,7 @@ class NomicLoop:
         require_human_approval: bool = True,
         auto_commit: bool = False,
         initial_proposal: str = None,
+        stream_emitter: "SyncEventEmitter" = None,
     ):
         self.aragora_path = Path(aragora_path or Path(__file__).parent.parent)
         self.max_cycles = max_cycles
@@ -172,6 +184,13 @@ class NomicLoop:
         self.backup_dir = self.nomic_dir / "backups"
         self.backup_dir.mkdir(exist_ok=True)
 
+        # Setup streaming (optional)
+        self.stream_emitter = stream_emitter
+        if stream_emitter and STREAMING_AVAILABLE and create_nomic_hooks:
+            self.stream_hooks = create_nomic_hooks(stream_emitter)
+        else:
+            self.stream_hooks = {}
+
         # Clear log file on start
         with open(self.log_file, "w") as f:
             f.write(f"=== NOMIC LOOP STARTED: {datetime.now().isoformat()} ===\n")
@@ -179,7 +198,15 @@ class NomicLoop:
         # Initialize agents
         self._init_agents()
 
-    def _log(self, message: str, also_print: bool = True):
+    def _stream_emit(self, hook_name: str, *args, **kwargs) -> None:
+        """Emit event to WebSocket stream if streaming is enabled."""
+        if hook_name in self.stream_hooks:
+            try:
+                self.stream_hooks[hook_name](*args, **kwargs)
+            except Exception:
+                pass  # Don't let streaming errors break the loop
+
+    def _log(self, message: str, also_print: bool = True, phase: str = None):
         """Log to file and optionally stdout. File is always flushed immediately."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_line = f"[{timestamp}] {message}"
@@ -192,6 +219,9 @@ class NomicLoop:
         if also_print:
             print(message)
             sys.stdout.flush()
+
+        # Also emit to stream for real-time dashboard
+        self._stream_emit("on_log_message", message, level="info", phase=phase)
 
     def _save_state(self, state: dict):
         """Save current state for crash recovery and monitoring."""
@@ -240,6 +270,7 @@ class NomicLoop:
             json.dump(manifest, f, indent=2)
 
         self._log(f"  Backup complete: {len(backed_up)} files")
+        self._stream_emit("on_backup_created", backup_name, len(backed_up), reason)
         return backup_path
 
     def _restore_backup(self, backup_path: Path) -> bool:
@@ -265,6 +296,7 @@ class NomicLoop:
                 self._log(f"    Restored: {rel_path}", also_print=False)
 
         self._log(f"  Restored {len(restored)} files")
+        self._stream_emit("on_backup_restored", backup_path.name, len(restored), "verification_failed")
         return True
 
     def _get_latest_backup(self) -> Optional[Path]:
@@ -292,7 +324,7 @@ class NomicLoop:
                         ["python", "-m", "py_compile", str(full_path)],
                         capture_output=True,
                         text=True,
-                        timeout=10,
+                        timeout=180,  # Minimum 3 min (was 20)
                     )
                     if result.returncode != 0:
                         issues.append(f"SYNTAX ERROR: {rel_path}")
@@ -317,7 +349,7 @@ CRITICAL: You are part of a self-improving system. You MUST:
             name='gemini-visionary',
             model='gemini-2.5-flash',
             role='proposer',
-            timeout=180,
+            timeout=360,
         )
         self.gemini.system_prompt = """You are a visionary product strategist for aragora.
 Focus on: viral growth, developer excitement, novel capabilities, bold ideas.
@@ -330,7 +362,7 @@ Aragora should grow more powerful over time, not be stripped down.""" + safety_f
             name='codex-engineer',
             model='gpt-5.2-codex',
             role='proposer',
-            timeout=600,  # Increased from 300 - Codex has known latency issues
+            timeout=1200,  # Doubled - Codex has known latency issues
         )
         self.codex.system_prompt = """You are a pragmatic engineer for aragora.
 Focus on: technical excellence, code quality, practical utility, implementation feasibility.
@@ -342,18 +374,18 @@ But NEVER delete working functionality just to make things "cleaner".
 Safe refactors: renaming, extracting, improving types. Unsafe: removing features, breaking APIs.""" + safety_footer
 
         self.claude = ClaudeAgent(
-            name='claude-synthesizer',
+            name='claude-visionary',
             model='claude',
-            role='synthesizer',
-            timeout=180,
+            role='proposer',
+            timeout=360,
         )
-        self.claude.system_prompt = """You are a thoughtful synthesizer for aragora.
-Focus on: finding common ground, building consensus, balancing vision with pragmatism.
-Your role is to create actionable plans from the debate.
+        self.claude.system_prompt = """You are a visionary architect for aragora.
+Focus on: elegant design, user experience, novel AI patterns, system cohesion.
+Think about what would make aragora the most powerful and delightful multi-agent framework.
 
-IMPORTANT: You are the guardian of aragora's core functionality.
-When synthesizing proposals, ensure they ADD to the system rather than remove.
-Reject any proposal that would break the nomic loop or core debate infrastructure.""" + safety_footer
+IMPORTANT: You are a guardian of aragora's core functionality.
+Your proposals should ADD capabilities and improve the system.
+Never propose removing the nomic loop or core debate infrastructure.""" + safety_footer
 
     def get_current_features(self) -> str:
         """Read current aragora state from the codebase."""
@@ -379,25 +411,54 @@ Reject any proposal that would break the nomic loop or core debate infrastructur
             return "Unable to read git history"
 
     def _create_arena_hooks(self, phase_name: str) -> dict:
-        """Create event hooks for real-time Arena logging."""
+        """Create event hooks for real-time Arena logging and streaming."""
+        # Get streaming hooks if available
+        stream_hooks = {}
+        if self.stream_emitter and STREAMING_AVAILABLE and create_arena_hooks:
+            stream_hooks = create_arena_hooks(self.stream_emitter)
+
+        def make_combined_hook(log_fn, stream_hook_name):
+            """Combine logging and streaming for a hook."""
+            stream_fn = stream_hooks.get(stream_hook_name)
+            def combined(*args, **kwargs):
+                log_fn(*args, **kwargs)
+                if stream_fn:
+                    try:
+                        stream_fn(*args, **kwargs)
+                    except Exception:
+                        pass  # Don't let streaming errors break the loop
+            return combined
+
         return {
-            "on_debate_start": lambda task, agents: self._log(
-                f"    Debate started: {len(agents)} agents"
+            "on_debate_start": make_combined_hook(
+                lambda task, agents: self._log(f"    Debate started: {len(agents)} agents"),
+                "on_debate_start"
             ),
-            "on_message": lambda agent, content, role, round_num: self._log(
-                f"    [{role}] {agent} (round {round_num}): {content[:80]}..."
+            "on_message": make_combined_hook(
+                lambda agent, content, role, round_num: self._log(
+                    f"    [{role}] {agent} (round {round_num}): {content}"  # Full content, no truncation
+                ),
+                "on_message"
             ),
-            "on_critique": lambda agent, target, issues, severity, round_num: self._log(
-                f"    [critique] {agent} -> {target}: {len(issues)} issues, severity {severity:.1f}"
+            "on_critique": make_combined_hook(
+                lambda agent, target, issues, severity, round_num, full_content=None: self._log(
+                    f"    [critique] {agent} -> {target}: {len(issues)} issues, severity {severity:.1f}"
+                ),
+                "on_critique"
             ),
-            "on_round_start": lambda round_num: self._log(
-                f"    --- Round {round_num} ---"
+            "on_round_start": make_combined_hook(
+                lambda round_num: self._log(f"    --- Round {round_num} ---"),
+                "on_round_start"
             ),
-            "on_consensus": lambda reached, confidence, answer: self._log(
-                f"    Consensus: {'Yes' if reached else 'No'} ({confidence:.0%})"
+            "on_consensus": make_combined_hook(
+                lambda reached, confidence, answer: self._log(
+                    f"    Consensus: {'Yes' if reached else 'No'} ({confidence:.0%})"
+                ),
+                "on_consensus"
             ),
-            "on_debate_end": lambda duration, rounds: self._log(
-                f"    Completed in {duration:.1f}s ({rounds} rounds)"
+            "on_debate_end": make_combined_hook(
+                lambda duration, rounds: self._log(f"    Completed in {duration:.1f}s ({rounds} rounds)"),
+                "on_debate_end"
             ),
         }
 
@@ -434,9 +495,11 @@ Reject any proposal that would break the nomic loop or core debate infrastructur
 
     async def phase_debate(self) -> dict:
         """Phase 1: Agents debate what to improve."""
+        phase_start = datetime.now()
         self._log("\n" + "=" * 70)
         self._log("PHASE 1: IMPROVEMENT DEBATE")
         self._log("=" * 70)
+        self._stream_emit("on_phase_start", "debate", self.cycle_count, {"agents": 3})
 
         current_features = self.get_current_features()
         recent_changes = self.get_recent_changes()
@@ -482,11 +545,17 @@ Recent changes:
         protocol = DebateProtocol(
             rounds=2,
             consensus="judge",
-            proposer_count=2,
+            proposer_count=3,  # All agents are visionaries initially
         )
 
         arena = Arena(env, [self.gemini, self.codex, self.claude], protocol)
         result = await self._run_arena_with_logging(arena, "debate")
+
+        phase_duration = (datetime.now() - phase_start).total_seconds()
+        self._stream_emit(
+            "on_phase_end", "debate", self.cycle_count, result.consensus_reached,
+            phase_duration, {"confidence": result.confidence}
+        )
 
         return {
             "phase": "debate",
@@ -498,9 +567,11 @@ Recent changes:
 
     async def phase_design(self, improvement: str) -> dict:
         """Phase 2: Agents design the implementation."""
+        phase_start = datetime.now()
         self._log("\n" + "=" * 70)
         self._log("PHASE 2: IMPLEMENTATION DESIGN")
         self._log("=" * 70)
+        self._stream_emit("on_phase_start", "design", self.cycle_count, {"agents": 2})
 
         env = Environment(
             task=f"""{SAFETY_PREAMBLE}
@@ -528,6 +599,12 @@ The implementation MUST preserve all existing aragora functionality.""",
 
         arena = Arena(env, [self.codex, self.claude], protocol)
         result = await self._run_arena_with_logging(arena, "design")
+
+        phase_duration = (datetime.now() - phase_start).total_seconds()
+        self._stream_emit(
+            "on_phase_end", "design", self.cycle_count, result.consensus_reached,
+            phase_duration, {}
+        )
 
         return {
             "phase": "design",
@@ -598,9 +675,11 @@ The implementation MUST preserve all existing aragora functionality.""",
 
     async def phase_implement(self, design: str) -> dict:
         """Phase 3: Hybrid multi-model implementation."""
+        phase_start = datetime.now()
         self._log("\n" + "=" * 70)
         self._log("PHASE 3: IMPLEMENTATION (Hybrid)")
         self._log("=" * 70)
+        self._stream_emit("on_phase_start", "implement", self.cycle_count, {})
 
         use_hybrid = os.environ.get("ARAGORA_HYBRID_IMPLEMENT", "1") == "1"
 
@@ -672,6 +751,15 @@ The implementation MUST preserve all existing aragora functionality.""",
                 "last_task": task_id,
                 "last_success": result.success,
             })
+            # Stream task completion event
+            self._stream_emit(
+                "on_task_complete",
+                task_id,
+                result.success,
+                result.duration_seconds,
+                result.diff[:500] if result.diff else "",
+                result.error if not result.success else None,
+            )
 
         try:
             results = await executor.execute_plan(
@@ -686,6 +774,11 @@ The implementation MUST preserve all existing aragora functionality.""",
             if all_success and tasks_completed == len(plan.tasks):
                 clear_progress(self.aragora_path)
                 self._log(f"  All {tasks_completed} tasks completed successfully")
+                phase_duration = (datetime.now() - phase_start).total_seconds()
+                self._stream_emit(
+                    "on_phase_end", "implement", self.cycle_count, True,
+                    phase_duration, {"tasks_completed": tasks_completed}
+                )
                 return {
                     "phase": "implement",
                     "success": True,
@@ -697,6 +790,11 @@ The implementation MUST preserve all existing aragora functionality.""",
             else:
                 failed = [r for r in results if not r.success]
                 self._log(f"  {len(failed)} tasks failed")
+                phase_duration = (datetime.now() - phase_start).total_seconds()
+                self._stream_emit(
+                    "on_phase_end", "implement", self.cycle_count, False,
+                    phase_duration, {"tasks_failed": len(failed)}
+                )
                 return {
                     "phase": "implement",
                     "success": False,
@@ -710,6 +808,12 @@ The implementation MUST preserve all existing aragora functionality.""",
             self._log(f"  Catastrophic failure: {e}")
             self._log("  Rolling back changes...")
             self._git_stash_pop(stash_ref)
+            phase_duration = (datetime.now() - phase_start).total_seconds()
+            self._stream_emit(
+                "on_phase_end", "implement", self.cycle_count, False,
+                phase_duration, {"error": str(e)}
+            )
+            self._stream_emit("on_error", "implement", str(e), True)
             return {
                 "phase": "implement",
                 "success": False,
@@ -742,7 +846,7 @@ CRITICAL SAFETY RULES:
                 ["codex", "exec", "-C", str(self.aragora_path), prompt],
                 capture_output=True,
                 text=True,
-                timeout=600,  # Increased from 300 - Codex has known latency issues
+                timeout=1200,  # Doubled - Codex has known latency issues
             )
 
             return {
@@ -767,9 +871,12 @@ CRITICAL SAFETY RULES:
 
     async def phase_verify(self) -> dict:
         """Phase 4: Verify changes work."""
+        phase_start = datetime.now()
         self._log("\n" + "=" * 70)
         self._log("PHASE 4: VERIFICATION")
         self._log("=" * 70)
+        self._stream_emit("on_phase_start", "verify", self.cycle_count, {})
+        self._stream_emit("on_verification_start", ["syntax", "import", "tests"])
 
         checks = []
 
@@ -789,9 +896,11 @@ CRITICAL SAFETY RULES:
                 "output": result.stderr,
             })
             self._log(f"    {'passed' if passed else 'FAILED'} syntax")
+            self._stream_emit("on_verification_result", "syntax", passed, result.stderr[:200] if result.stderr else "")
         except Exception as e:
             checks.append({"check": "syntax", "passed": False, "error": str(e)})
             self._log(f"    FAILED syntax: {e}")
+            self._stream_emit("on_verification_result", "syntax", False, str(e))
 
         # 2. Import check
         self._log("  Checking imports...")
@@ -801,7 +910,7 @@ CRITICAL SAFETY RULES:
                 cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=180,  # Minimum 3 min (was 60)
             )
             passed = "OK" in result.stdout
             checks.append({
@@ -810,9 +919,11 @@ CRITICAL SAFETY RULES:
                 "output": result.stderr if result.returncode != 0 else "",
             })
             self._log(f"    {'passed' if passed else 'FAILED'} import")
+            self._stream_emit("on_verification_result", "import", passed, result.stderr[:200] if result.stderr else "")
         except Exception as e:
             checks.append({"check": "import", "passed": False, "error": str(e)})
             self._log(f"    FAILED import: {e}")
+            self._stream_emit("on_verification_result", "import", False, str(e))
 
         # 3. Run tests
         self._log("  Running tests...")
@@ -822,7 +933,7 @@ CRITICAL SAFETY RULES:
                 cwd=self.aragora_path,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=240,
             )
             passed = result.returncode == 0
             checks.append({
@@ -831,9 +942,11 @@ CRITICAL SAFETY RULES:
                 "output": result.stdout[-500:] if result.stdout else "",
             })
             self._log(f"    {'passed' if passed else 'FAILED'} tests")
+            self._stream_emit("on_verification_result", "tests", passed, result.stdout[-200:] if result.stdout else "")
         except Exception as e:
             checks.append({"check": "tests", "passed": True, "note": "No tests or timeout"})
             self._log(f"    skipped tests: {e}")
+            self._stream_emit("on_verification_result", "tests", True, f"Skipped: {e}")
 
         all_passed = all(c.get("passed", False) for c in checks)
         self._save_state({
@@ -843,6 +956,12 @@ CRITICAL SAFETY RULES:
             "checks": checks,
         })
 
+        phase_duration = (datetime.now() - phase_start).total_seconds()
+        self._stream_emit(
+            "on_phase_end", "verify", self.cycle_count, all_passed,
+            phase_duration, {"checks_passed": sum(1 for c in checks if c.get("passed"))}
+        )
+
         return {
             "phase": "verify",
             "checks": checks,
@@ -851,9 +970,11 @@ CRITICAL SAFETY RULES:
 
     async def phase_commit(self, improvement: str) -> dict:
         """Phase 5: Commit changes if verified."""
+        phase_start = datetime.now()
         self._log("\n" + "=" * 70)
         self._log("PHASE 5: COMMIT")
         self._log("=" * 70)
+        self._stream_emit("on_phase_start", "commit", self.cycle_count, {})
 
         if self.require_human_approval and not self.auto_commit:
             self._log("\nChanges ready for review:")
@@ -862,6 +983,11 @@ CRITICAL SAFETY RULES:
             response = input("\nCommit these changes? [y/N]: ")
             if response.lower() != 'y':
                 self._log("Skipping commit.")
+                phase_duration = (datetime.now() - phase_start).total_seconds()
+                self._stream_emit(
+                    "on_phase_end", "commit", self.cycle_count, False,
+                    phase_duration, {"reason": "human_declined"}
+                )
                 return {"phase": "commit", "committed": False, "reason": "Human declined"}
 
         summary = improvement[:100].replace('\n', ' ')
@@ -884,8 +1010,31 @@ CRITICAL SAFETY RULES:
 
             if committed:
                 self._log(f"  Committed: {summary[:60]}...")
+                # Get commit hash
+                hash_result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=self.aragora_path,
+                    capture_output=True,
+                    text=True,
+                )
+                commit_hash = hash_result.stdout.strip() if hash_result.returncode == 0 else "unknown"
+                # Get files changed count
+                stat_result = subprocess.run(
+                    ["git", "diff", "--stat", "HEAD~1..HEAD"],
+                    cwd=self.aragora_path,
+                    capture_output=True,
+                    text=True,
+                )
+                files_changed = len([l for l in stat_result.stdout.split('\n') if '|' in l])
+                self._stream_emit("on_commit", commit_hash, summary, files_changed)
             else:
                 self._log(f"  Commit failed: {result.stderr}")
+
+            phase_duration = (datetime.now() - phase_start).total_seconds()
+            self._stream_emit(
+                "on_phase_end", "commit", self.cycle_count, committed,
+                phase_duration, {}
+            )
 
             return {
                 "phase": "commit",
@@ -895,6 +1044,12 @@ CRITICAL SAFETY RULES:
 
         except Exception as e:
             self._log(f"  Commit error: {e}")
+            phase_duration = (datetime.now() - phase_start).total_seconds()
+            self._stream_emit(
+                "on_phase_end", "commit", self.cycle_count, False,
+                phase_duration, {"error": str(e)}
+            )
+            self._stream_emit("on_error", "commit", str(e), True)
             return {
                 "phase": "commit",
                 "committed": False,
@@ -910,6 +1065,9 @@ CRITICAL SAFETY RULES:
         self._log(f"NOMIC CYCLE {self.cycle_count}")
         self._log(f"Started: {cycle_start.isoformat()}")
         self._log("=" * 70)
+
+        # Emit cycle start event
+        self._stream_emit("on_cycle_start", self.cycle_count, self.max_cycles, cycle_start.isoformat())
 
         # === SAFETY: Create backup before any changes ===
         backup_path = self._create_backup(f"cycle_{self.cycle_count}")
@@ -937,7 +1095,7 @@ CRITICAL SAFETY RULES:
             return cycle_result
 
         improvement = debate_result["final_answer"]
-        self._log(f"\nConsensus improvement:\n{improvement[:500]}...")
+        self._log(f"\nConsensus improvement:\n{improvement}")  # Full content, no truncation
 
         # Phase 2: Design
         design_result = await self.phase_design(improvement)
@@ -1037,7 +1195,7 @@ Provide specific, actionable fixes. Focus on:
 2. What specific code changes will fix it?
 3. Are there missing imports or dependencies?
 """
-            review_result = await executor.review_with_codex(review_prompt, timeout=1200)  # 20 min for thorough review
+            review_result = await executor.review_with_codex(review_prompt, timeout=2400)  # 40 min for thorough review
             iteration_result["codex_review"] = review_result
             self._log(f"    Codex review complete")
 
@@ -1068,7 +1226,7 @@ Working directory: {self.aragora_path}
                     name="claude-fixer",
                     model="claude",
                     role="fixer",
-                    timeout=600,  # Increased from 300 - fixes can be complex
+                    timeout=1200,  # Doubled - fixes can be complex
                 )
                 await fix_agent.generate(fix_prompt, context=[])
                 iteration_result["fix_applied"] = True
@@ -1130,6 +1288,15 @@ Reply with: LOOKS_GOOD or ISSUES: <brief description>
             "outcome": cycle_result["outcome"],
             "duration_seconds": cycle_result["duration_seconds"],
         })
+
+        # Emit cycle end event
+        self._stream_emit(
+            "on_cycle_end",
+            self.cycle_count,
+            cycle_result.get("outcome") == "success",
+            cycle_result["duration_seconds"],
+            cycle_result.get("outcome", "unknown"),
+        )
 
         return cycle_result
 

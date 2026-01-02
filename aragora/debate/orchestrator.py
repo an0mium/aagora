@@ -122,7 +122,7 @@ class Arena:
                 proposals[agent.name] = f"[Error generating proposal: {result_or_error}]"
             else:
                 proposals[agent.name] = result_or_error
-                print(f"  {agent.name}: {result_or_error[:100]}...")
+                print(f"  {agent.name}: {result_or_error}")  # Full content
 
             msg = Message(
                 role="proposer",
@@ -181,7 +181,10 @@ class Arena:
                                 f"severity {crit_result.severity:.1f}"
                             )
 
-                            # Emit critique event
+                            # Get full critique content
+                            critique_content = crit_result.to_prompt()
+
+                            # Emit critique event with full content
                             if "on_critique" in self.hooks:
                                 self.hooks["on_critique"](
                                     agent=critic.name,
@@ -189,13 +192,23 @@ class Arena:
                                     issues=crit_result.issues,
                                     severity=crit_result.severity,
                                     round_num=round_num,
+                                    full_content=critique_content,
+                                )
+
+                            # Also emit as a message for the activity feed
+                            if "on_message" in self.hooks:
+                                self.hooks["on_message"](
+                                    agent=critic.name,
+                                    content=critique_content,
+                                    role="critic",
+                                    round_num=round_num,
                                 )
 
                             # Add critique to context
                             msg = Message(
                                 role="critic",
                                 agent=critic.name,
-                                content=crit_result.to_prompt(),
+                                content=critique_content,
                                 round=round_num,
                             )
                             context.append(msg)
@@ -215,7 +228,7 @@ class Arena:
                     try:
                         revised = await self._generate_with_agent(agent, revision_prompt, context)
                         proposals[agent.name] = revised
-                        print(f"  {agent.name} revised: {revised[:100]}...")
+                        print(f"  {agent.name} revised: {revised}")  # Full content
 
                         msg = Message(
                             role="proposer",
@@ -295,7 +308,16 @@ class Arena:
                 result.final_answer = synthesis
                 result.consensus_reached = True
                 result.confidence = 0.8
-                print(f"  Judge ({judge.name}): {synthesis[:100]}...")
+                print(f"  Judge ({judge.name}): {synthesis}")  # Full content
+
+                # Emit judge's synthesis as a message for the activity feed
+                if "on_message" in self.hooks:
+                    self.hooks["on_message"](
+                        agent=judge.name,
+                        content=synthesis,
+                        role="judge",
+                        round_num=self.protocol.rounds + 1,  # After all debate rounds
+                    )
             except Exception as e:
                 print(f"  Judge ERROR: {e}")
                 result.final_answer = list(proposals.values())[0]

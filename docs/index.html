@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>aragora - Agorist AI</title>
-    <meta name="description" content="Decentralized reasoning through voluntary agent participation. Truth emerges from the marketplace of ideas, not central authority.">
-    <meta property="og:title" content="aragora - Agorist AI">
-    <meta property="og:description" content="Decentralized reasoning through voluntary agent participation. Truth emerges from the marketplace of ideas.">
+    <title>aragora - Self-Improving Multi-Agent AI</title>
+    <meta name="description" content="Self-improving AI through multi-agent debate. Watch the nomic loop evolve in real-time at live.aragora.ai">
+    <meta property="og:title" content="aragora - Self-Improving Multi-Agent AI">
+    <meta property="og:description" content="Self-improving AI through multi-agent debate. Watch the nomic loop evolve in real-time.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://aragora.ai">
     <link rel="canonical" href="https://aragora.ai">
@@ -104,58 +104,159 @@
             color: var(--text);
         }
 
-        /* Philosophy Section */
-        .philosophy {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(251, 191, 36, 0.05));
-            border: 1px solid rgba(99, 102, 241, 0.3);
+        /* Live Dashboard Section */
+        .live-section {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(99, 102, 241, 0.1));
+            border: 2px solid rgba(34, 197, 94, 0.4);
             border-radius: 1rem;
             padding: 2rem;
             margin: 2.5rem 0;
             text-align: center;
+            position: relative;
+            overflow: hidden;
         }
 
-        .philosophy h2 {
-            font-size: 1.25rem;
-            color: var(--gold);
+        .live-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--green), var(--accent), var(--purple));
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .live-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(34, 197, 94, 0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 2rem;
             margin-bottom: 1rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
         }
 
-        .philosophy-quote {
+        .live-dot {
+            width: 10px;
+            height: 10px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+        }
+
+        .live-section h2 {
+            font-size: 1.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .live-section h2 span {
+            color: var(--green);
+        }
+
+        .live-section p {
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .live-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem 2rem;
+            background: var(--green);
+            color: white;
+            border-radius: 0.5rem;
             font-size: 1.1rem;
-            font-style: italic;
-            color: var(--text);
-            max-width: 700px;
-            margin: 0 auto 1.5rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.3);
         }
 
-        .philosophy-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-top: 1.5rem;
-            text-align: left;
+        .live-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 40px rgba(34, 197, 94, 0.5);
         }
 
-        .philosophy-item {
+        /* Nomic Loop Section */
+        .nomic-section {
+            background: linear-gradient(135deg, rgba(167, 139, 250, 0.1), rgba(99, 102, 241, 0.1));
+            border: 1px solid rgba(167, 139, 250, 0.3);
+            border-radius: 1rem;
+            padding: 2rem;
+            margin: 2.5rem 0;
+        }
+
+        .nomic-section h2 {
+            font-size: 1.5rem;
+            color: var(--purple);
+            margin-bottom: 1rem;
             display: flex;
+            align-items: center;
             gap: 0.75rem;
         }
 
-        .philosophy-icon {
-            font-size: 1.5rem;
-            flex-shrink: 0;
+        .nomic-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
         }
 
-        .philosophy-item h4 {
-            font-size: 0.9rem;
-            margin-bottom: 0.25rem;
+        .nomic-phase {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
         }
 
-        .philosophy-item p {
-            font-size: 0.8rem;
+        .nomic-phase h4 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .nomic-phase p {
+            font-size: 0.85rem;
             color: var(--text-muted);
+        }
+
+        .phase-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            background: var(--accent);
+            color: white;
+            border-radius: 50%;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .nomic-quote {
+            font-style: italic;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid rgba(167, 139, 250, 0.2);
         }
 
         .install-box {
@@ -215,21 +316,6 @@
         .feature p {
             font-size: 0.85rem;
             color: var(--text-muted);
-        }
-
-        .feature-new {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(167, 139, 250, 0.1));
-            border-color: rgba(99, 102, 241, 0.3);
-        }
-
-        .new-badge {
-            font-size: 0.65rem;
-            padding: 0.15rem 0.5rem;
-            background: var(--accent);
-            color: white;
-            border-radius: 1rem;
-            text-transform: uppercase;
-            font-weight: 600;
         }
 
         .demo {
@@ -311,20 +397,87 @@
         .check { color: var(--green); }
         .cross { color: #ef4444; }
 
-        .architecture {
-            margin: 3rem 0;
+        .use-cases {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
         }
 
-        .arch-diagram {
+        .use-case {
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 0.75rem;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .use-case-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .use-case h4 {
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .use-case p {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Philosophy Section - now lower on page */
+        .philosophy {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.05), rgba(99, 102, 241, 0.05));
+            border: 1px solid rgba(251, 191, 36, 0.2);
+            border-radius: 1rem;
             padding: 2rem;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 0.7rem;
-            line-height: 1.4;
-            overflow-x: auto;
-            white-space: pre;
+            margin: 3rem 0;
+            text-align: center;
+        }
+
+        .philosophy h2 {
+            font-size: 1.1rem;
+            color: var(--gold);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .philosophy-quote {
+            font-size: 1rem;
+            font-style: italic;
+            color: var(--text-muted);
+            max-width: 600px;
+            margin: 0 auto 1rem;
+        }
+
+        .philosophy-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1.5rem;
+            text-align: left;
+        }
+
+        .philosophy-item {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .philosophy-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .philosophy-item h4 {
+            font-size: 0.85rem;
+            margin-bottom: 0.15rem;
+        }
+
+        .philosophy-item p {
+            font-size: 0.75rem;
             color: var(--text-muted);
         }
 
@@ -369,38 +522,8 @@
             border-color: var(--accent);
         }
 
-        .use-cases {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin: 1.5rem 0;
-        }
-
-        .use-case {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 0.5rem;
-            padding: 1rem;
-            text-align: center;
-        }
-
-        .use-case-icon {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .use-case h4 {
-            font-size: 0.9rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .use-case p {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-        }
-
         .inspired {
-            margin: 3rem 0;
+            margin: 2rem 0;
             padding: 1.5rem;
             background: var(--surface);
             border: 1px solid var(--border);
@@ -456,13 +579,13 @@
     <div class="container">
         <header>
             <h1 class="logo">aragora</h1>
-            <p class="subtitle">Agorist AI</p>
-            <p class="tagline">Decentralized reasoning through voluntary agent participation. Truth emerges from the marketplace of ideas, not central authority.</p>
+            <p class="subtitle">Self-Improving AI</p>
+            <p class="tagline">Multi-agent debate with autonomous self-modification. Watch AI agents reason, critique, and evolve the system in real-time.</p>
             <p class="etymology"><span>ar-</span> (Latin: toward, enhanced) + <span>agora</span> (Greek: marketplace of ideas)</p>
             <div class="badges">
-                <a href="viewer.html?id=demo" class="badge" style="border-color: var(--accent); color: var(--accent);">
-                    <span>&#9658;</span>
-                    <span>Watch Demo Debate</span>
+                <a href="https://live.aragora.ai" class="badge" style="border-color: var(--green); color: var(--green);">
+                    <span style="animation: pulse 2s infinite;">&#9679;</span>
+                    <span>Watch Live</span>
                 </a>
                 <a href="https://pypi.org/project/aragora/" class="badge">
                     <span>PyPI</span>
@@ -474,61 +597,88 @@
                 <span class="badge">
                     <span>MIT License</span>
                 </span>
-                <span class="badge">
-                    <span>Python 3.10+</span>
-                </span>
             </div>
         </header>
 
-        <div class="philosophy">
-            <h2>The Agorist Principle</h2>
-            <p class="philosophy-quote">"The goal of agorism is the agora. The society of the open marketplace as near to untainted by coercion as can be humanly attained."</p>
-            <p style="font-size: 0.85rem; color: var(--text-muted);">- Samuel Edward Konkin III</p>
+        <!-- LIVE DASHBOARD - Top Priority -->
+        <div class="live-section">
+            <div class="live-indicator">
+                <div class="live-dot"></div>
+                <span style="color: var(--green); font-weight: 600;">NOMIC LOOP ACTIVE</span>
+            </div>
+            <h2>Watch <span>Self-Improvement</span> in Real-Time</h2>
+            <p>See AI agents debate improvements to aragora itself. Every phase - from debate to design to implementation - is streamed live as it happens.</p>
+            <a href="https://live.aragora.ai" class="live-btn">
+                <span>&#9658;</span>
+                Open Live Dashboard
+            </a>
+        </div>
 
-            <div class="philosophy-grid">
-                <div class="philosophy-item">
-                    <div class="philosophy-icon">&#9878;</div>
-                    <div>
-                        <h4>Voluntary Exchange</h4>
-                        <p>Agents participate freely. Consensus emerges from debate, not dictation.</p>
-                    </div>
+        <!-- NOMIC LOOP - Core Feature -->
+        <div class="nomic-section">
+            <h2><span style="font-size: 1.5rem;">&#8734;</span> The Nomic Loop</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1rem;">
+                aragora improves itself through structured cycles. Agents propose changes, debate their merits, implement them, and verify the results. The rules can change the rules.
+            </p>
+
+            <div class="nomic-grid">
+                <div class="nomic-phase">
+                    <h4><span class="phase-num">1</span> Debate</h4>
+                    <p>Multiple agents propose and critique improvements. Consensus emerges from structured discussion.</p>
                 </div>
-                <div class="philosophy-item">
-                    <div class="philosophy-icon">&#128279;</div>
-                    <div>
-                        <h4>Counter to Monolithic AI</h4>
-                        <p>Alternative to "trust the one big model." Multiple perspectives, better truth.</p>
-                    </div>
+                <div class="nomic-phase">
+                    <h4><span class="phase-num">2</span> Design</h4>
+                    <p>Winning proposals are refined into actionable specifications with clear success criteria.</p>
                 </div>
-                <div class="philosophy-item">
-                    <div class="philosophy-icon">&#127759;</div>
-                    <div>
-                        <h4>Decentralized Coordination</h4>
-                        <p>No single authority. Truth from the marketplace of ideas.</p>
-                    </div>
+                <div class="nomic-phase">
+                    <h4><span class="phase-num">3</span> Implement</h4>
+                    <p>Code changes are generated and applied. Each modification is tracked and reversible.</p>
                 </div>
-                <div class="philosophy-item">
-                    <div class="philosophy-icon">&#128161;</div>
-                    <div>
-                        <h4>Emergent Order</h4>
-                        <p>Like markets, better answers emerge from competition of ideas.</p>
-                    </div>
+                <div class="nomic-phase">
+                    <h4><span class="phase-num">4</span> Verify</h4>
+                    <p>Tests run, linters check, and agents evaluate. Only verified changes proceed.</p>
+                </div>
+                <div class="nomic-phase">
+                    <h4><span class="phase-num">5</span> Commit</h4>
+                    <p>Approved changes are committed. Failed cycles trigger rollback to last known good state.</p>
                 </div>
             </div>
 
-            <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid rgba(99, 102, 241, 0.2);">
-                <h3 style="font-size: 1rem; color: var(--text); margin-bottom: 0.75rem;">Meta-Level Dissent</h3>
-                <p style="font-size: 0.95rem; color: var(--text-muted); max-width: 700px; margin: 0 auto;">
-                    True voluntary participation means agents can challenge the framework itself.
-                    aragora's <strong style="color: var(--text);">Nomic loop</strong> allows agents to propose changes to aragora &mdash;
-                    the rules can change the rules. Dissent is preserved, not suppressed.
-                    Agents have genuine <em>voice</em>, not just <em>loyalty</em>.
-                </p>
-            </div>
+            <p class="nomic-quote">
+                "In Nomic, the rules can change the rules. aragora applies this to AI - the system debates and implements its own evolution."
+            </p>
         </div>
 
         <div class="install-box">
             <code>pip install aragora</code>
+        </div>
+
+        <h2 class="section-title"><span class="icon">&#9881;</span> Core Features</h2>
+        <div class="features">
+            <div class="feature">
+                <h3>Heterogeneous Agents</h3>
+                <p>Mix Claude, GPT, Gemini, Grok, Qwen, Deepseek, and local models. Different biases create stronger consensus.</p>
+            </div>
+            <div class="feature">
+                <h3>Structured Debate</h3>
+                <p>Propose, Critique, Revise loop. Configurable rounds and consensus mechanisms (majority, unanimous, judge).</p>
+            </div>
+            <div class="feature">
+                <h3>Evidence Provenance</h3>
+                <p>Cryptographic chain tracking sources. Every claim linked to evidence with reliability scoring.</p>
+            </div>
+            <div class="feature">
+                <h3>Formal Verification</h3>
+                <p>Z3-powered proof checking. Verify logical claims with SMT solver integration.</p>
+            </div>
+            <div class="feature">
+                <h3>Decision-to-PR Pipeline</h3>
+                <p>Turn debate outcomes into GitHub PRs. Risk registers, test plans, implementation specs.</p>
+            </div>
+            <div class="feature">
+                <h3>Red-Team Mode</h3>
+                <p>Adversarial testing with steelman/strawman attacks. Find weaknesses before production.</p>
+            </div>
         </div>
 
         <h2 class="section-title"><span class="icon">&#9878;</span> Why Multi-Agent Debate?</h2>
@@ -566,54 +716,6 @@
             </table>
         </div>
 
-        <h2 class="section-title"><span class="icon">&#9881;</span> Core Features</h2>
-        <div class="features">
-            <div class="feature">
-                <h3>Heterogeneous Agents</h3>
-                <p>Mix Claude, GPT, Gemini, Grok, Qwen, Deepseek, and local models. Different biases create stronger consensus.</p>
-            </div>
-            <div class="feature">
-                <h3>Structured Debate</h3>
-                <p>Propose, Critique, Revise loop. Configurable rounds and consensus mechanisms (majority, unanimous, judge).</p>
-            </div>
-            <div class="feature">
-                <h3>Evidence Provenance</h3>
-                <p>Cryptographic chain tracking sources. Every claim linked to evidence with reliability scoring.</p>
-            </div>
-            <div class="feature">
-                <h3>Cost/Quality Autotuning</h3>
-                <p>Budget-aware optimization. Early-stop on consensus. Automatic model tier selection.</p>
-            </div>
-        </div>
-
-        <h2 class="section-title"><span class="icon">&#128302;</span> Advanced Capabilities <span class="new-badge">v0.7</span></h2>
-        <div class="features">
-            <div class="feature feature-new">
-                <h3>Formal Verification</h3>
-                <p>Z3-powered proof checking. Verify logical claims with SMT solver integration.</p>
-            </div>
-            <div class="feature feature-new">
-                <h3>Plugin System</h3>
-                <p>Sandboxed extensibility. Built-in: lint, security-scan, test-runner. Add custom tools safely.</p>
-            </div>
-            <div class="feature feature-new">
-                <h3>Decision-to-PR Pipeline</h3>
-                <p>Turn debate outcomes into GitHub PRs. Risk registers, test plans, implementation specs.</p>
-            </div>
-            <div class="feature feature-new">
-                <h3>Static Artifacts</h3>
-                <p>Export debates as shareable HTML. Complete audit trail of reasoning.</p>
-            </div>
-            <div class="feature feature-new">
-                <h3>Nomic Self-Improvement</h3>
-                <p>aragora debates how to improve itself. Autonomous evolution through dialectic tension.</p>
-            </div>
-            <div class="feature feature-new">
-                <h3>Red-Team Mode</h3>
-                <p>Adversarial testing with steelman/strawman attacks. Find weaknesses before production.</p>
-            </div>
-        </div>
-
         <div class="demo">
             <div class="demo-header">
                 <div class="demo-dot red"></div>
@@ -631,8 +733,10 @@
 <span class="output">[Round 2] gpt_critic: Added circuit breaker </span><span class="success">&#10003;</span>
 <span class="success">Consensus reached (confidence: 87%)</span>
 
-<span class="prompt">$</span> <span class="command">aragora export --format html debate_123.json</span>
-<span class="output">Exported to debate_123.html</span>  <span class="highlight"># Shareable artifact</span>
+<span class="prompt">$</span> <span class="command">aragora nomic --cycles 3</span>  <span class="highlight"># Run self-improvement loop</span>
+<span class="output">[Cycle 1] Debating improvements...</span>
+<span class="output">[Cycle 1] Implementing: "Add caching to debate storage"</span>
+<span class="output">[Cycle 1] Verified &#10003; Committed</span>
             </div>
         </div>
 
@@ -670,54 +774,40 @@
             </div>
         </div>
 
-        <div class="architecture">
-            <h2 class="section-title"><span class="icon">&#128736;</span> Architecture</h2>
-            <div class="arch-diagram">
-                              ┌─────────────────────────────────────────────────┐
-                              │              THE AGORA (Arena)                  │
-                              │   Voluntary participation, emergent consensus   │
-                              └─────────────────────────────────────────────────┘
-                                                     │
-          ┌──────────────┬──────────────┬────────────┼────────────┬──────────────┬──────────────┐
-          ▼              ▼              ▼            ▼            ▼              ▼              ▼
-    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-    │  Claude  │  │   GPT    │  │  Gemini  │  │   Grok   │  │   Qwen   │  │ Deepseek │  │  Local   │
-    │ proposer │  │  critic  │  │  critic  │  │  critic  │  │  critic  │  │  critic  │  │  judge   │
-    └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
-          │              │              │            │            │              │              │
-          └──────────────┴──────────────┴────────────┼────────────┴──────────────┴──────────────┘
-                                                     ▼
-    ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                                    VERIFICATION LAYER                                       │
-    │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
-    │  │ Evidence Chain  │  │ Z3 Formal Proof │  │ Reliability     │  │ Sandboxed Plugins       │ │
-    │  │ (Provenance)    │  │ (SMT Solver)    │  │ Scoring         │  │ (lint, security, test)  │ │
-    │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────────────┘ │
-    └─────────────────────────────────────────────────────────────────────────────────────────────┘
-                                                     │
-    ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                                    MEMORY & LEARNING                                        │
-    │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
-    │  │ Consensus Store │  │ Dissent Archive │  │ Pattern Memory  │  │ ELO Rankings            │ │
-    │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────────────┘ │
-    └─────────────────────────────────────────────────────────────────────────────────────────────┘
-                                                     │
-    ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                                      OUTPUT LAYER                                           │
-    │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
-    │  │ HTML Artifacts  │  │ PR Generator    │  │ Risk Register   │  │ Autotuner (cost/quality)│ │
-    │  └─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────────────┘ │
-    └─────────────────────────────────────────────────────────────────────────────────────────────┘</div>
-        </div>
+        <!-- Philosophy Section - moved lower -->
+        <div class="philosophy">
+            <h2>Philosophical Foundations</h2>
+            <p class="philosophy-quote">"Truth emerges from the marketplace of ideas, not central authority."</p>
 
-        <div class="inspired">
-            <h3>Philosophical Roots</h3>
-            <div class="inspired-list">
-                <span class="inspired-item">Agorism (SEK3)</span>
-                <span class="inspired-item">Counter-Economics</span>
-                <span class="inspired-item">Marketplace of Ideas</span>
-                <span class="inspired-item">Dialectical Reasoning</span>
-                <span class="inspired-item">Emergent Order</span>
+            <div class="philosophy-grid">
+                <div class="philosophy-item">
+                    <div class="philosophy-icon">&#9878;</div>
+                    <div>
+                        <h4>Voluntary Exchange</h4>
+                        <p>Agents participate freely. Consensus emerges from debate.</p>
+                    </div>
+                </div>
+                <div class="philosophy-item">
+                    <div class="philosophy-icon">&#128279;</div>
+                    <div>
+                        <h4>Counter to Monolithic AI</h4>
+                        <p>Alternative to "trust the one big model."</p>
+                    </div>
+                </div>
+                <div class="philosophy-item">
+                    <div class="philosophy-icon">&#127759;</div>
+                    <div>
+                        <h4>Decentralized Coordination</h4>
+                        <p>No single authority decides truth.</p>
+                    </div>
+                </div>
+                <div class="philosophy-item">
+                    <div class="philosophy-icon">&#128161;</div>
+                    <div>
+                        <h4>Emergent Order</h4>
+                        <p>Better answers emerge from competition.</p>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -728,12 +818,16 @@
                 <span class="inspired-item">LLM Multi-Agent Debate</span>
                 <span class="inspired-item">ChatArena</span>
                 <span class="inspired-item">Project Sid</span>
-                <span class="inspired-item">Nomic (rules that change rules)</span>
+                <span class="inspired-item">Nomic (Peter Suber)</span>
+                <span class="inspired-item">Agorism (SEK3)</span>
             </div>
         </div>
 
         <div class="cta">
-            <a href="https://github.com/an0mium/aragora" class="btn btn-primary">
+            <a href="https://live.aragora.ai" class="btn btn-primary">
+                Watch Live
+            </a>
+            <a href="https://github.com/an0mium/aragora" class="btn btn-secondary">
                 View on GitHub
             </a>
             <a href="https://pypi.org/project/aragora/" class="btn btn-secondary">

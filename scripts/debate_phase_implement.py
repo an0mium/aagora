@@ -67,7 +67,7 @@ The goal is to make phase_implement more reliable and effective.""",
         name="claude-code-advocate",
         model="claude-sonnet-4-20250514",
         role="proposer",
-        timeout=300,
+        timeout=600,  # Doubled from 300
     )
     claude_agent.system_prompt = """You are advocating for Claude Code's approach.
 You have direct experience implementing aragora features quickly and reliably.
@@ -81,7 +81,7 @@ Be specific about implementation details."""
         name="codex-advocate",
         model="o3",
         role="proposer",
-        timeout=300,
+        timeout=600,  # Doubled from 300
     )
     codex_agent.system_prompt = """You are advocating for Codex/GPT's approach.
 You have deep code understanding and can reason about complex logic.
@@ -98,7 +98,7 @@ and propose solutions to address them."""
             name="gemini-synthesizer",
             model="gemini-3-pro",
             role="synthesizer",
-            timeout=300,
+            timeout=600,  # Doubled from 300
         )
         synthesizer.system_prompt = """You are a neutral synthesizer from Google's perspective.
 Your role is to find the best approach that combines the strengths of both Claude Code and Codex.
@@ -115,7 +115,7 @@ Synthesize a concrete recommendation."""
             name="neutral-synthesizer",
             model="claude-sonnet-4-20250514",
             role="synthesizer",
-            timeout=300,
+            timeout=600,  # Doubled from 300
         )
         synthesizer.system_prompt = """You are a neutral synthesizer.
 Listen to both Claude Code and Codex advocates, then synthesize the best approach.

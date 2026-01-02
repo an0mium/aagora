@@ -139,7 +139,7 @@ Make only the changes specified. Follow existing code style."""
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=180,  # Minimum 3 min (was 30)
             )
             return result.stdout
         except Exception:

@@ -77,3 +77,8 @@ logs/
 .env.local
 config.local.yaml
 .DS_Store
+
+# Live dashboard
+aragora/live/node_modules/
+aragora/live/.next/
+aragora/live/out/

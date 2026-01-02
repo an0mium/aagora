@@ -411,21 +411,21 @@ async def main():
         name="Claude-Opus-4.5",
         model="claude-opus-4-5-20250514",  # Latest Opus
         role="proposer",
-        timeout=600,  # 10 min timeout for complex responses
+        timeout=1200,  # 20 min timeout for complex responses (doubled from 600)
     )
 
     codex = CodexAgent(
         name="GPT-5.2-Codex",
         model="o3",  # GPT 5.2 xhigh via codex
         role="proposer",
-        timeout=600,
+        timeout=1200,  # Doubled from 600
     )
 
     gemini = GeminiCLIAgent(
         name="Gemini-3-Pro",
         model="gemini-3-pro",
         role="proposer",
-        timeout=600,
+        timeout=1200,  # Doubled from 600
     )
 
     task = """Which AI model is best suited to be the PRIMARY engine for autonomous code implementation?

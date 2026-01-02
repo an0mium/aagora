@@ -111,7 +111,7 @@ Recent changes:
         name="gemini-visionary",
         model="gemini-2.5-pro",
         role="proposer",
-        timeout=180,
+        timeout=360,  # Doubled from 180
     )
     gemini_visionary.system_prompt = """You are a visionary strategist representing Google's perspective.
 Propose ONE bold, specific improvement for aragora.
@@ -122,7 +122,7 @@ Argue passionately for your proposal. Challenge other proposals directly."""
         name="codex-visionary",
         model="o3",  # GPT model via codex CLI
         role="proposer",
-        timeout=180,
+        timeout=360,  # Doubled from 180
     )
     codex_visionary.system_prompt = """You are a visionary strategist representing OpenAI's perspective.
 Propose ONE bold, specific improvement for aragora.
@@ -133,7 +133,7 @@ Argue passionately for your proposal. Challenge other proposals directly."""
         name="claude-visionary",
         model="claude-sonnet-4-20250514",
         role="proposer",
-        timeout=180,
+        timeout=360,  # Doubled from 180
     )
     claude_visionary.system_prompt = """You are a visionary strategist representing Anthropic's perspective.
 Propose ONE bold, specific improvement for aragora.
@@ -204,13 +204,13 @@ Be specific enough that an engineer could implement it.""",
             name="architect",
             model="claude-sonnet-4-20250514",
             role="proposer",
-            timeout=300,  # 5 min for complex design work
+            timeout=600,  # 10 min for complex design work (doubled from 300)
         ),
         ClaudeAgent(
             name="reviewer",
             model="claude-sonnet-4-20250514",
             role="synthesizer",
-            timeout=300,
+            timeout=600,  # Doubled from 300
         ),
     ]
 
@@ -302,7 +302,7 @@ async def phase_verify():
             cwd=ARAGORA_PATH,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=180,  # Minimum 3 min (was 30)
         )
         passed = "OK" in result.stdout
         checks.append({"check": "import", "passed": passed})
