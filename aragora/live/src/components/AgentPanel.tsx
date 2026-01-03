@@ -7,26 +7,33 @@ interface AgentPanelProps {
   events: StreamEvent[];
 }
 
-// Agent colors for different models
-const AGENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+// Agent color schemes by model family
+const MODEL_COLORS = {
   // Gemini - purple (Google AI)
-  'gemini-visionary': { bg: 'bg-purple/10', text: 'text-purple', border: 'border-purple/30' },
-  'gemini': { bg: 'bg-purple/10', text: 'text-purple', border: 'border-purple/30' },
-  'gemini-explorer': { bg: 'bg-purple/10', text: 'text-purple', border: 'border-purple/30' },
+  gemini: { bg: 'bg-purple/10', text: 'text-purple', border: 'border-purple/30' },
   // Codex - gold (OpenAI)
-  'codex-engineer': { bg: 'bg-gold/10', text: 'text-gold', border: 'border-gold/30' },
-  'codex': { bg: 'bg-gold/10', text: 'text-gold', border: 'border-gold/30' },
+  codex: { bg: 'bg-gold/10', text: 'text-gold', border: 'border-gold/30' },
   // Claude - accent/indigo (Anthropic)
-  'claude-synthesizer': { bg: 'bg-accent/10', text: 'text-accent', border: 'border-accent/30' },
-  'claude-visionary': { bg: 'bg-accent/10', text: 'text-accent', border: 'border-accent/30' },
-  'claude': { bg: 'bg-accent/10', text: 'text-accent', border: 'border-accent/30' },
+  claude: { bg: 'bg-accent/10', text: 'text-accent', border: 'border-accent/30' },
   // Grok - crimson red (xAI)
-  'grok-explorer': { bg: 'bg-crimson/10', text: 'text-crimson', border: 'border-crimson/30' },
-  'grok': { bg: 'bg-crimson/10', text: 'text-crimson', border: 'border-crimson/30' },
-  'grok-pragmatist': { bg: 'bg-crimson/10', text: 'text-crimson', border: 'border-crimson/30' },
-  // Default
+  grok: { bg: 'bg-crimson/10', text: 'text-crimson', border: 'border-crimson/30' },
+  // Default - neutral
   default: { bg: 'bg-surface', text: 'text-text', border: 'border-border' },
 };
+
+/**
+ * Get colors for an agent by name, using prefix matching.
+ * This ensures any variant (e.g., "grok-explorer", "grok-pragmatist") gets the right color.
+ */
+function getAgentColors(agentName: string): { bg: string; text: string; border: string } {
+  const name = agentName.toLowerCase();
+  // Match by prefix (order matters - check specific models first)
+  if (name.startsWith('gemini')) return MODEL_COLORS.gemini;
+  if (name.startsWith('codex')) return MODEL_COLORS.codex;
+  if (name.startsWith('claude')) return MODEL_COLORS.claude;
+  if (name.startsWith('grok')) return MODEL_COLORS.grok;
+  return MODEL_COLORS.default;
+}
 
 const ROLE_ICONS: Record<string, string> = {
   proposer: '💡',
@@ -43,9 +50,20 @@ export function AgentPanel({ events }: AgentPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
+  // Collect all agent_message content for deduplication
+  const agentMessageContents = new Set(
+    events
+      .filter((e) => e.type === 'agent_message')
+      .map((e) => {
+        const content = (e.data?.content as string) || '';
+        // Normalize: first 100 chars, lowercase, trimmed
+        return content.slice(0, 100).toLowerCase().trim();
+      })
+  );
+
   // Filter to agent-related events, preferring agent_message over log_message
-  // to avoid duplicated content (log_message has truncated versions)
-  const agentEvents = events.filter((e, index, arr) => {
+  // to avoid duplicated content (log_message often echoes agent_message)
+  const agentEvents = events.filter((e) => {
     // Always include these primary event types
     if (
       e.type === 'agent_message' ||
@@ -55,9 +73,10 @@ export function AgentPanel({ events }: AgentPanelProps) {
     ) {
       return true;
     }
-    // For log_message, only include if it's not a duplicate of an agent_message
+    // For log_message, filter out duplicates more aggressively
     if (e.type === 'log_message') {
       const msg = (e.data?.message as string) || '';
+
       // Skip log messages that look like arena message summaries (they have agent_message equivalents)
       // These have format: "    [role] agent (round N): content"
       if (msg.match(/^\s*\[(proposer|critic|synthesizer|judge|reviewer|implementer)\]/i)) {
@@ -69,6 +88,24 @@ export function AgentPanel({ events }: AgentPanelProps) {
       }
       // Skip critique summaries (have critique events)
       if (msg.match(/^\s*\[critique\]/i)) {
+        return false;
+      }
+      // Skip consensus summaries (have consensus events)
+      if (msg.match(/^\s*\[consensus\]/i)) {
+        return false;
+      }
+      // Skip round markers (redundant with agent_message)
+      if (msg.match(/^\s*Round \d+:/i)) {
+        return false;
+      }
+      // Skip agent-attributed log messages that duplicate agent_message content
+      // Check if content matches any agent_message (first 100 chars)
+      const normalizedMsg = msg.slice(0, 100).toLowerCase().trim();
+      if (agentMessageContents.has(normalizedMsg)) {
+        return false;
+      }
+      // Skip if log message starts with agent name (likely duplicate)
+      if (msg.match(/^\s*(gemini|claude|codex|grok)[-\w]*\s*:/i)) {
         return false;
       }
       return true;
@@ -181,7 +218,7 @@ interface EventCardProps {
 
 function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
   const agentName = event.agent || 'system';
-  const colors = AGENT_COLORS[agentName] || AGENT_COLORS.default;
+  const colors = getAgentColors(agentName);
   const timestamp = new Date(event.timestamp * 1000).toLocaleTimeString();
 
   // Get content based on event type
@@ -195,7 +232,8 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
       content = event.data.content as string;
       role = event.data.role as string;
       icon = ROLE_ICONS[role] || ROLE_ICONS.default;
-      preview = content.slice(0, 150) + (content.length > 150 ? '...' : '');
+      // Show full content in preview (no truncation for better visibility)
+      preview = content;
       break;
     case 'critique':
       const issues = event.data.issues as string[];
@@ -223,7 +261,8 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
       break;
     case 'log_message':
       content = event.data.message as string;
-      preview = content.slice(0, 150) + (content.length > 150 ? '...' : '');
+      // Show full content in preview (no truncation for better visibility)
+      preview = content;
       // Use agent-specific icons for attributed log messages
       icon = agentName !== 'system' ? ROLE_ICONS.default : '📝';
       break;
@@ -251,7 +290,7 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
             )}
             <span className="text-xs text-text-muted ml-auto">{timestamp}</span>
           </div>
-          <p className="text-sm text-text-muted truncate">{preview}</p>
+          <p className="text-sm text-text-muted whitespace-pre-wrap break-words">{preview}</p>
         </div>
         <span className="text-text-muted flex-shrink-0">
           {isExpanded ? '▼' : '▶'}

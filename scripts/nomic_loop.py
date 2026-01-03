@@ -56,6 +56,12 @@ PROTECTED_FILES = [
     "aragora/server/stream.py",        # Streaming, AudienceInbox, TokenBucket
     "aragora/memory/store.py",         # CritiqueStore, AgentReputation
     "aragora/debate/embeddings.py",    # DebateEmbeddingsDatabase for historical search
+
+    # Live dashboard (web interface)
+    "aragora/live/src/components/AgentPanel.tsx",       # Agent activity panel with colors
+    "aragora/live/src/components/UserParticipation.tsx", # User participation UI
+    "aragora/live/src/app/page.tsx",                    # Main dashboard page
+    "aragora/live/tailwind.config.js",                  # Tailwind config with agent colors
 ]
 
 SAFETY_PREAMBLE = """

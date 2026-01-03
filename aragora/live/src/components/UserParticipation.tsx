@@ -79,7 +79,7 @@ export function UserParticipation({ events, onVote, onSuggest, onAck, onError }:
     .slice(-4) // Last 4 proposals
     .map(e => ({
       agent: e.data.agent as string,
-      content: (e.data.content as string).substring(0, 200) + '...',
+      content: e.data.content as string, // Full content, no truncation
     }));
 
   const handleVote = () => {
@@ -123,7 +123,7 @@ export function UserParticipation({ events, onVote, onSuggest, onAck, onError }:
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-accent">{proposal.agent}</div>
-                  <div className="text-xs text-text-muted">{proposal.content}</div>
+                  <div className="text-xs text-text-muted whitespace-pre-wrap break-words max-h-48 overflow-y-auto">{proposal.content}</div>
                 </div>
               </div>
             ))}
