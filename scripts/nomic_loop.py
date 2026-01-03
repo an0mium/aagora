@@ -1251,6 +1251,133 @@ The implementation MUST preserve all existing aragora functionality.""",
         except Exception:
             return ""
 
+    def _get_modified_files(self) -> list[str]:
+        """Get list of modified files (staged and unstaged)."""
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                cwd=self.aragora_path,
+                capture_output=True,
+                text=True,
+            )
+            files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+            return files
+        except Exception:
+            return []
+
+    def _count_test_results(self, test_output: str) -> dict:
+        """Parse pytest output to count passed/failed/errors."""
+        import re
+        result = {"passed": 0, "failed": 0, "errors": 0, "total": 0}
+
+        # Look for pytest summary line: "X passed, Y failed, Z errors"
+        summary_match = re.search(r"(\d+) passed", test_output)
+        if summary_match:
+            result["passed"] = int(summary_match.group(1))
+
+        failed_match = re.search(r"(\d+) failed", test_output)
+        if failed_match:
+            result["failed"] = int(failed_match.group(1))
+
+        error_match = re.search(r"(\d+) error", test_output)
+        if error_match:
+            result["errors"] = int(error_match.group(1))
+
+        result["total"] = result["passed"] + result["failed"] + result["errors"]
+        return result
+
+    def _extract_failing_files(self, test_output: str) -> list[str]:
+        """Extract file paths from pytest failure output."""
+        import re
+        failing_files = set()
+
+        # Match patterns like "tests/test_foo.py::TestClass::test_method FAILED"
+        # or "FAILED tests/test_foo.py::test_method"
+        patterns = [
+            r"(\S+\.py)::\S+ FAILED",
+            r"FAILED (\S+\.py)::",
+            r"ERROR (\S+\.py)::",
+            r"(\S+\.py):\d+: in \w+",  # Traceback lines
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, test_output)
+            failing_files.update(matches)
+
+        return list(failing_files)
+
+    def _selective_rollback(self, files_to_rollback: list[str]) -> bool:
+        """
+        Rollback only specific files while preserving others.
+
+        Returns True if rollback was successful.
+        """
+        if not files_to_rollback:
+            return True
+
+        try:
+            self._log(f"  Selective rollback of {len(files_to_rollback)} files:")
+            for f in files_to_rollback[:5]:  # Show first 5
+                self._log(f"    - {f}")
+            if len(files_to_rollback) > 5:
+                self._log(f"    ... and {len(files_to_rollback) - 5} more")
+
+            # Checkout specific files from HEAD
+            subprocess.run(
+                ["git", "checkout", "HEAD", "--"] + files_to_rollback,
+                cwd=self.aragora_path,
+                check=True,
+            )
+            return True
+        except Exception as e:
+            self._log(f"  Selective rollback failed: {e}")
+            return False
+
+    def _commit_partial_progress(self, message: str) -> Optional[str]:
+        """
+        Commit current changes as partial progress before attempting more fixes.
+
+        Returns commit hash if successful, None otherwise.
+        """
+        try:
+            # Check if there are changes to commit
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=self.aragora_path,
+                capture_output=True,
+                text=True,
+            )
+            if not status.stdout.strip():
+                return None
+
+            # Stage all changes
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=self.aragora_path,
+                check=True,
+            )
+
+            # Commit with WIP message
+            result = subprocess.run(
+                ["git", "commit", "-m", f"WIP: {message}\n\n[partial progress - may have failing tests]"],
+                cwd=self.aragora_path,
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                # Get commit hash
+                hash_result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=self.aragora_path,
+                    capture_output=True,
+                    text=True,
+                )
+                return hash_result.stdout.strip()[:8]
+            return None
+        except Exception:
+            return None
+
     async def _preserve_failed_work(self, branch_name: str) -> Optional[str]:
         """
         Preserve failed implementation work in a git branch before rollback.
@@ -1821,11 +1948,14 @@ CRITICAL SAFETY RULES:
         self._log("  All protected files intact")
 
         # === Iterative Review/Fix Cycle ===
-        # Default: 1 fix attempt. Set ARAGORA_MAX_FIX_ITERATIONS for more.
-        # The fix cycle: Codex reviews failure -> Claude fixes -> Gemini reviews -> re-verify
-        max_fix_iterations = int(os.environ.get("ARAGORA_MAX_FIX_ITERATIONS", "1"))
+        # Default: 3 fix attempts with all agents before rollback.
+        # The fix cycle: Codex reviews -> Claude fixes -> Gemini reviews -> Grok attempts -> re-verify
+        # Set ARAGORA_MAX_FIX_ITERATIONS to override (minimum 3 recommended for thorough fixing)
+        max_fix_iterations = int(os.environ.get("ARAGORA_MAX_FIX_ITERATIONS", "3"))
         fix_iteration = 0
         cycle_result["fix_iterations"] = []
+        best_test_score = 0  # Track progress: best passing test count
+        best_test_output = ""
 
         while True:
             # Phase 4: Verify
@@ -1836,44 +1966,95 @@ CRITICAL SAFETY RULES:
                 self._log(f"\nVerification passed!")
                 break  # Success - exit the fix loop
 
+            # Get test output for progress tracking
+            test_output = ""
+            for check in verify_result.get("checks", []):
+                if check.get("check") == "tests":
+                    test_output = check.get("output", "")
+                    break
+
+            # Track progress - count passing tests
+            test_counts = self._count_test_results(test_output)
+            current_score = test_counts["passed"]
+            self._log(f"  Test results: {test_counts['passed']} passed, {test_counts['failed']} failed, {test_counts['errors']} errors")
+
+            # Update best score if improving
+            if current_score > best_test_score:
+                best_test_score = current_score
+                best_test_output = test_output
+                self._log(f"  Progress: New best score = {best_test_score} passing tests")
+                # Commit partial progress when improving
+                partial_commit = self._commit_partial_progress(f"cycle-{self.cycle_count}-iter-{fix_iteration}-{best_test_score}passed")
+                if partial_commit:
+                    self._log(f"  Partial progress committed: {partial_commit}")
+
             # Verification failed
             fix_iteration += 1
             iteration_result = {
                 "iteration": fix_iteration,
                 "verify_result": verify_result,
+                "test_counts": test_counts,
             }
 
             if fix_iteration > max_fix_iterations:
-                # No more fix attempts allowed
+                # No more fix attempts allowed - try smart rollback first
+                self._log(f"\n{'=' * 50}")
+                self._log(f"MAX FIX ITERATIONS REACHED ({max_fix_iterations})")
+                self._log(f"{'=' * 50}")
+
                 if self.disable_rollback:
                     self._log(f"Verification failed after {fix_iteration - 1} fix attempts.")
                     self._log("  ROLLBACK DISABLED - keeping changes for inspection")
                     cycle_result["outcome"] = "verification_failed_no_rollback"
                     cycle_result["fix_iterations"].append(iteration_result)
                     return cycle_result
-                else:
-                    # Preserve work in a branch before rollback
-                    preserve_branch = await self._preserve_failed_work(f"nomic-failed-cycle-{self.cycle_count}")
-                    if preserve_branch:
-                        cycle_result["preserved_branch"] = preserve_branch
-                        self._log(f"  Work preserved in branch: {preserve_branch}")
 
-                    self._log(f"Verification failed after {fix_iteration - 1} fix attempts. Rolling back.")
-                    self._restore_backup(backup_path)
-                    subprocess.run(["git", "checkout", "."], cwd=self.aragora_path)
-                    cycle_result["outcome"] = "verification_failed"
-                    cycle_result["fix_iterations"].append(iteration_result)
-                    return cycle_result
+                # Try selective rollback first - only rollback files causing failures
+                self._log("\n  Attempting selective rollback (preserve passing changes)...")
+                failing_test_files = self._extract_failing_files(test_output)
+                modified_files = self._get_modified_files()
+
+                # Find files that might be causing the failures
+                problematic_files = []
+                for mod_file in modified_files:
+                    # Check if this modified file is referenced in failing tests
+                    if any(mod_file in ft or ft in mod_file for ft in failing_test_files):
+                        problematic_files.append(mod_file)
+
+                if problematic_files and len(problematic_files) < len(modified_files):
+                    # Try selective rollback
+                    self._log(f"  Found {len(problematic_files)} potentially problematic files (keeping {len(modified_files) - len(problematic_files)} others)")
+                    if self._selective_rollback(problematic_files):
+                        # Re-verify after selective rollback
+                        self._log("  Re-verifying after selective rollback...")
+                        re_verify = await self.phase_verify()
+                        if re_verify.get("all_passed"):
+                            self._log("  Selective rollback succeeded! Keeping partial changes.")
+                            cycle_result["outcome"] = "partial_success"
+                            cycle_result["selective_rollback"] = problematic_files
+                            break
+                        else:
+                            self._log("  Selective rollback did not fix all issues, proceeding to full rollback")
+
+                # Preserve work in a branch before full rollback
+                preserve_branch = await self._preserve_failed_work(f"nomic-failed-cycle-{self.cycle_count}")
+                if preserve_branch:
+                    cycle_result["preserved_branch"] = preserve_branch
+                    self._log(f"  Work preserved in branch: {preserve_branch}")
+
+                self._log(f"Verification failed after {fix_iteration - 1} fix attempts. Rolling back.")
+                self._restore_backup(backup_path)
+                subprocess.run(["git", "checkout", "."], cwd=self.aragora_path)
+                cycle_result["outcome"] = "verification_failed"
+                cycle_result["best_test_score"] = best_test_score
+                cycle_result["fix_iterations"].append(iteration_result)
+                return cycle_result
 
             self._log(f"\n{'=' * 50}")
             self._log(f"FIX ITERATION {fix_iteration}/{max_fix_iterations}")
             self._log(f"{'=' * 50}")
 
-            # Get test failure details
-            test_output = ""
-            for check in verify_result.get("checks", []):
-                if check.get("check") == "tests" and not check.get("passed"):
-                    test_output = check.get("output", "")
+            # test_output already extracted above for progress tracking
 
             # Step 1: Codex reviews the failed changes
             self._log("\n  Step 1: Codex analyzing test failures...", agent="codex")
@@ -1943,6 +2124,7 @@ Working directory: {self.aragora_path}
 
             # Step 3: Gemini quick review (optional sanity check)
             self._log("\n  Step 3: Gemini quick review...", agent="gemini")
+            gemini_issues = False
             try:
                 gemini_review_prompt = f"""Quick review of fix attempt. Are these changes correct?
 
@@ -1960,8 +2142,48 @@ Reply with: LOOKS_GOOD or ISSUES: <brief description>
                 # Emit Gemini's full review
                 if gemini_result:
                     self._stream_emit("on_log_message", gemini_result, level="info", phase="fix", agent="gemini")
+                    # Check if Gemini found issues
+                    gemini_issues = "ISSUES:" in gemini_result.upper() or "ISSUE:" in gemini_result.upper()
             except Exception as e:
                 self._log(f"    Gemini review skipped: {e}", agent="gemini")
+
+            # Step 4: Grok attempts fixes if Gemini found issues or Claude's fix failed
+            if gemini_issues or iteration_result.get("fix_error"):
+                self._log("\n  Step 4: Grok attempting alternative fix...", agent="grok")
+                try:
+                    grok_fix_prompt = f"""{SAFETY_PREAMBLE}
+
+Previous fix attempt may have issues. Please apply an alternative fix for these test failures:
+
+## Test Failures
+```
+{test_output[:1500]}
+```
+
+## Previous Attempt Issues
+{iteration_result.get('gemini_review', 'Unknown issues')}
+{iteration_result.get('fix_error', '')}
+
+## Current Changes (may be partially correct)
+{self._get_git_diff()[:2000]}
+
+## Instructions
+1. Analyze what the previous fix attempt got wrong
+2. Apply a DIFFERENT approach to fix the tests
+3. Focus on minimal, targeted changes
+4. Do NOT undo correct fixes, only fix what's still broken
+
+Working directory: {self.aragora_path}
+"""
+                    grok_result = await self.grok.generate(grok_fix_prompt, context=[])
+                    iteration_result["grok_fix"] = grok_result[:200] if grok_result else "No response"
+                    self._log(f"    Grok fix applied", agent="grok")
+                    if grok_result:
+                        self._stream_emit("on_log_message", grok_result, level="info", phase="fix", agent="grok")
+                except Exception as e:
+                    self._log(f"    Grok fix skipped: {e}", agent="grok")
+            else:
+                self._log("\n  Step 4: Grok fix skipped (Gemini approved Claude's changes)", agent="grok")
 
             cycle_result["fix_iterations"].append(iteration_result)
 
