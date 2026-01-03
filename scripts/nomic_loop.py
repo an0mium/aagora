@@ -41,6 +41,7 @@ from typing import Optional, List
 # =============================================================================
 PROTECTED_FILES = [
     "scripts/nomic_loop.py",  # The nomic loop itself - CRITICAL
+    "scripts/run_nomic_with_stream.py",  # Streaming wrapper - protects --auto flag
     "aragora/__init__.py",     # Core package initialization
     "aragora/core.py",         # Core types and abstractions
     "aragora/debate/orchestrator.py",  # Debate infrastructure
@@ -174,6 +175,14 @@ except ImportError:
     StreamEvent = None
     DebateArtifact = None
 
+# Debate embeddings for historical search
+try:
+    from aragora.debate.embeddings import DebateEmbeddingsDatabase
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
+    DebateEmbeddingsDatabase = None
+
 
 class NomicLoop:
     """
@@ -233,6 +242,13 @@ class NomicLoop:
                 print(f"[persistence] Supabase connected, loop_id: {self.loop_id}")
             else:
                 self.persistence = None
+
+        # Debate embeddings database for historical search
+        self.debate_embeddings = None
+        if EMBEDDINGS_AVAILABLE:
+            embeddings_path = self.nomic_dir / "debate_embeddings.db"
+            self.debate_embeddings = DebateEmbeddingsDatabase(str(embeddings_path))
+            print(f"[embeddings] Debate embeddings database initialized")
 
         # Setup logging infrastructure
         self.nomic_dir = self.aragora_path / ".nomic"
@@ -326,6 +342,10 @@ class NomicLoop:
                 winning_proposal=winning_proposal,
             )
             await self.persistence.save_debate(debate)
+
+            # Also index in embeddings database for future search
+            if self.debate_embeddings:
+                await self.debate_embeddings.index_debate(debate)
         except Exception:
             pass  # Don't let persistence errors break the loop
 
@@ -696,7 +716,7 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
             # Fall back to regular arena
             env = Environment(task=task)
             protocol = DebateProtocol(rounds=2, consensus="majority")
-            arena = Arena(environment=env, agents=agents, protocol=protocol)
+            arena = Arena(environment=env, agents=agents, protocol=protocol, debate_embeddings=self.debate_embeddings)
             return await self._run_arena_with_logging(arena, phase_name)
 
         self._log(f"  Starting {phase_name} fractal debate (genesis mode)...")
@@ -754,7 +774,7 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
             self._log(f"  Falling back to regular arena...")
             env = Environment(task=task)
             protocol = DebateProtocol(rounds=2, consensus="majority")
-            arena = Arena(environment=env, agents=agents, protocol=protocol)
+            arena = Arena(environment=env, agents=agents, protocol=protocol, debate_embeddings=self.debate_embeddings)
             return await self._run_arena_with_logging(arena, phase_name)
 
     async def phase_context_gathering(self) -> dict:
@@ -969,7 +989,7 @@ Recent changes:
             proposer_count=4,  # All 4 agents participate
         )
 
-        arena = Arena(env, [self.gemini, self.codex, self.claude, self.grok], protocol)
+        arena = Arena(env, [self.gemini, self.codex, self.claude, self.grok], protocol, debate_embeddings=self.debate_embeddings)
         result = await self._run_arena_with_logging(arena, "debate")
 
         phase_duration = (datetime.now() - phase_start).total_seconds()
@@ -1020,7 +1040,7 @@ The implementation MUST preserve all existing aragora functionality.""",
         )
 
         # All 4 agents participate in design
-        arena = Arena(env, [self.gemini, self.codex, self.claude, self.grok], protocol)
+        arena = Arena(env, [self.gemini, self.codex, self.claude, self.grok], protocol, debate_embeddings=self.debate_embeddings)
         result = await self._run_arena_with_logging(arena, "design")
 
         phase_duration = (datetime.now() - phase_start).total_seconds()
