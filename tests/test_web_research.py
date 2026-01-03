@@ -78,6 +78,40 @@ async def test_web_connector_caching():
 
 
 @pytest.mark.asyncio
+async def test_web_connector_with_test_seam():
+    """Test WebConnector using _search_web_actual test seam for proper mocking."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        connector = WebConnector(cache_dir=temp_dir)
+
+        # Mock results that _search_web_actual would return
+        mock_results = [
+            Evidence(
+                id="seam_test1",
+                source_type=SourceType.WEB_SEARCH,
+                source_id="http://example.com",
+                content="Test content via seam",
+                title="Seam Test Title",
+                confidence=0.9
+            )
+        ]
+
+        with patch.object(connector, '_search_web_actual', new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = mock_results
+
+            # First search - should call _search_web_actual
+            result1 = await connector.search("test query seam")
+            assert len(result1) == 1
+            assert result1[0].title == "Seam Test Title"
+            assert mock_search.call_count == 1
+
+            # Clear mock call count for second test
+            mock_search.reset_mock()
+
+            # Note: Cache is populated by _search_web_actual, so second call
+            # would use cache if we hadn't mocked. This test verifies the seam works.
+
+
+@pytest.mark.asyncio
 async def test_web_connector_local_ip_blocking():
     """Test that WebConnector blocks access to local/private IPs."""
     connector = WebConnector()

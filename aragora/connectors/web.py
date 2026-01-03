@@ -163,11 +163,27 @@ class WebConnector(BaseConnector):
         if cache_file.exists():
             try:
                 cached_data = json.loads(cache_file.read_text())
-                return cached_data["results"]
+                # Properly reconstruct Evidence objects from cache
+                return [Evidence.from_dict(e) for e in cached_data["results"]]
             except Exception:
                 # If cache is corrupted, proceed with search
                 pass
 
+        # Use test seam for actual search (allows mocking in tests)
+        return await self._search_web_actual(query, limit, region)
+
+    async def _search_web_actual(
+        self,
+        query: str,
+        limit: int = 10,
+        region: str = "wt-wt",
+    ) -> list[Evidence]:
+        """
+        Perform the actual web search. Isolated as test seam for mocking.
+
+        This method is called by search() after cache check.
+        Mock this in tests to avoid network calls.
+        """
         if not DDGS_AVAILABLE:
             return [self._create_error_evidence(
                 "duckduckgo-search not installed. Run: pip install duckduckgo-search"
@@ -230,15 +246,16 @@ class WebConnector(BaseConnector):
         return self.cache_dir / f"{query_hash}.json"
 
     def _save_to_cache(self, query: str, results: list[Evidence]):
-        """Save search results to cache."""
+        """Save search results to cache with proper serialization."""
         cache_file = self._get_cache_file(query)
         cache_data = {
             "query": query,
             "timestamp": datetime.now().isoformat(),
-            "results": results
+            # Properly serialize Evidence objects for round-trip
+            "results": [e.to_dict() for e in results]
         }
         try:
-            cache_file.write_text(json.dumps(cache_data, default=str))
+            cache_file.write_text(json.dumps(cache_data, indent=2))
         except Exception:
             # If caching fails, don't break the search
             pass

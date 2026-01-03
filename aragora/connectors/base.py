@@ -82,6 +82,34 @@ class Evidence:
             "metadata": self.metadata,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "Evidence":
+        """Reconstruct Evidence from dictionary (for cache deserialization)."""
+        from aragora.reasoning.provenance import SourceType
+
+        # Handle source_type as either string or SourceType enum
+        source_type = data.get("source_type", "web_search")
+        if isinstance(source_type, str):
+            try:
+                source_type = SourceType(source_type)
+            except ValueError:
+                source_type = SourceType.WEB_SEARCH
+
+        return cls(
+            id=data["id"],
+            source_type=source_type,
+            source_id=data["source_id"],
+            content=data["content"],
+            title=data.get("title", ""),
+            created_at=data.get("created_at"),
+            author=data.get("author"),
+            url=data.get("url"),
+            confidence=data.get("confidence", 0.5),
+            freshness=data.get("freshness", 1.0),
+            authority=data.get("authority", 0.5),
+            metadata=data.get("metadata", {}),
+        )
+
 
 class BaseConnector(ABC):
     """
