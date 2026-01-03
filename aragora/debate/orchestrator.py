@@ -122,6 +122,7 @@ class Arena:
         spectator: SpectatorStream = None,  # Optional spectator stream for real-time events
         debate_embeddings=None,  # DebateEmbeddingsDatabase for historical context
         insight_store=None,  # Optional InsightStore for extracting learnings from debates
+        recorder=None,  # Optional ReplayRecorder for debate recording
     ):
         self.env = environment
         self.agents = agents
@@ -132,6 +133,7 @@ class Arena:
         self.spectator = spectator or SpectatorStream(enabled=False)
         self.debate_embeddings = debate_embeddings
         self.insight_store = insight_store
+        self.recorder = recorder
 
         # User participation tracking
         self.user_votes: list[dict] = []  # List of user vote events
@@ -395,6 +397,15 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
     async def run(self) -> DebateResult:
         """Run the full debate and return results."""
         start_time = time.time()
+        vote_tally = {}
+
+        # Start recording if recorder is provided
+        if self.recorder:
+            try:
+                self.recorder.start()
+                self.recorder.record_phase_change("debate_start")
+            except Exception:
+                pass  # Recording failure shouldn't break debate
 
         # Fetch historical context once at debate start (for institutional memory)
         if self.debate_embeddings:
@@ -498,6 +509,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     round_num=0,
                 )
 
+            # Record proposal
+            if self.recorder and not isinstance(result_or_error, Exception):
+                try:
+                    self.recorder.record_turn(agent.name, proposals[agent.name], 0)
+                except Exception:
+                    pass
+
         # === DEBATE ROUNDS ===
         for round_num in range(1, self.protocol.rounds + 1):
             print(f"\nRound {round_num}: Critique & Revise")
@@ -515,6 +533,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             # Emit round start event
             if "on_round_start" in self.hooks:
                 self.hooks["on_round_start"](round_num)
+
+            # Record round start
+            if self.recorder:
+                try:
+                    self.recorder.record_phase_change(f"round_{round_num}_start")
+                except Exception:
+                    pass
 
             # Get critics - when all agents are proposers, they all critique each other
             critics = [a for a in self.agents if a.role in ("critic", "synthesizer")]
@@ -582,6 +607,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             round_num=round_num,
                         )
 
+                    # Record critique
+                    if self.recorder:
+                        try:
+                            self.recorder.record_turn(critic.name, critique_content, round_num)
+                        except Exception:
+                            pass
+
                     # Add critique to context
                     msg = Message(
                         role="critic",
@@ -628,6 +660,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                                 role="proposer",
                                 round_num=round_num,
                             )
+
+                        # Record revision
+                        if self.recorder:
+                            try:
+                                self.recorder.record_turn(agent.name, revised, round_num)
+                            except Exception:
+                                pass
                     except Exception as e:
                         print(f"  {agent.name} revision ERROR: {e}")
 
@@ -725,6 +764,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if "on_vote" in self.hooks:
                         self.hooks["on_vote"](agent.name, vote_result.choice, vote_result.confidence)
 
+                    # Record vote
+                    if self.recorder:
+                        try:
+                            self.recorder.record_vote(agent.name, vote_result.choice, vote_result.reasoning)
+                        except Exception:
+                            pass
+
             # Group similar vote options before counting
             vote_groups = self._group_similar_votes(result.votes)
 
@@ -765,6 +811,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
             total_votes = total_weighted_votes
 
+            # Update vote tally for recording
+            vote_tally = dict(vote_counts)
+
             if vote_counts:
                 winner, count = vote_counts.most_common(1)[0]
                 result.final_answer = proposals.get(winner, list(proposals.values())[0])
@@ -799,6 +848,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
                 # Notify spectator of consensus
                 self._notify_spectator("consensus", details=f"Majority vote: {winner}", metric=result.confidence)
+
+                # Record consensus
+                if self.recorder:
+                    try:
+                        self.recorder.record_phase_change(f"consensus_reached: {winner}")
+                    except Exception:
+                        pass
             else:
                 result.final_answer = list(proposals.values())[0]
                 result.consensus_reached = False
@@ -836,6 +892,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if "on_vote" in self.hooks:
                         self.hooks["on_vote"](agent.name, vote_result.choice, vote_result.confidence)
 
+                    # Record vote
+                    if self.recorder:
+                        try:
+                            self.recorder.record_vote(agent.name, vote_result.choice, vote_result.reasoning)
+                        except Exception:
+                            pass
+
             # Group similar votes to handle minor wording differences
             vote_groups = self._group_similar_votes(result.votes)
             choice_mapping: dict[str, str] = {}
@@ -860,6 +923,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         vote_counts[canonical] += 1
                         print(f"  User {user_vote.get('user_id', 'anonymous')} votes: {choice}")
 
+            # Update vote tally for recording
+            vote_tally = dict(vote_counts)
+
             # Check for unanimous agreement
             # Include voting errors in total - they count as dissent in unanimous mode
             total_voters = len(result.votes) + voting_errors + (len(self.user_votes) if user_vote_weight > 0 else 0)
@@ -881,6 +947,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
                     # Notify spectator of unanimous consensus
                     self._notify_spectator("consensus", details=f"Unanimous: {winner}", metric=result.confidence)
+
+                    # Record consensus
+                    if self.recorder:
+                        try:
+                            self.recorder.record_phase_change(f"consensus_reached: {winner}")
+                        except Exception:
+                            pass
                 else:
                     # Not unanimous - no consensus
                     result.final_answer = f"[No unanimous consensus reached]\n\nProposals:\n" + "\n\n---\n\n".join(
@@ -980,6 +1053,14 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         print(f"DEBATE COMPLETE in {result.duration_seconds:.1f}s")
         print(f"Consensus: {'Yes' if result.consensus_reached else 'No'} ({result.confidence:.0%})")
         print(f"{'='*60}\n")
+
+        # Finalize recording
+        if self.recorder:
+            try:
+                verdict = result.final_answer[:100] if result.final_answer else "incomplete"
+                self.recorder.finalize(verdict, vote_tally)
+            except Exception:
+                pass  # Recording finalization failure shouldn't affect result
 
         return result
 

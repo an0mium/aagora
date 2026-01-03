@@ -11,12 +11,14 @@ from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
 from aragora.server.storage import DebateStorage
+from aragora.replay.storage import ReplayStorage
 
 
 class DebateAPIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for debate API."""
 
     storage: Optional[DebateStorage] = None
+    replay_storage: Optional[ReplayStorage] = None
     static_dir: Optional[Path] = None
 
     def do_GET(self) -> None:
@@ -32,6 +34,12 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
         elif path == '/api/debates':
             limit = int(query.get('limit', [20])[0])
             self._list_debates(limit)
+        elif path.startswith('/api/replays/'):
+            debate_id = path.split('/')[-1]
+            self._get_replay(debate_id)
+        elif path == '/api/replays':
+            limit = int(query.get('limit', [20])[0])
+            self._list_replays(limit)
         elif path == '/api/health':
             self._health_check()
 
@@ -80,11 +88,53 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             "created": d.created_at.isoformat(),
         } for d in debates])
 
+    def _list_replays(self, limit: int = 20) -> None:
+        """List recent replays."""
+        if not self.replay_storage:
+            self._send_json([])
+            return
+
+        replays = self.replay_storage.list_recordings(limit)
+        self._send_json(replays)
+
+    def _get_replay(self, debate_id: str) -> None:
+        """Get a replay bundle by debate_id."""
+        if not self.replay_storage:
+            self.send_error(500, "Replay storage not configured")
+            return
+
+        session_dir = self.replay_storage.storage_dir / debate_id
+        meta_path = session_dir / "meta.json"
+        events_path = session_dir / "events.jsonl"
+
+        if not meta_path.exists() or not events_path.exists():
+            self.send_error(404, f"Replay not found: {debate_id}")
+            return
+
+        try:
+            # Read metadata
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+
+            # Read events
+            events = []
+            with open(events_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    events.append(json.loads(line.strip()))
+
+            self._send_json({
+                "meta": meta,
+                "events": events
+            })
+        except Exception as e:
+            self.send_error(500, f"Error reading replay: {str(e)}")
+
     def _health_check(self) -> None:
         """Health check endpoint."""
         self._send_json({
             "status": "ok",
             "storage": self.storage is not None,
+            "replay_storage": self.replay_storage is not None,
             "static_dir": str(self.static_dir) if self.static_dir else None,
         })
 
@@ -142,6 +192,7 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
 
 def run_api_server(
     storage: DebateStorage,
+    replay_storage: Optional[ReplayStorage] = None,
     port: int = 8080,
     static_dir: Optional[Path] = None,
     host: str = "",
@@ -151,17 +202,21 @@ def run_api_server(
 
     Args:
         storage: DebateStorage instance for debate retrieval
+        replay_storage: ReplayStorage instance for replay retrieval
         port: Port to listen on (default 8080)
         static_dir: Directory containing static files (viewer.html, etc.)
         host: Host to bind to (default "" = all interfaces)
     """
     DebateAPIHandler.storage = storage
+    DebateAPIHandler.replay_storage = replay_storage
     DebateAPIHandler.static_dir = static_dir
 
     server = HTTPServer((host, port), DebateAPIHandler)
     print(f"API server: http://localhost:{port}")
     print(f"  - GET /api/debates - List recent debates")
     print(f"  - GET /api/debates/<slug> - Get debate by slug")
+    print(f"  - GET /api/replays - List recent replays")
+    print(f"  - GET /api/replays/<debate_id> - Get replay bundle")
     print(f"  - GET /viewer.html?id=<slug> - View debate")
 
     try:
