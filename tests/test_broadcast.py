@@ -31,15 +31,17 @@ class TestScriptGen:
                 TraceEvent(
                     event_id="1",
                     event_type=EventType.MESSAGE,
+                    timestamp="2026-01-01T00:00:00",
                     agent="agent1",
-                    content="Hello from agent1",
+                    content={"text": "Hello from agent1"},
                     round_num=1
                 ),
                 TraceEvent(
                     event_id="2",
                     event_type=EventType.MESSAGE,
+                    timestamp="2026-01-01T00:00:01",
                     agent="agent2",
-                    content="Response from agent2",
+                    content={"text": "Response from agent2"},
                     round_num=1
                 )
             ]
@@ -47,12 +49,13 @@ class TestScriptGen:
 
         segments = generate_script(trace)
 
-        assert len(segments) == 4  # Opening + transition + 2 messages + closing
+        assert len(segments) == 5  # Opening + msg1 + transition + msg2 + closing
         assert segments[0].speaker == "narrator"
         assert "Test debate task" in segments[0].text
         assert segments[1].speaker == "agent1"
-        assert segments[2].speaker == "narrator"
+        assert segments[2].speaker == "narrator"  # transition
         assert segments[3].speaker == "agent2"
+        assert segments[4].speaker == "narrator"  # closing
 
     def test_code_summarization(self):
         """Test that long code blocks are summarized."""
@@ -83,7 +86,11 @@ class TestAudioEngine:
     @patch('aragora.broadcast.audio_engine._generate_edge_tts')
     async def test_generate_audio_with_mock(self, mock_tts):
         """Test audio generation with mocked TTS."""
-        mock_tts.return_value = True
+        # Mock that creates the file and returns True
+        async def mock_edge_tts(text, voice, output_path):
+            output_path.write_text("dummy audio content")
+            return True
+        mock_tts.side_effect = mock_edge_tts
 
         segments = [
             ScriptSegment(speaker="agent1", text="Test text")
@@ -119,8 +126,15 @@ class TestMixer:
 
 # Integration test
 @pytest.mark.asyncio
-async def test_full_pipeline_mock():
+@patch('aragora.broadcast.audio_engine._generate_edge_tts')
+async def test_full_pipeline_mock(mock_tts):
     """Test the full broadcast pipeline with mocks."""
+    # Mock TTS that creates the file
+    async def mock_edge_tts(text, voice, output_path):
+        output_path.write_text("dummy audio content")
+        return True
+    mock_tts.side_effect = mock_edge_tts
+
     # Create mock trace
     trace = DebateTrace(
         trace_id="test-trace",
@@ -132,35 +146,26 @@ async def test_full_pipeline_mock():
             TraceEvent(
                 event_id="1",
                 event_type=EventType.MESSAGE,
+                timestamp="2026-01-01T00:00:00",
                 agent="claude-visionary",
-                content="This is a test message",
+                content={"text": "This is a test message"},
                 round_num=1
             )
         ]
     )
 
-    # Mock the audio generation to create dummy files
-    async def mock_generate_audio(segments, output_dir):
-        audio_files = []
-        for i, segment in enumerate(segments):
-            audio_file = output_dir / f"segment_{i}.mp3"
-            audio_file.write_text("dummy audio content")  # Create dummy file
-            audio_files.append(audio_file)
-        return audio_files
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
 
-    with patch('aragora.broadcast.audio_engine.generate_audio', side_effect=mock_generate_audio):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
+        # Generate script
+        segments = generate_script(trace)
+        assert len(segments) > 0
 
-            # Generate script
-            segments = generate_script(trace)
-            assert len(segments) > 0
+        # Generate audio
+        audio_files = await generate_audio(segments, temp_path)
+        assert len(audio_files) > 0
 
-            # Generate audio
-            audio_files = await generate_audio(segments, temp_path)
-            assert len(audio_files) > 0
-
-            # Mix audio
-            output_file = temp_path / "broadcast.mp3"
-            # Note: mix_audio would need pydub, so this tests the interface
-            # In real scenario, pydub would combine the dummy files
+        # Mix audio
+        output_file = temp_path / "broadcast.mp3"
+        # Note: mix_audio would need pydub, so this tests the interface
+        # In real scenario, pydub would combine the dummy files

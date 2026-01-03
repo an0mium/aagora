@@ -25,6 +25,14 @@ def _summarize_code(text: str) -> str:
     return text
 
 
+def _extract_content_text(content) -> str:
+    """Extract text content from event content (dict or string)."""
+    if isinstance(content, dict):
+        # Try common keys for content text
+        return content.get("text") or content.get("content") or str(content)
+    return str(content)
+
+
 def _extract_speaker_turns(trace: DebateTrace) -> List[ScriptSegment]:
     """Extract speaker turns from debate trace."""
     segments = []
@@ -45,8 +53,9 @@ def _extract_speaker_turns(trace: DebateTrace) -> List[ScriptSegment]:
                     text=f"Now, {event.agent} responds."
                 ))
 
-            # Summarize content
-            content = _summarize_code(event.content)
+            # Extract and summarize content
+            text = _extract_content_text(event.content)
+            content = _summarize_code(text)
             segments.append(ScriptSegment(
                 speaker=event.agent,
                 text=content

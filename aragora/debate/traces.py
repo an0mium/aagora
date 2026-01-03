@@ -23,6 +23,7 @@ class EventType(Enum):
     DEBATE_END = "debate_end"
     ROUND_START = "round_start"
     ROUND_END = "round_end"
+    MESSAGE = "message"  # Generic agent message
     AGENT_PROPOSAL = "agent_proposal"
     AGENT_CRITIQUE = "agent_critique"
     AGENT_SYNTHESIS = "agent_synthesis"

@@ -156,13 +156,15 @@ class Arena:
 
         elif self.protocol.topology == "round-robin":
             # Simple round-robin: each critic critiques the next one in alphabetical order
-            agent_names = sorted([a.name for a in all_critics] + [proposal_agent])
-            agent_names.remove(proposal_agent)  # critics only
-            if not agent_names:
+            # First, filter out the proposer from critics
+            eligible_critics = [c for c in all_critics if c.name != proposal_agent]
+            if not eligible_critics:
                 return []
-            # Each proposal gets critiqued by the "next" critic
-            proposal_index = hash(proposal_agent) % len(agent_names)
-            return [all_critics[agent_names.index(agent_names[proposal_index])]]
+            # Sort critics by name for deterministic ordering
+            eligible_critics_sorted = sorted(eligible_critics, key=lambda c: c.name)
+            # Each proposal gets critiqued by the "next" critic based on hash
+            proposal_index = hash(proposal_agent) % len(eligible_critics_sorted)
+            return [eligible_critics_sorted[proposal_index]]
 
         elif self.protocol.topology == "ring":
             # Ring topology: each agent critiques its "neighbors"
