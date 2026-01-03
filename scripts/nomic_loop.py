@@ -1614,12 +1614,12 @@ Propose additions that unlock new capabilities and create emergent value.""" + s
         except Exception as e:
             self._log(f"  [memory] Error recording: {e}")
 
-    def _gather_codebase_evidence(self, task: str, limit: int = 5) -> str:
+    async def _gather_codebase_evidence(self, task: str, limit: int = 5) -> str:
         """Gather relevant evidence from codebase for debate context (P4: LocalDocsConnector)."""
         if not self.local_docs or not LOCAL_DOCS_AVAILABLE:
             return ""
         try:
-            evidence = self.local_docs.search(query=task[:200], limit=limit)
+            evidence = await self.local_docs.search(query=task[:200], limit=limit)
             if not evidence:
                 return ""
             lines = ["## Relevant Codebase Evidence:"]
@@ -3255,7 +3255,7 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
                 provider_id="gemini-explorer",
                 model="gemini-3-pro",
                 role="explorer",
-                timeout=600,
+                timeout=900,  # 15 min for agentic codebase exploration
                 mode="architect",
             )
             grok_explorer = KiloCodeAgent(
@@ -3263,7 +3263,7 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
                 provider_id="grok-explorer",
                 model="grok-code-fast-1",
                 role="explorer",
-                timeout=600,
+                timeout=900,  # 15 min for agentic codebase exploration
                 mode="architect",
             )
             exploration_tasks.extend([
@@ -3388,7 +3388,7 @@ Claude and Codex have read the actual codebase. DO NOT propose features that alr
             learning_context += f"\n{consensus_context}\n"
 
         # Add codebase evidence (P4: LocalDocsConnector)
-        evidence_context = self._gather_codebase_evidence(topic_hint)
+        evidence_context = await self._gather_codebase_evidence(topic_hint)
         if evidence_context:
             learning_context += f"\n{evidence_context}\n"
 

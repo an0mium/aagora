@@ -159,9 +159,30 @@ class GeminiAgent(APIAgent):
 
                 data = await response.json()
 
-                # Extract text from response
+                # Extract text from response with robust error handling
                 try:
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                    candidate = data["candidates"][0]
+                    finish_reason = candidate.get("finishReason", "UNKNOWN")
+
+                    # Handle empty content (MAX_TOKENS, SAFETY, etc.)
+                    content = candidate.get("content", {})
+                    parts = content.get("parts", [])
+                    text = parts[0].get("text", "") if parts else ""
+
+                    if not text.strip():
+                        if finish_reason == "MAX_TOKENS":
+                            raise RuntimeError(
+                                f"Gemini response truncated (MAX_TOKENS): output limit reached. "
+                                f"Consider reducing prompt length or increasing maxOutputTokens."
+                            )
+                        elif finish_reason == "SAFETY":
+                            raise RuntimeError(f"Gemini blocked response (SAFETY filter)")
+                        else:
+                            raise RuntimeError(
+                                f"Gemini returned empty content (finishReason: {finish_reason})"
+                            )
+
+                    return text
                 except (KeyError, IndexError) as e:
                     raise RuntimeError(f"Unexpected Gemini response format: {data}")
 
