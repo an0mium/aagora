@@ -459,6 +459,125 @@ except ImportError:
     ScenarioMatrix = None
     ScenarioComparator = None
 
+# =============================================================================
+# Phase 7: Resilience, Living Documents, & Observability
+# =============================================================================
+
+# EnhancedProvenanceManager for staleness detection (Phase 7)
+try:
+    from aragora.reasoning.provenance_enhanced import (
+        EnhancedProvenanceManager, GitProvenanceTracker, StalenessCheck,
+        StalenessStatus, RevalidationTrigger
+    )
+    ENHANCED_PROVENANCE_AVAILABLE = True
+except ImportError:
+    ENHANCED_PROVENANCE_AVAILABLE = False
+    EnhancedProvenanceManager = None
+    StalenessStatus = None
+
+# CheckpointManager for pause/resume (Phase 7)
+try:
+    from aragora.debate.checkpoint import (
+        CheckpointManager, DebateCheckpoint, FileCheckpointStore, CheckpointConfig
+    )
+    CHECKPOINT_AVAILABLE = True
+except ImportError:
+    CHECKPOINT_AVAILABLE = False
+    CheckpointManager = None
+
+# BreakpointManager for human intervention (Phase 7)
+try:
+    from aragora.debate.breakpoints import (
+        BreakpointManager, BreakpointConfig, Breakpoint, HumanGuidance, BreakpointTrigger
+    )
+    BREAKPOINT_AVAILABLE = True
+except ImportError:
+    BREAKPOINT_AVAILABLE = False
+    BreakpointManager = None
+    BreakpointTrigger = None
+
+# ReliabilityScorer for confidence scoring (Phase 7)
+try:
+    from aragora.reasoning.reliability import (
+        ReliabilityScorer, ClaimReliability, EvidenceReliability, ReliabilityLevel
+    )
+    RELIABILITY_SCORER_AVAILABLE = True
+except ImportError:
+    RELIABILITY_SCORER_AVAILABLE = False
+    ReliabilityScorer = None
+    ReliabilityLevel = None
+
+# DebateTracer for audit logs (Phase 7)
+try:
+    from aragora.debate.traces import (
+        DebateTracer, DebateTrace, TraceEvent, EventType
+    )
+    DEBATE_TRACER_AVAILABLE = True
+except ImportError:
+    DEBATE_TRACER_AVAILABLE = False
+    DebateTracer = None
+    EventType = None
+
+# =============================================================================
+# Phase 8: Agent Evolution, Semantic Memory & Advanced Debates
+# =============================================================================
+
+# PersonaLaboratory for agent evolution (Phase 8)
+try:
+    from aragora.agents.laboratory import (
+        PersonaLaboratory, PersonaExperiment, EmergentTrait, TraitTransfer
+    )
+    PERSONA_LAB_AVAILABLE = True
+except ImportError:
+    PERSONA_LAB_AVAILABLE = False
+    PersonaLaboratory = None
+    EmergentTrait = None
+
+# SemanticRetriever for pattern matching (Phase 8)
+try:
+    from aragora.memory.embeddings import (
+        SemanticRetriever, EmbeddingProvider, cosine_similarity
+    )
+    SEMANTIC_RETRIEVER_AVAILABLE = True
+except ImportError:
+    SEMANTIC_RETRIEVER_AVAILABLE = False
+    SemanticRetriever = None
+
+# FormalVerificationManager for theorem proving (Phase 8)
+try:
+    from aragora.verification.formal import (
+        FormalVerificationManager, FormalProofResult,
+        FormalProofStatus, FormalLanguage
+    )
+    FORMAL_VERIFICATION_AVAILABLE = True
+except ImportError:
+    FORMAL_VERIFICATION_AVAILABLE = False
+    FormalVerificationManager = None
+    FormalProofResult = None
+
+# DebateGraph for DAG-based debates (Phase 8)
+try:
+    from aragora.debate.graph import (
+        DebateGraph, DebateNode, GraphDebateOrchestrator,
+        NodeType, BranchReason, MergeStrategy
+    )
+    DEBATE_GRAPH_AVAILABLE = True
+except ImportError:
+    DEBATE_GRAPH_AVAILABLE = False
+    DebateGraph = None
+    GraphDebateOrchestrator = None
+
+# DebateForker for parallel exploration (Phase 8)
+try:
+    from aragora.debate.forking import (
+        DebateForker, ForkDetector, Branch, ForkPoint, ForkDecision, MergeResult
+    )
+    DEBATE_FORKER_AVAILABLE = True
+except ImportError:
+    DEBATE_FORKER_AVAILABLE = False
+    DebateForker = None
+    ForkDetector = None
+
 
 class NomicLoop:
     """
@@ -735,6 +854,89 @@ class NomicLoop:
         if SCENARIO_MATRIX_AVAILABLE:
             self.scenario_comparator = ScenarioComparator()
             print(f"[scenarios] Robustness testing enabled")
+
+        # Phase 7: Resilience, Living Documents, & Observability
+
+        # Phase 7: EnhancedProvenanceManager for staleness detection (P21)
+        # Note: This REPLACES the base ProvenanceManager from Phase 6 if available
+        if ENHANCED_PROVENANCE_AVAILABLE:
+            self.provenance_manager = EnhancedProvenanceManager(
+                debate_id=f"nomic-cycle-0",
+                repo_path=str(self.aragora_path)
+            )
+            print(f"[provenance] Enhanced with staleness detection")
+
+        # Phase 7: CheckpointManager for pause/resume (P22)
+        self.checkpoint_manager = None
+        if CHECKPOINT_AVAILABLE:
+            checkpoint_dir = self.nomic_dir / "checkpoints"
+            checkpoint_dir.mkdir(exist_ok=True)
+            self.checkpoint_manager = CheckpointManager(
+                store=FileCheckpointStore(str(checkpoint_dir)),
+                config=CheckpointConfig(interval_rounds=1, max_checkpoints=5)
+            )
+            print(f"[checkpoint] Pause/resume enabled")
+
+        # Phase 7: BreakpointManager for human intervention (P23)
+        self.breakpoint_manager = None
+        if BREAKPOINT_AVAILABLE and self.require_human_approval:
+            self.breakpoint_manager = BreakpointManager(
+                config=BreakpointConfig(min_confidence=0.5, max_deadlock_rounds=3)
+            )
+            print(f"[breakpoints] Human intervention enabled")
+
+        # Phase 7: ReliabilityScorer for confidence scoring (P24)
+        self.reliability_scorer = None
+        if RELIABILITY_SCORER_AVAILABLE:
+            self.reliability_scorer = ReliabilityScorer()
+            print(f"[reliability] Confidence scoring enabled")
+
+        # Phase 7: DebateTracer for audit logs (P25)
+        self.debate_tracer = None
+        if DEBATE_TRACER_AVAILABLE:
+            trace_dir = self.nomic_dir / "traces"
+            trace_dir.mkdir(exist_ok=True)
+            self.debate_tracer = DebateTracer(storage_path=str(trace_dir))
+            print(f"[tracer] Audit logging enabled")
+
+        # Phase 8: Agent Evolution, Semantic Memory & Advanced Debates
+
+        # Phase 8: PersonaLaboratory for agent evolution (P26)
+        self.persona_lab = None
+        if PERSONA_LAB_AVAILABLE and PERSONA_MANAGER_AVAILABLE and self.persona_manager:
+            lab_db = self.nomic_dir / "persona_lab.db"
+            self.persona_lab = PersonaLaboratory(
+                persona_manager=self.persona_manager,
+                db_path=str(lab_db)
+            )
+            print(f"[lab] Persona evolution enabled")
+
+        # Phase 8: SemanticRetriever for pattern matching (P27)
+        self.semantic_retriever = None
+        if SEMANTIC_RETRIEVER_AVAILABLE:
+            retriever_db = self.nomic_dir / "semantic_patterns.db"
+            self.semantic_retriever = SemanticRetriever(db_path=str(retriever_db))
+            print(f"[semantic] Pattern retrieval enabled")
+
+        # Phase 8: FormalVerificationManager for theorem proving (P28)
+        self.formal_verifier = None
+        if FORMAL_VERIFICATION_AVAILABLE:
+            self.formal_verifier = FormalVerificationManager()
+            print(f"[formal] Z3 verification enabled")
+
+        # Phase 8: DebateGraph for DAG-based debates (P29)
+        self.graph_orchestrator = None
+        if DEBATE_GRAPH_AVAILABLE and GraphDebateOrchestrator:
+            self.graph_orchestrator = GraphDebateOrchestrator()
+            print(f"[graph] DAG debate structure enabled")
+
+        # Phase 8: DebateForker for parallel exploration (P30)
+        self.fork_detector = None
+        self.debate_forker = None
+        if DEBATE_FORKER_AVAILABLE:
+            self.fork_detector = ForkDetector()
+            self.debate_forker = DebateForker()
+            print(f"[forking] Parallel branch exploration enabled")
 
         # Setup streaming (optional)
         self.stream_emitter = stream_emitter
@@ -2052,6 +2254,497 @@ Propose additions that unlock new capabilities and create emergent value.""" + s
             self._log(f"  [scenarios] Error: {e}")
             return {}
 
+    # =========================================================================
+    # Phase 7: Resilience, Living Documents, & Observability Helper Methods
+    # =========================================================================
+
+    def _record_code_evidence(
+        self, file_path: str, line_start: int, line_end: int,
+        content: str, claim_id: str = None
+    ) -> str:
+        """Record code evidence with git tracking for staleness detection (P21: EnhancedProvenance)."""
+        if not ENHANCED_PROVENANCE_AVAILABLE or not self.provenance_manager:
+            return ""
+        try:
+            # Enhanced provenance tracks git state for living document detection
+            evidence_id = self.provenance_manager.record_code_evidence(
+                file_path=file_path,
+                line_start=line_start,
+                line_end=line_end,
+                content=content,
+                claim_id=claim_id
+            )
+            self._log(f"  [provenance] Recorded code evidence: {file_path}:{line_start}-{line_end}")
+            return evidence_id
+        except Exception as e:
+            self._log(f"  [provenance] Code evidence error: {e}")
+            return ""
+
+    async def _check_evidence_staleness(self) -> dict:
+        """Check all evidence for staleness - are claims still valid? (P21: EnhancedProvenance)."""
+        if not ENHANCED_PROVENANCE_AVAILABLE or not self.provenance_manager:
+            return {}
+        try:
+            staleness_results = self.provenance_manager.check_all_staleness()
+            fresh_count = sum(1 for s in staleness_results if s.status == StalenessStatus.FRESH)
+            stale_count = sum(1 for s in staleness_results if s.status == StalenessStatus.STALE)
+
+            if stale_count > 0:
+                self._log(f"  [provenance] Staleness: {stale_count} stale, {fresh_count} fresh")
+                # Generate revalidation triggers for stale evidence
+                triggers = self.provenance_manager.generate_revalidation_triggers()
+                if triggers:
+                    self._log(f"  [provenance] Revalidation needed for {len(triggers)} items")
+
+            return {
+                "fresh": fresh_count,
+                "stale": stale_count,
+                "total": len(staleness_results),
+                "living_status": self.provenance_manager.get_living_document_status()
+            }
+        except Exception as e:
+            self._log(f"  [provenance] Staleness check error: {e}")
+            return {}
+
+    async def _create_debate_checkpoint(
+        self, debate_id: str, task: str, round_num: int,
+        messages: list, agents: list, consensus: dict = None
+    ) -> str:
+        """Create a checkpoint for crash recovery (P22: CheckpointManager)."""
+        if not CHECKPOINT_AVAILABLE or not self.checkpoint_manager:
+            return ""
+        try:
+            checkpoint = DebateCheckpoint(
+                debate_id=debate_id,
+                task=task,
+                round_number=round_num,
+                messages=[m.__dict__ if hasattr(m, '__dict__') else m for m in messages],
+                agent_states={a.name: {"model": a.model, "role": a.role} for a in agents if hasattr(a, 'name')},
+                consensus_state=consensus or {},
+                timestamp=datetime.now().isoformat()
+            )
+            checkpoint_id = self.checkpoint_manager.create_checkpoint(checkpoint)
+            self._log(f"  [checkpoint] Created: {checkpoint_id[:8]}")
+            return checkpoint_id
+        except Exception as e:
+            self._log(f"  [checkpoint] Create error: {e}")
+            return ""
+
+    async def _resume_from_checkpoint(self, checkpoint_id: str) -> dict:
+        """Resume a debate from checkpoint (P22: CheckpointManager)."""
+        if not CHECKPOINT_AVAILABLE or not self.checkpoint_manager:
+            return {}
+        try:
+            checkpoint = self.checkpoint_manager.resume_from_checkpoint(checkpoint_id)
+            if checkpoint:
+                self._log(f"  [checkpoint] Resumed: {checkpoint.debate_id} at round {checkpoint.round_number}")
+                return {
+                    "debate_id": checkpoint.debate_id,
+                    "task": checkpoint.task,
+                    "round": checkpoint.round_number,
+                    "messages": checkpoint.messages,
+                    "consensus": checkpoint.consensus_state
+                }
+            return {}
+        except Exception as e:
+            self._log(f"  [checkpoint] Resume error: {e}")
+            return {}
+
+    def _check_debate_breakpoints(
+        self, debate_id: str, task: str, messages: list,
+        confidence: float, round_num: int, critiques: list = None
+    ) -> "Breakpoint":
+        """Check if debate triggers breakpoint for human review (P23: BreakpointManager)."""
+        if not BREAKPOINT_AVAILABLE or not self.breakpoint_manager:
+            return None
+        try:
+            # Build debate state for breakpoint checking
+            debate_state = {
+                "debate_id": debate_id,
+                "task": task,
+                "messages": messages,
+                "confidence": confidence,
+                "round": round_num,
+                "critiques": critiques or []
+            }
+            breakpoint = self.breakpoint_manager.check_triggers(debate_state)
+            if breakpoint:
+                self._log(f"  [breakpoint] Triggered: {breakpoint.trigger.value}")
+            return breakpoint
+        except Exception as e:
+            self._log(f"  [breakpoint] Check error: {e}")
+            return None
+
+    async def _handle_breakpoint(self, breakpoint: "Breakpoint") -> "HumanGuidance":
+        """Handle breakpoint by getting human guidance (P23: BreakpointManager)."""
+        if not BREAKPOINT_AVAILABLE or not self.breakpoint_manager or not breakpoint:
+            return None
+        try:
+            guidance = await self.breakpoint_manager.handle_breakpoint(breakpoint)
+            if guidance:
+                self._log(f"  [breakpoint] Human guidance: {guidance.action}")
+            return guidance
+        except Exception as e:
+            self._log(f"  [breakpoint] Handle error: {e}")
+            return None
+
+    def _score_claim_reliability(self, claim_id: str, claim_text: str) -> dict:
+        """Score reliability of a claim (P24: ReliabilityScorer)."""
+        if not RELIABILITY_SCORER_AVAILABLE or not self.reliability_scorer:
+            return {}
+        try:
+            # Get claim from claims kernel if available
+            claim = None
+            if CLAIMS_KERNEL_AVAILABLE and self.claims_kernel:
+                claims = self.claims_kernel.get_claims()
+                for c in claims:
+                    if str(c.id) == claim_id:
+                        claim = c
+                        break
+
+            if claim:
+                reliability = self.reliability_scorer.score_claim(claim)
+                return {
+                    "claim_id": claim_id,
+                    "level": reliability.level.value if hasattr(reliability.level, 'value') else str(reliability.level),
+                    "score": reliability.score,
+                    "factors": reliability.factors
+                }
+            return {}
+        except Exception as e:
+            self._log(f"  [reliability] Score error: {e}")
+            return {}
+
+    def _generate_reliability_report(self) -> dict:
+        """Generate reliability report for all claims (P24: ReliabilityScorer)."""
+        if not RELIABILITY_SCORER_AVAILABLE or not self.reliability_scorer:
+            return {}
+        try:
+            if not CLAIMS_KERNEL_AVAILABLE or not self.claims_kernel:
+                return {}
+
+            claims = self.claims_kernel.get_claims()
+            if not claims:
+                return {}
+
+            report = self.reliability_scorer.generate_reliability_report(claims)
+            high_reliability = sum(1 for c in report.get("claims", [])
+                                   if c.get("level") in ("VERY_HIGH", "HIGH"))
+            low_reliability = sum(1 for c in report.get("claims", [])
+                                  if c.get("level") in ("VERY_LOW", "SPECULATIVE"))
+
+            self._log(f"  [reliability] Report: {high_reliability} high, {low_reliability} low reliability")
+            return report
+        except Exception as e:
+            self._log(f"  [reliability] Report error: {e}")
+            return {}
+
+    def _start_debate_trace(self, debate_id: str, task: str, agents: list) -> None:
+        """Start tracing a debate for audit logs (P25: DebateTracer)."""
+        if not DEBATE_TRACER_AVAILABLE or not self.debate_tracer:
+            return
+        try:
+            agent_names = [a.name for a in agents if hasattr(a, 'name')]
+            self.debate_tracer.start_trace(
+                debate_id=debate_id,
+                task=task,
+                agents=agent_names
+            )
+            self._log(f"  [tracer] Started trace for debate {debate_id[:8]}")
+        except Exception as e:
+            self._log(f"  [tracer] Start error: {e}")
+
+    def _trace_event(self, event_type: str, content: str, agent: str = None) -> None:
+        """Record an event to the debate trace (P25: DebateTracer)."""
+        if not DEBATE_TRACER_AVAILABLE or not self.debate_tracer:
+            return
+        try:
+            # Map string event types to EventType enum
+            type_map = {
+                "proposal": EventType.AGENT_PROPOSAL if EventType else None,
+                "critique": EventType.AGENT_CRITIQUE if EventType else None,
+                "vote": EventType.AGENT_VOTE if EventType else None,
+                "round_start": EventType.ROUND_START if EventType else None,
+                "round_end": EventType.ROUND_END if EventType else None,
+                "consensus": EventType.CONSENSUS_REACHED if EventType else None,
+            }
+            event_enum = type_map.get(event_type)
+            if event_enum:
+                self.debate_tracer.record(event_enum, content, agent=agent)
+        except Exception as e:
+            self._log(f"  [tracer] Event error: {e}")
+
+    def _finalize_debate_trace(self, result: "DebateResult") -> str:
+        """Finalize and save the debate trace (P25: DebateTracer)."""
+        if not DEBATE_TRACER_AVAILABLE or not self.debate_tracer:
+            return ""
+        try:
+            trace_id = self.debate_tracer.finalize(
+                final_answer=result.final_answer if hasattr(result, 'final_answer') else "",
+                consensus_reached=result.consensus_reached if hasattr(result, 'consensus_reached') else False,
+                confidence=result.confidence if hasattr(result, 'confidence') else 0.0
+            )
+            self._log(f"  [tracer] Finalized trace: {trace_id}")
+            return trace_id
+        except Exception as e:
+            self._log(f"  [tracer] Finalize error: {e}")
+            return ""
+
+    # =========================================================================
+    # Phase 8: Agent Evolution, Semantic Memory & Advanced Debates Helper Methods
+    # =========================================================================
+
+    def _run_persona_experiment(self, agent_name: str, variant_traits: list) -> str:
+        """Create a persona A/B experiment (P26: PersonaLaboratory)."""
+        if not PERSONA_LAB_AVAILABLE or not self.persona_lab:
+            return ""
+        try:
+            experiment = self.persona_lab.create_experiment(
+                agent_name=agent_name,
+                variant_traits=variant_traits,
+                hypothesis=f"Testing traits: {', '.join(variant_traits)}"
+            )
+            self._log(f"  [lab] Created experiment {experiment.experiment_id[:8]} for {agent_name}")
+            return experiment.experiment_id
+        except Exception as e:
+            self._log(f"  [lab] Experiment creation error: {e}")
+            return ""
+
+    def _record_experiment_trial(self, experiment_id: str, is_control: bool, success: bool) -> None:
+        """Record a trial result for an experiment (P26: PersonaLaboratory)."""
+        if not PERSONA_LAB_AVAILABLE or not self.persona_lab or not experiment_id:
+            return
+        try:
+            self.persona_lab.record_trial(
+                experiment_id=experiment_id,
+                is_control=is_control,
+                success=success
+            )
+        except Exception as e:
+            self._log(f"  [lab] Trial recording error: {e}")
+
+    def _detect_emergent_traits(self) -> list:
+        """Detect emergent traits from performance patterns (P26: PersonaLaboratory)."""
+        if not PERSONA_LAB_AVAILABLE or not self.persona_lab:
+            return []
+        try:
+            traits = self.persona_lab.detect_emergent_traits()
+            if traits:
+                self._log(f"  [lab] Detected {len(traits)} emergent traits")
+                for t in traits[:3]:
+                    self._log(f"    - {t.trait_name} (confidence: {t.confidence:.2f})")
+            return traits
+        except Exception as e:
+            self._log(f"  [lab] Trait detection error: {e}")
+            return []
+
+    def _cross_pollinate_traits(self, from_agent: str, to_agent: str, trait: str) -> bool:
+        """Cross-pollinate a successful trait between agents (P26: PersonaLaboratory)."""
+        if not PERSONA_LAB_AVAILABLE or not self.persona_lab:
+            return False
+        try:
+            success = self.persona_lab.cross_pollinate_trait(
+                from_agent=from_agent,
+                to_agent=to_agent,
+                trait=trait
+            )
+            if success:
+                self._log(f"  [lab] Cross-pollinated '{trait}' from {from_agent} to {to_agent}")
+            return success
+        except Exception as e:
+            self._log(f"  [lab] Cross-pollination error: {e}")
+            return False
+
+    async def _evolve_personas_post_cycle(self) -> dict:
+        """Evolve personas based on cycle performance (P26: PersonaLaboratory)."""
+        if not PERSONA_LAB_AVAILABLE or not self.persona_lab:
+            return {}
+        try:
+            # Detect emergent traits
+            emergent = self._detect_emergent_traits()
+
+            # Check experiments for significant results
+            experiments = self.persona_lab.get_active_experiments()
+            completed = 0
+            for exp in experiments:
+                if exp.is_significant:
+                    self._log(f"  [lab] Experiment {exp.experiment_id[:8]} significant: {exp.relative_improvement:+.1%}")
+                    completed += 1
+
+            return {
+                "emergent_traits": len(emergent),
+                "experiments_checked": len(experiments),
+                "significant_results": completed
+            }
+        except Exception as e:
+            self._log(f"  [lab] Evolution error: {e}")
+            return {}
+
+    async def _store_critique_embedding(self, critique_id: str, critique_text: str) -> None:
+        """Store a critique embedding for future retrieval (P27: SemanticRetriever)."""
+        if not SEMANTIC_RETRIEVER_AVAILABLE or not self.semantic_retriever:
+            return
+        try:
+            await self.semantic_retriever.embed_and_store(critique_id, critique_text[:1000])
+        except Exception as e:
+            self._log(f"  [semantic] Store error: {e}")
+
+    async def _find_similar_critiques(self, query: str, limit: int = 3) -> list:
+        """Find similar past critiques (P27: SemanticRetriever)."""
+        if not SEMANTIC_RETRIEVER_AVAILABLE or not self.semantic_retriever:
+            return []
+        try:
+            results = await self.semantic_retriever.find_similar(query, limit=limit)
+            if results:
+                self._log(f"  [semantic] Found {len(results)} similar critiques")
+            return results
+        except Exception as e:
+            self._log(f"  [semantic] Search error: {e}")
+            return []
+
+    async def _inject_similar_context(self, task: str) -> str:
+        """Search and format similar past critiques as context (P27: SemanticRetriever)."""
+        if not SEMANTIC_RETRIEVER_AVAILABLE or not self.semantic_retriever:
+            return ""
+        try:
+            similar = await self._find_similar_critiques(task, limit=3)
+            if not similar:
+                return ""
+
+            context_parts = ["=== SIMILAR PAST CRITIQUES ==="]
+            for id_, text, sim in similar:
+                context_parts.append(f"[Similarity: {sim:.2f}] {text[:300]}...")
+
+            return "\n".join(context_parts)
+        except Exception as e:
+            self._log(f"  [semantic] Context injection error: {e}")
+            return ""
+
+    async def _verify_claim_formally(self, claim_text: str, claim_type: str = "logical") -> dict:
+        """Attempt formal verification of a claim (P28: FormalVerificationManager)."""
+        if not FORMAL_VERIFICATION_AVAILABLE or not self.formal_verifier:
+            return {}
+        try:
+            result = await self.formal_verifier.verify_claim(claim_text, claim_type)
+            if result and result.is_verified:
+                self._log(f"  [formal] Claim verified: {claim_text[:50]}...")
+            return result.to_dict() if result else {}
+        except Exception as e:
+            self._log(f"  [formal] Verification error: {e}")
+            return {}
+
+    def _is_formally_verifiable(self, claim_text: str) -> bool:
+        """Check if a claim is suitable for formal verification (P28: FormalVerificationManager)."""
+        # Simple heuristic: look for mathematical/logical keywords
+        keywords = ["for all", "exists", "implies", "if and only if", "<=", ">=",
+                    "equals", "greater than", "less than", "always", "never"]
+        claim_lower = claim_text.lower()
+        return any(kw in claim_lower for kw in keywords)
+
+    def _record_formal_proof(self, claim_id: str, proof_result: dict) -> None:
+        """Record a formal proof result (P28: FormalVerificationManager)."""
+        if not proof_result:
+            return
+        try:
+            # Store in provenance if available
+            if self.provenance_manager and proof_result.get("is_verified"):
+                self._record_evidence_provenance(
+                    f"Formally verified: {proof_result.get('formal_statement', '')}",
+                    source_type="formal_proof",
+                    source_id=claim_id
+                )
+        except Exception as e:
+            self._log(f"  [formal] Proof recording error: {e}")
+
+    def _create_debate_graph(self, debate_id: str, task: str) -> "DebateGraph":
+        """Create a new debate graph (P29: DebateGraph)."""
+        if not DEBATE_GRAPH_AVAILABLE or not DebateGraph:
+            return None
+        try:
+            graph = DebateGraph(debate_id=debate_id, task=task)
+            self._log(f"  [graph] Created debate graph {debate_id[:8]}")
+            return graph
+        except Exception as e:
+            self._log(f"  [graph] Creation error: {e}")
+            return None
+
+    def _add_graph_node(
+        self, graph: "DebateGraph", node_type: str, agent: str, content: str
+    ) -> str:
+        """Add a node to the debate graph (P29: DebateGraph)."""
+        if not graph or not DEBATE_GRAPH_AVAILABLE:
+            return ""
+        try:
+            node_type_enum = NodeType[node_type.upper()] if NodeType else None
+            if not node_type_enum:
+                return ""
+            node = DebateNode(
+                id=f"{agent}-{len(graph.nodes)}",
+                node_type=node_type_enum,
+                agent_id=agent,
+                content=content
+            )
+            graph.add_node(node)
+            return node.id
+        except Exception as e:
+            self._log(f"  [graph] Add node error: {e}")
+            return ""
+
+    def _should_branch_graph(self, graph: "DebateGraph", disagreement_score: float) -> bool:
+        """Check if graph should branch based on disagreement (P29: DebateGraph)."""
+        if not graph or disagreement_score < 0.7:
+            return False
+        return True
+
+    async def _run_graph_debate(self, task: str, agents: list) -> "DebateResult":
+        """Run a graph-based debate (P29: DebateGraph)."""
+        if not DEBATE_GRAPH_AVAILABLE or not self.graph_orchestrator:
+            return None
+        try:
+            self._log(f"  [graph] Running graph-based debate...")
+            result = await self.graph_orchestrator.run_debate(task, agents)
+            return result
+        except Exception as e:
+            self._log(f"  [graph] Debate error: {e}")
+            return None
+
+    def _check_should_fork(self, messages: list, round_num: int, agents: list) -> "ForkDecision":
+        """Check if debate should fork (P30: DebateForker)."""
+        if not DEBATE_FORKER_AVAILABLE or not self.fork_detector:
+            return None
+        try:
+            decision = self.fork_detector.should_fork(messages, round_num, agents)
+            if decision and decision.should_fork:
+                self._log(f"  [forking] Fork triggered: {decision.reason}")
+            return decision
+        except Exception as e:
+            self._log(f"  [forking] Check error: {e}")
+            return None
+
+    async def _run_forked_debate(self, fork_decision: "ForkDecision", base_context: str) -> "MergeResult":
+        """Run forked parallel debates (P30: DebateForker)."""
+        if not DEBATE_FORKER_AVAILABLE or not self.debate_forker or not fork_decision:
+            return None
+        try:
+            self._log(f"  [forking] Running {len(fork_decision.branches)} parallel branches...")
+            result = await self.debate_forker.run_branches(fork_decision, base_context)
+            if result:
+                self._log(f"  [forking] Merged: {result.winning_hypothesis[:50]}...")
+            return result
+        except Exception as e:
+            self._log(f"  [forking] Run error: {e}")
+            return None
+
+    def _record_fork_outcome(self, fork_point: "ForkPoint", merge_result: "MergeResult") -> None:
+        """Record fork outcome for learning (P30: DebateForker)."""
+        if not fork_point or not merge_result:
+            return
+        try:
+            # Could store in provenance or insight extractor
+            self._log(f"  [forking] Recorded outcome: {merge_result.winning_branch_id}")
+        except Exception as e:
+            self._log(f"  [forking] Record error: {e}")
+
     def _record_replay_event(self, event_type: str, agent: str, content: str, round_num: int = 0) -> None:
         """Record an event to the ReplayRecorder if active."""
         if not self.replay_recorder:
@@ -2715,6 +3408,15 @@ Recent changes:
         # Phase 5: Select optimal debate team (P14: AgentSelector)
         debate_team = self._select_debate_team(topic_hint)
 
+        # Phase 7: Start debate trace for audit logging (P25: DebateTracer)
+        debate_id = f"debate-cycle-{self.cycle_count}"
+        self._start_debate_trace(debate_id, topic_hint or task[:100], debate_team)
+
+        # Phase 8: Inject similar past critiques as context (P27: SemanticRetriever)
+        semantic_context = await self._inject_similar_context(topic_hint or task[:200])
+        if semantic_context:
+            env.context = (env.context or "") + f"\n\n{semantic_context}"
+
         arena = Arena(
             env,
             debate_team,
@@ -2764,6 +3466,51 @@ Recent changes:
 
         # Phase 5: Track risks from low-consensus debates (P15: RiskRegister)
         self._track_debate_risks(result, topic_hint)
+
+        # Phase 6: Extract structured claims from debate (P16: ClaimsKernel)
+        self._extract_claims_from_debate(result)
+        self._analyze_claim_structure()
+
+        # Phase 6: Build belief network and identify cruxes (P18: BeliefNetwork)
+        self._build_belief_network()
+        self._identify_debate_cruxes()
+
+        # Phase 6: Record evidence provenance (P17: ProvenanceManager)
+        if result.final_answer:
+            self._record_evidence_provenance(result.final_answer, "agent", "debate-consensus")
+
+        # Phase 6: Create verification proofs for code claims (P19: ProofExecutor)
+        await self._create_verification_proofs(result)
+
+        # Phase 7: Generate reliability report (P24: ReliabilityScorer)
+        self._generate_reliability_report()
+
+        # Phase 7: Finalize debate trace (P25: DebateTracer)
+        self._finalize_debate_trace(result)
+
+        # Phase 7: Create checkpoint after debate (P22: CheckpointManager)
+        await self._create_debate_checkpoint(
+            debate_id=result.id if hasattr(result, 'id') else "unknown",
+            task=topic_hint or task,
+            round_num=result.rounds_used if hasattr(result, 'rounds_used') else 0,
+            messages=result.messages if hasattr(result, 'messages') else [],
+            agents=agents,
+            consensus={"reached": result.consensus_reached, "confidence": result.confidence}
+        )
+
+        # Phase 8: Store critique embeddings for future retrieval (P27: SemanticRetriever)
+        if result.critiques:
+            for critique in result.critiques[:5]:  # Limit to 5 to avoid too many API calls
+                if hasattr(critique, 'reasoning'):
+                    await self._store_critique_embedding(
+                        critique_id=f"critique-{result.id[:8]}-{critique.agent}",
+                        critique_text=critique.reasoning
+                    )
+
+        # Phase 8: Evolve personas based on debate outcome (P26: PersonaLaboratory)
+        # Only run every few cycles to avoid overhead
+        if self.cycle_count % 3 == 0:
+            await self._evolve_personas_post_cycle()
 
         # Handle deadlocks via counterfactual branching (P5: CounterfactualOrchestrator)
         # This is a fallback when NomicIntegration isn't available
@@ -4140,6 +4887,17 @@ Working directory: {self.aragora_path}
 
         # Phase 5: Log ELO leaderboard every 5 cycles (P13: EloSystem)
         self._log_elo_leaderboard()
+
+        # Phase 6: Run pending verification proofs (P19: ProofExecutor)
+        await self._run_verification_proofs()
+
+        # Phase 6: Verify evidence chain integrity (P17: ProvenanceManager)
+        self._verify_evidence_chain()
+
+        # Phase 7: Check evidence staleness for living documents (P21: EnhancedProvenance)
+        staleness_status = await self._check_evidence_staleness()
+        if staleness_status:
+            cycle_result["staleness"] = staleness_status
 
         cycle_result["duration_seconds"] = (datetime.now() - cycle_start).total_seconds()
         self.history.append(cycle_result)

@@ -263,14 +263,63 @@ class DebateStreamServer:
         self._running = False
         # Multi-loop tracking
         self.active_loops: dict[str, LoopInstance] = {}  # loop_id -> LoopInstance
+        # Debate state caching for late joiner sync
+        self.debate_states: dict[str, dict] = {}  # loop_id -> debate state
         # Audience participation
         self.audience_inbox = AudienceInbox()
         self._rate_limiters: dict[str, TokenBucket] = {}  # client_id -> TokenBucket
+
+        # Subscribe to emitter to maintain debate states
+        self._emitter.subscribe(self._update_debate_state)
 
     @property
     def emitter(self) -> SyncEventEmitter:
         """Get the event emitter for Arena hooks."""
         return self._emitter
+
+    def _update_debate_state(self, event: StreamEvent) -> None:
+        """Update cached debate state based on emitted events."""
+        loop_id = event.loop_id
+        if event.type == StreamEventType.DEBATE_START:
+            self.debate_states[loop_id] = {
+                "id": loop_id,
+                "task": event.data["task"],
+                "agents": event.data["agents"],
+                "messages": [],
+                "consensus_reached": False,
+                "consensus_confidence": 0.0,
+                "consensus_answer": "",
+                "started_at": event.timestamp,
+                "rounds": 0,
+                "ended": False,
+                "duration": 0.0,
+            }
+        elif event.type == StreamEventType.AGENT_MESSAGE:
+            if loop_id in self.debate_states:
+                state = self.debate_states[loop_id]
+                state["messages"].append({
+                    "agent": event.agent,
+                    "role": event.data["role"],
+                    "round": event.round,
+                    "content": event.data["content"],
+                })
+                # Cap at last 50 messages to prevent bloat
+                if len(state["messages"]) > 50:
+                    state["messages"] = state["messages"][-50:]
+        elif event.type == StreamEventType.CONSENSUS:
+            if loop_id in self.debate_states:
+                state = self.debate_states[loop_id]
+                state["consensus_reached"] = event.data["reached"]
+                state["consensus_confidence"] = event.data["confidence"]
+                state["consensus_answer"] = event.data["answer"]
+        elif event.type == StreamEventType.DEBATE_END:
+            if loop_id in self.debate_states:
+                state = self.debate_states[loop_id]
+                state["ended"] = True
+                state["duration"] = event.data["duration"]
+                state["rounds"] = event.data["rounds"]
+        elif event.type == StreamEventType.LOOP_UNREGISTER:
+            self.debate_states.pop(loop_id, None)
 
     async def broadcast(self, event: StreamEvent) -> None:
         """Send event to all connected clients."""
@@ -364,11 +413,11 @@ class DebateStreamServer:
                 }
             }))
 
-            # Send current debate state if one is in progress
-            if self.current_debate:
+            # Send sync for each active debate
+            for loop_id, state in self.debate_states.items():
                 await websocket.send(json.dumps({
                     "type": "sync",
-                    "data": self.current_debate
+                    "data": state
                 }))
 
             # Keep connection alive, handle incoming messages if needed
