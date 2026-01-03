@@ -16,10 +16,10 @@
     {
       "check": "tests",
       "passed": true,
-      "output": "........                                                                 [100%]\n8 passed in 0.19s\n",
+      "output": "le/metadata.py:551: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.\n    def construct_refs(cls, table_metadata: TableMetadata) -> TableMetadata:\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n41 passed, 2 skipped, 9 warnings in 0.92s\n",
       "note": ""
     }
   ],
-  "saved_at": "2026-01-02T18:50:10.815884",
+  "saved_at": "2026-01-03T00:51:49.780589",
   "cycle": 1
 }

@@ -46,10 +46,6 @@ class AgentReputation:
     critiques_given: int = 0
     critiques_valuable: int = 0
     updated_at: str = ""
-    # Titans/MIRAS calibration fields
-    total_predictions: int = 0
-    total_prediction_error: float = 0.0
-    calibration_score: float = 0.5
 
     @property
     def score(self) -> float:
@@ -67,16 +63,8 @@ class AgentReputation:
 
     @property
     def vote_weight(self) -> float:
-        """
-        Vote weight multiplier (0.4-1.6 range).
-
-        Includes Titans/MIRAS calibration bonus: agents with accurate
-        predictions (low error) get a bonus, inaccurate ones get a penalty.
-        """
-        base_weight = 0.5 + self.score  # 0.5-1.5 range
-        # Calibration bonus: (calibration - 0.5) * 0.2 gives -0.1 to +0.1
-        calibration_bonus = (self.calibration_score - 0.5) * 0.2
-        return max(0.4, min(1.6, base_weight + calibration_bonus))
+        """Vote weight multiplier (0.5-1.5 range)."""
+        return 0.5 + self.score
 
 
 class CritiqueStore:
@@ -176,62 +164,6 @@ class CritiqueStore:
             "CREATE INDEX IF NOT EXISTS idx_reputation_score ON agent_reputation(proposals_accepted DESC)"
         )
 
-        # === Titans/MIRAS Migrations ===
-        # Add new columns for surprise-based learning and prediction tracking
-        # These use try/except to be idempotent (safe to run multiple times)
-
-        # Patterns table: Add surprise scoring columns
-        for col_def in [
-            "surprise_score REAL DEFAULT 0.0",
-            "base_rate REAL DEFAULT 0.5",
-            "avg_prediction_error REAL DEFAULT 0.0",
-            "prediction_count INTEGER DEFAULT 0",
-        ]:
-            try:
-                cursor.execute(f"ALTER TABLE patterns ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-        # Critiques table: Add prediction tracking columns
-        for col_def in [
-            "expected_usefulness REAL DEFAULT 0.5",
-            "actual_usefulness REAL",
-            "prediction_error REAL",
-        ]:
-            try:
-                cursor.execute(f"ALTER TABLE critiques ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-        # Agent reputation table: Add calibration scoring columns
-        for col_def in [
-            "total_predictions INTEGER DEFAULT 0",
-            "total_prediction_error REAL DEFAULT 0.0",
-            "calibration_score REAL DEFAULT 0.5",
-        ]:
-            try:
-                cursor.execute(f"ALTER TABLE agent_reputation ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-        # Create patterns_archive table for adaptive forgetting
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS patterns_archive (
-                id TEXT,
-                issue_type TEXT,
-                issue_text TEXT,
-                suggestion_text TEXT,
-                success_count INTEGER,
-                failure_count INTEGER,
-                avg_severity REAL,
-                surprise_score REAL,
-                example_task TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                archived_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
         conn.commit()
         conn.close()
 
@@ -322,9 +254,6 @@ class CritiqueStore:
                     (pattern_id, issue_type, issue, suggestion, critique.severity, successful_fix[:500]),
                 )
 
-            # Update surprise score (Titans/MIRAS: track unexpected successes)
-            self._update_surprise_score(cursor, pattern_id, is_success=True)
-
         conn.commit()
         conn.close()
 
@@ -348,234 +277,40 @@ class CritiqueStore:
 
         return "general"
 
-    def fail_pattern(self, issue_text: str, issue_type: str = "general") -> None:
-        """
-        Record a pattern failure (critique didn't help reach consensus).
-
-        This is the counterpart to store_pattern - called when a critique
-        with matching issue text did NOT lead to improvement.
-        Implements Titans/MIRAS failure tracking for balanced learning.
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Create pattern ID from issue hash (same as store_pattern)
-        pattern_id = hashlib.md5(issue_text.lower().encode()).hexdigest()[:12]
-
-        # Increment failure count if pattern exists
-        cursor.execute(
-            """
-            UPDATE patterns
-            SET failure_count = failure_count + 1,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (datetime.now().isoformat(), pattern_id),
-        )
-
-        # Update surprise score based on unexpected failure
-        if cursor.rowcount > 0:
-            self._update_surprise_score(cursor, pattern_id, is_success=False)
-
-        conn.commit()
-        conn.close()
-
-    def update_prediction_outcome(
-        self,
-        critique_id: int,
-        actual_usefulness: float,
-        agent_name: Optional[str] = None,
-    ) -> float:
-        """
-        Update critique with actual outcome, return prediction error.
-
-        Implements Titans/MIRAS prediction error tracking - compares
-        the agent's expected usefulness with the actual outcome.
-
-        Args:
-            critique_id: Database ID of the critique
-            actual_usefulness: How useful the critique actually was (0.0-1.0)
-            agent_name: Optional agent name to update calibration score
-
-        Returns:
-            Prediction error (|expected - actual|)
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Get expected usefulness
-        cursor.execute(
-            "SELECT expected_usefulness, agent FROM critiques WHERE id = ?",
-            (critique_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            return 0.0
-
-        expected = row[0] if row[0] is not None else 0.5
-        agent = agent_name or row[1]
-
-        # Calculate prediction error
-        prediction_error = abs(expected - actual_usefulness)
-
-        # Update critique with outcome
-        cursor.execute(
-            """
-            UPDATE critiques
-            SET actual_usefulness = ?,
-                prediction_error = ?
-            WHERE id = ?
-            """,
-            (actual_usefulness, prediction_error, critique_id),
-        )
-
-        # Update agent's calibration score if agent provided
-        if agent:
-            self._update_agent_calibration(cursor, agent, prediction_error)
-
-        conn.commit()
-        conn.close()
-        return prediction_error
-
-    def _update_agent_calibration(
-        self,
-        cursor,
-        agent_name: str,
-        prediction_error: float,
-    ) -> None:
-        """
-        Update agent's calibration score based on prediction accuracy.
-
-        Agents with lower average prediction error get better calibration scores.
-        """
-        # Ensure agent exists
-        cursor.execute(
-            "INSERT OR IGNORE INTO agent_reputation (agent_name) VALUES (?)",
-            (agent_name,),
-        )
-
-        # Update prediction tracking and calibration
-        cursor.execute(
-            """
-            UPDATE agent_reputation
-            SET total_predictions = total_predictions + 1,
-                total_prediction_error = total_prediction_error + ?,
-                calibration_score = 1.0 - (
-                    (total_prediction_error + ?) / (total_predictions + 1)
-                ),
-                updated_at = ?
-            WHERE agent_name = ?
-            """,
-            (prediction_error, prediction_error, datetime.now().isoformat(), agent_name),
-        )
-
-    def _calculate_surprise(self, cursor, issue_type: str, is_success: bool) -> float:
-        """
-        Calculate surprise score based on deviation from base rate.
-
-        Implements Titans/MIRAS "surprise-based memorization" - patterns
-        that deviate from expected outcomes get higher surprise scores.
-
-        Args:
-            cursor: Database cursor
-            issue_type: Category of the issue
-            is_success: Whether this was a success (True) or failure (False)
-
-        Returns:
-            Surprise score between 0.0 and 1.0
-        """
-        # Get base success rate for this issue type
-        cursor.execute(
-            """
-            SELECT AVG(
-                CAST(success_count AS REAL) /
-                NULLIF(success_count + failure_count, 0)
-            )
-            FROM patterns
-            WHERE issue_type = ? AND (success_count + failure_count) > 0
-            """,
-            (issue_type,),
-        )
-        result = cursor.fetchone()
-        base_rate = result[0] if result and result[0] is not None else 0.5
-
-        # Actual outcome: 1.0 for success, 0.0 for failure
-        actual = 1.0 if is_success else 0.0
-
-        # Surprise = |actual - expected|, normalized to 0-1
-        surprise = abs(actual - base_rate)
-        return min(1.0, surprise * 2)  # Scale up for visibility
-
-    def _update_surprise_score(self, cursor, pattern_id: str, is_success: bool) -> None:
-        """Update surprise score for a pattern after success/failure."""
-        # Get pattern's issue_type
-        cursor.execute("SELECT issue_type FROM patterns WHERE id = ?", (pattern_id,))
-        result = cursor.fetchone()
-        if not result:
-            return
-
-        issue_type = result[0]
-        surprise = self._calculate_surprise(cursor, issue_type, is_success)
-
-        # Update with exponential moving average (alpha = 0.3)
-        cursor.execute(
-            """
-            UPDATE patterns
-            SET surprise_score = surprise_score * 0.7 + ? * 0.3,
-                base_rate = (
-                    SELECT AVG(
-                        CAST(success_count AS REAL) /
-                        NULLIF(success_count + failure_count, 0)
-                    )
-                    FROM patterns WHERE issue_type = ?
-                )
-            WHERE id = ?
-            """,
-            (surprise, issue_type, pattern_id),
-        )
-
     def retrieve_patterns(
         self,
         issue_type: Optional[str] = None,
         min_success: int = 2,
         limit: int = 10,
-        decay_halflife_days: int = 30,
     ) -> list[Pattern]:
-        """
-        Retrieve successful patterns with Titans/MIRAS-inspired ranking.
-
-        Ranking formula:
-            score = (success_count * (1 + surprise_score)) /
-                    (1 + age_days / decay_halflife_days)
-
-        This prioritizes:
-        - Higher success counts
-        - More surprising patterns (unexpected successes)
-        - Recent patterns (time-decay)
-        """
+        """Retrieve successful patterns, optionally filtered by type."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Build query with Titans/MIRAS-inspired ranking
-        base_sql = """
-            SELECT id, issue_type, issue_text, suggestion_text, success_count,
-                   failure_count, avg_severity, example_task, created_at, updated_at,
-                   (success_count * (1 + COALESCE(surprise_score, 0))) /
-                   (1 + (julianday('now') - julianday(updated_at)) / ?) as decay_score
-            FROM patterns
-            WHERE success_count >= ?
-        """
-        params = [decay_halflife_days, min_success]
-
         if issue_type:
-            base_sql += " AND issue_type = ?"
-            params.append(issue_type)
-
-        base_sql += " ORDER BY decay_score DESC LIMIT ?"
-        params.append(limit)
-
-        cursor.execute(base_sql, params)
+            cursor.execute(
+                """
+                SELECT id, issue_type, issue_text, suggestion_text, success_count,
+                       failure_count, avg_severity, example_task, created_at, updated_at
+                FROM patterns
+                WHERE issue_type = ? AND success_count >= ?
+                ORDER BY success_count DESC
+                LIMIT ?
+            """,
+                (issue_type, min_success, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, issue_type, issue_text, suggestion_text, success_count,
+                       failure_count, avg_severity, example_task, created_at, updated_at
+                FROM patterns
+                WHERE success_count >= ?
+                ORDER BY success_count DESC
+                LIMIT ?
+            """,
+                (min_success, limit),
+            )
 
         patterns = [
             Pattern(
@@ -668,10 +403,7 @@ class CritiqueStore:
         cursor.execute(
             """
             SELECT agent_name, proposals_made, proposals_accepted,
-                   critiques_given, critiques_valuable, updated_at,
-                   COALESCE(total_predictions, 0),
-                   COALESCE(total_prediction_error, 0.0),
-                   COALESCE(calibration_score, 0.5)
+                   critiques_given, critiques_valuable, updated_at
             FROM agent_reputation
             WHERE agent_name = ?
         """,
@@ -690,9 +422,6 @@ class CritiqueStore:
             critiques_given=row[3],
             critiques_valuable=row[4],
             updated_at=row[5],
-            total_predictions=row[6],
-            total_prediction_error=row[7],
-            calibration_score=row[8],
         )
 
     def get_vote_weight(self, agent_name: str) -> float:
@@ -756,10 +485,7 @@ class CritiqueStore:
         cursor.execute(
             """
             SELECT agent_name, proposals_made, proposals_accepted,
-                   critiques_given, critiques_valuable, updated_at,
-                   COALESCE(total_predictions, 0),
-                   COALESCE(total_prediction_error, 0.0),
-                   COALESCE(calibration_score, 0.5)
+                   critiques_given, critiques_valuable, updated_at
             FROM agent_reputation
             ORDER BY proposals_accepted DESC
         """
@@ -773,99 +499,9 @@ class CritiqueStore:
                 critiques_given=row[3],
                 critiques_valuable=row[4],
                 updated_at=row[5],
-                total_predictions=row[6],
-                total_prediction_error=row[7],
-                calibration_score=row[8],
             )
             for row in cursor.fetchall()
         ]
 
         conn.close()
         return reputations
-
-    # =========================================================================
-    # Adaptive Forgetting (Titans/MIRAS)
-    # =========================================================================
-
-    def prune_stale_patterns(
-        self,
-        max_age_days: int = 90,
-        min_success_rate: float = 0.3,
-        archive: bool = True,
-    ) -> int:
-        """
-        Remove or archive patterns that are stale or unsuccessful.
-
-        Implements Titans/MIRAS "adaptive forgetting" - discards obsolete
-        information to prevent memory bloat and outdated patterns from
-        interfering with learning.
-
-        Args:
-            max_age_days: Patterns older than this without updates get pruned
-            min_success_rate: Patterns below this success rate get pruned
-            archive: If True, move to archive table instead of deleting
-
-        Returns:
-            Number of patterns pruned
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        if archive:
-            # Move stale/unsuccessful patterns to archive table
-            cursor.execute(
-                """
-                INSERT INTO patterns_archive
-                    (id, issue_type, issue_text, suggestion_text, success_count,
-                     failure_count, avg_severity, surprise_score, example_task,
-                     created_at, updated_at)
-                SELECT id, issue_type, issue_text, suggestion_text, success_count,
-                       failure_count, avg_severity, surprise_score, example_task,
-                       created_at, updated_at
-                FROM patterns
-                WHERE julianday('now') - julianday(updated_at) > ?
-                  AND (
-                    CAST(success_count AS REAL) /
-                    NULLIF(success_count + failure_count, 0)
-                  ) < ?
-                """,
-                (max_age_days, min_success_rate),
-            )
-
-        # Delete stale/unsuccessful patterns
-        cursor.execute(
-            """
-            DELETE FROM patterns
-            WHERE julianday('now') - julianday(updated_at) > ?
-              AND (
-                CAST(success_count AS REAL) /
-                NULLIF(success_count + failure_count, 0)
-              ) < ?
-            """,
-            (max_age_days, min_success_rate),
-        )
-
-        pruned = cursor.rowcount
-        conn.commit()
-        conn.close()
-        return pruned
-
-    def get_archive_stats(self) -> dict:
-        """Get statistics about archived patterns."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT COUNT(*) FROM patterns_archive")
-        total = cursor.fetchone()[0]
-
-        cursor.execute(
-            """
-            SELECT issue_type, COUNT(*)
-            FROM patterns_archive
-            GROUP BY issue_type
-            """
-        )
-        by_type = dict(cursor.fetchall())
-
-        conn.close()
-        return {"total_archived": total, "archived_by_type": by_type}
