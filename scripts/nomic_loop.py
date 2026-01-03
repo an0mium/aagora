@@ -243,6 +243,14 @@ class NomicLoop:
             self.genesis_ledger = GenesisLedger(str(self.aragora_path / ".nomic" / "genesis.db"))
             self.population_manager = PopulationManager(str(self.aragora_path / ".nomic" / "genesis.db"))
 
+        # Setup logging infrastructure (must be before other initializations that use nomic_dir)
+        self.nomic_dir = self.aragora_path / ".nomic"
+        self.nomic_dir.mkdir(exist_ok=True)
+        self.log_file = self.nomic_dir / "nomic_loop.log"
+        self.state_file = self.nomic_dir / "nomic_state.json"
+        self.backup_dir = self.nomic_dir / "backups"
+        self.backup_dir.mkdir(exist_ok=True)
+
         # Supabase persistence for history tracking
         self.persistence = None
         if enable_persistence and PERSISTENCE_AVAILABLE:
@@ -258,14 +266,6 @@ class NomicLoop:
             embeddings_path = self.nomic_dir / "debate_embeddings.db"
             self.debate_embeddings = DebateEmbeddingsDatabase(str(embeddings_path))
             print(f"[embeddings] Debate embeddings database initialized")
-
-        # Setup logging infrastructure
-        self.nomic_dir = self.aragora_path / ".nomic"
-        self.nomic_dir.mkdir(exist_ok=True)
-        self.log_file = self.nomic_dir / "nomic_loop.log"
-        self.state_file = self.nomic_dir / "nomic_state.json"
-        self.backup_dir = self.nomic_dir / "backups"
-        self.backup_dir.mkdir(exist_ok=True)
 
         # CritiqueStore for patterns and agent reputation tracking
         self.critique_store = None
