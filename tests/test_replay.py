@@ -32,7 +32,7 @@ class TestDebateRecorder:
                     Message(role="proposer", agent="agent1", content="Proposal 1"),
                     Message(role="critic", agent="agent2", content="Critique of proposal 1"),
                 ],
-                votes=[Vote(agent="agent1", choice="accept", reasoning="Good proposal")],
+                votes=[Vote(agent="agent1", choice="accept", confidence=0.9, reasoning="Good proposal")],
                 rounds_used=2,
                 duration_seconds=10.5,
             )

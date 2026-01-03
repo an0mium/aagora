@@ -165,7 +165,14 @@ class DebateReplayer:
         # Replay messages in sequence
         import time
         for i, message in enumerate(result.messages, 1):
-            print(f"[{i:2d}] {message.agent}: {message.content}")
+            # Handle both dict and Message objects (dicts come from JSON loading)
+            if isinstance(message, dict):
+                agent = message.get("agent", "unknown")
+                content = message.get("content", "")
+            else:
+                agent = message.agent
+                content = message.content
+            print(f"[{i:2d}] {agent}: {content}")
             if speed < 10.0:  # Don't delay for very fast replays
                 time.sleep(0.5 / speed)  # Brief pause between messages
 
