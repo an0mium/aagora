@@ -21,6 +21,19 @@ from aragora.debate.convergence import (
 from aragora.spectate.stream import SpectatorStream
 from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
 
+# Lazy import to avoid circular dependencies
+InsightExtractor = None
+InsightStore = None
+
+def _get_insight_classes():
+    """Lazy-load insight classes to avoid circular imports."""
+    global InsightExtractor, InsightStore
+    if InsightExtractor is None:
+        from aragora.insights import InsightExtractor as _IE, InsightStore as _IS
+        InsightExtractor = _IE
+        InsightStore = _IS
+    return InsightExtractor, InsightStore
+
 
 @dataclass
 class DebateProtocol:
@@ -82,6 +95,9 @@ class DebateProtocol:
     # Audience suggestion injection
     audience_injection: Literal["off", "summary", "inject"] = "off"
 
+    # Pre-debate web research
+    enable_research: bool = False  # Enable web research before debates
+
 
 class Arena:
     """
@@ -105,6 +121,7 @@ class Arena:
         event_emitter=None,  # Optional event emitter for subscribing to user events
         spectator: SpectatorStream = None,  # Optional spectator stream for real-time events
         debate_embeddings=None,  # DebateEmbeddingsDatabase for historical context
+        insight_store=None,  # Optional InsightStore for extracting learnings from debates
     ):
         self.env = environment
         self.agents = agents
@@ -114,6 +131,7 @@ class Arena:
         self.event_emitter = event_emitter
         self.spectator = spectator or SpectatorStream(enabled=False)
         self.debate_embeddings = debate_embeddings
+        self.insight_store = insight_store
 
         # User participation tracking
         self.user_votes: list[dict] = []  # List of user vote events
@@ -147,6 +165,9 @@ class Arena:
 
         # Cache for historical context (computed once per debate)
         self._historical_context_cache: str = ""
+
+        # Cache for research context (computed once per debate)
+        self._research_context_cache: Optional[str] = None
 
     def _select_critics_for_proposal(self, proposal_agent: str, all_critics: list[Agent]) -> list[Agent]:
         """Select which critics should critique the given proposal based on topology."""
@@ -252,6 +273,42 @@ class Arena:
         except Exception:
             return ""
 
+    async def _perform_research(self, task: str) -> str:
+        """Perform web research for the debate topic and return formatted context.
+
+        Uses EvidenceCollector with WebConnector to gather relevant information.
+        """
+        try:
+            # Check if web search dependencies are available
+            try:
+                from aragora.connectors.web import DDGS_AVAILABLE
+                if not DDGS_AVAILABLE:
+                    return "Web research unavailable: duckduckgo-search package not installed."
+            except ImportError:
+                return "Web research unavailable: required packages not installed."
+
+            from aragora.evidence.collector import EvidenceCollector
+            from aragora.connectors.web import WebConnector
+
+            # Create evidence collector with web connector
+            collector = EvidenceCollector()
+            web_connector = WebConnector()
+            collector.add_connector("web", web_connector)
+
+            # Collect evidence for the task
+            evidence_pack = await collector.collect_evidence(task, enabled_connectors=["web"])
+
+            # Format as context string
+            if evidence_pack.snippets:
+                context = evidence_pack.to_context_string()
+                return f"## WEB RESEARCH CONTEXT\n{context}"
+            else:
+                return "No relevant web research found for this topic."
+
+        except Exception as e:
+            print(f"Research failed: {e}")
+            return f"Web research failed: {str(e)}"
+
     def _assign_roles(self):
         """Assign roles to agents based on protocol."""
         # If agents already have roles, respect them
@@ -347,6 +404,20 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 )
             except Exception:
                 self._historical_context_cache = ""
+
+        # Pre-debate research phase
+        if self.protocol.enable_research:
+            try:
+                research_context = await self._perform_research(self.env.task)
+                if research_context:
+                    # Add research to environment context
+                    if self.env.context:
+                        self.env.context += "\n\n" + research_context
+                    else:
+                        self.env.context = research_context
+            except Exception as e:
+                print(f"Research phase failed: {e}")
+                # Continue without research - don't break the debate
 
         result = DebateResult(
             task=self.env.task,
@@ -733,6 +804,104 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 result.consensus_reached = False
                 result.confidence = 0.0
 
+        elif self.protocol.consensus == "unanimous":
+            # Unanimous mode: ALL agents must agree for consensus
+            # Uses same voting mechanism as majority, but requires 100% agreement
+            async def cast_vote(agent):
+                """Cast vote and return (agent, result_or_error)."""
+                print(f"  {agent.name}: voting (unanimous mode)...", flush=True)
+                try:
+                    vote_result = await self._vote_with_agent(agent, proposals, self.env.task)
+                    return (agent, vote_result)
+                except Exception as e:
+                    return (agent, e)
+
+            vote_tasks = [asyncio.create_task(cast_vote(agent)) for agent in self.agents]
+            voting_errors = 0  # Track voting failures for unanimity calculation
+
+            for completed_task in asyncio.as_completed(vote_tasks):
+                agent, vote_result = await completed_task
+
+                if isinstance(vote_result, Exception):
+                    print(f"  {agent.name}: ERROR voting - {vote_result}")
+                    voting_errors += 1  # Count as failed vote (breaks unanimity)
+                else:
+                    result.votes.append(vote_result)
+                    print(f"  {agent.name} votes: {vote_result.choice} ({vote_result.confidence:.0%})")
+
+                    # Notify spectator of vote
+                    self._notify_spectator("vote", agent=agent.name, details=f"Voted for {vote_result.choice}", metric=vote_result.confidence)
+
+                    # Emit vote event
+                    if "on_vote" in self.hooks:
+                        self.hooks["on_vote"](agent.name, vote_result.choice, vote_result.confidence)
+
+            # Group similar votes to handle minor wording differences
+            vote_groups = self._group_similar_votes(result.votes)
+            choice_mapping: dict[str, str] = {}
+            for canonical, variants in vote_groups.items():
+                for variant in variants:
+                    choice_mapping[variant] = canonical
+
+            # Count votes (no reputation weighting for unanimous - all votes equal)
+            vote_counts = Counter()
+            for v in result.votes:
+                if not isinstance(v, Exception):
+                    canonical = choice_mapping.get(v.choice, v.choice)
+                    vote_counts[canonical] += 1
+
+            # Include user votes if configured
+            user_vote_weight = getattr(self.protocol, 'user_vote_weight', 0.0)  # Default: users don't affect unanimity
+            if user_vote_weight > 0:
+                for user_vote in self.user_votes:
+                    choice = user_vote.get("choice", "")
+                    if choice:
+                        canonical = choice_mapping.get(choice, choice)
+                        vote_counts[canonical] += 1
+                        print(f"  User {user_vote.get('user_id', 'anonymous')} votes: {choice}")
+
+            # Check for unanimous agreement
+            # Include voting errors in total - they count as dissent in unanimous mode
+            total_voters = len(result.votes) + voting_errors + (len(self.user_votes) if user_vote_weight > 0 else 0)
+
+            if vote_counts and total_voters > 0:
+                winner, count = vote_counts.most_common(1)[0]
+                unanimity_ratio = count / total_voters
+
+                # Unanimous requires 100% agreement - no exceptions
+                unanimous_threshold = 1.0
+
+                if unanimity_ratio >= unanimous_threshold:
+                    result.final_answer = proposals.get(winner, list(proposals.values())[0])
+                    result.consensus_reached = True
+                    result.confidence = unanimity_ratio
+                    result.consensus_strength = "unanimous"
+                    result.consensus_variance = 0.0
+                    print(f"\n  UNANIMOUS: {winner} ({count}/{total_voters} votes, {unanimity_ratio:.0%})")
+
+                    # Notify spectator of unanimous consensus
+                    self._notify_spectator("consensus", details=f"Unanimous: {winner}", metric=result.confidence)
+                else:
+                    # Not unanimous - no consensus
+                    result.final_answer = f"[No unanimous consensus reached]\n\nProposals:\n" + "\n\n---\n\n".join(
+                        f"[{agent}] ({vote_counts.get(choice_mapping.get(agent, agent), 0)} votes):\n{prop}"
+                        for agent, prop in proposals.items()
+                    )
+                    result.consensus_reached = False
+                    result.confidence = unanimity_ratio
+                    result.consensus_strength = "none"
+
+                    # Track all views as dissenting since no consensus
+                    for agent, prop in proposals.items():
+                        result.dissenting_views.append(f"[{agent}]: {prop}")
+
+                    print(f"\n  NO UNANIMOUS CONSENSUS: Best was {winner} with {unanimity_ratio:.0%} ({count}/{total_voters})")
+                    self._notify_spectator("consensus", details=f"No unanimity: {winner} got {unanimity_ratio:.0%}", metric=unanimity_ratio)
+            else:
+                result.final_answer = list(proposals.values())[0]
+                result.consensus_reached = False
+                result.confidence = 0.0
+
         elif self.protocol.consensus == "judge":
             # Select judge based on protocol setting (random, voted, or last)
             judge = await self._select_judge(proposals, context)
@@ -794,6 +963,18 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
         # Notify spectator of debate end
         self._notify_spectator("debate_end", details=f"Complete in {result.duration_seconds:.1f}s", metric=result.confidence)
+
+        # === Extract and store insights ===
+        if self.insight_store:
+            try:
+                IE, _ = _get_insight_classes()
+                extractor = IE()
+                insights = extractor.extract(result, [a.name for a in self.agents])
+                stored_count = await self.insight_store.store_debate_insights(insights)
+                if stored_count > 0:
+                    print(f"  Extracted {insights.total_insights} insights ({stored_count} stored)")
+            except Exception as e:
+                print(f"  Insight extraction failed: {e}")
 
         print(f"\n{'='*60}")
         print(f"DEBATE COMPLETE in {result.duration_seconds:.1f}s")

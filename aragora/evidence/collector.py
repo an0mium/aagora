@@ -107,9 +107,10 @@ class EvidenceCollector:
         # Rank and limit snippets
         ranked_snippets = self._rank_snippets(all_snippets, keywords)[:self.max_total_snippets]
 
-        # Record in provenance
-        for snippet in ranked_snippets:
-            self.provenance_manager.record_evidence_use(snippet.id, task, "debate_context")
+        # Record in provenance (optional - method may not exist yet)
+        if hasattr(self.provenance_manager, 'record_evidence_use'):
+            for snippet in ranked_snippets:
+                self.provenance_manager.record_evidence_use(snippet.id, task, "debate_context")
 
         return EvidencePack(
             topic_keywords=keywords,
@@ -137,15 +138,27 @@ class EvidenceCollector:
 
             snippets = []
             for i, result in enumerate(results[:self.max_snippets_per_connector]):
-                snippet = EvidenceSnippet(
-                    id=f"{connector_name}_{i}",
-                    source=connector_name,
-                    title=result.get('title', result.get('name', 'Unknown')),
-                    snippet=self._truncate_snippet(result.get('content', result.get('text', ''))),
-                    url=result.get('url', ''),
-                    reliability_score=self._calculate_reliability(connector_name, result),
-                    metadata=result
-                )
+                # Handle both Evidence objects (from WebConnector) and dict results (from other connectors)
+                if hasattr(result, 'title'):  # Evidence object
+                    snippet = EvidenceSnippet(
+                        id=f"{connector_name}_{result.id}",
+                        source=connector_name,
+                        title=result.title,
+                        snippet=self._truncate_snippet(result.content),
+                        url=result.url or '',
+                        reliability_score=self._calculate_reliability_from_evidence(connector_name, result),
+                        metadata=result.metadata
+                    )
+                else:  # Dict result from other connectors
+                    snippet = EvidenceSnippet(
+                        id=f"{connector_name}_{i}",
+                        source=connector_name,
+                        title=result.get('title', result.get('name', 'Unknown')),
+                        snippet=self._truncate_snippet(result.get('content', result.get('text', ''))),
+                        url=result.get('url', ''),
+                        reliability_score=self._calculate_reliability(connector_name, result),
+                        metadata=result
+                    )
                 snippets.append(snippet)
 
             return snippets, len(results)
@@ -212,6 +225,26 @@ class EvidenceCollector:
         if result.get('recent', False):
             base_score += 0.05
         if len(result.get('content', '')) > 1000:  # Substantial content
+            base_score += 0.05
+
+        return min(1.0, base_score)
+
+    def _calculate_reliability_from_evidence(self, connector_name: str, evidence) -> float:
+        """Calculate reliability score from Evidence object."""
+        base_scores = {
+            'github': 0.8,
+            'local_docs': 0.9,
+            'web': 0.6,  # WebConnector uses 'web' as source
+            'academic': 0.9,
+        }
+
+        base_score = base_scores.get(connector_name, 0.5)
+
+        # Use evidence authority and confidence
+        base_score = (base_score + evidence.authority + evidence.confidence) / 3.0
+
+        # Adjust based on content length
+        if len(evidence.content) > 1000:
             base_score += 0.05
 
         return min(1.0, base_score)
