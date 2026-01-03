@@ -29,6 +29,9 @@ class SpectatorEvents:
     CONVERGENCE = "convergence"
     CONVERGED = "converged"
 
+    # Memory/Learning
+    MEMORY_RECALL = "memory_recall"
+
     # System
     SYSTEM = "system"
     ERROR = "error"
@@ -49,6 +52,7 @@ EVENT_STYLES: Dict[str, Tuple[str, str]] = {
     SpectatorEvents.CONSENSUS: ("🤝", "\033[92m"),      # Green
     SpectatorEvents.CONVERGENCE: ("📊", "\033[92m"),
     SpectatorEvents.CONVERGED: ("🎉", "\033[92m"),
+    SpectatorEvents.MEMORY_RECALL: ("🧠", "\033[94m"),  # Blue - memory retrieval
     SpectatorEvents.SYSTEM: ("⚙️", "\033[0m"),
     SpectatorEvents.ERROR: ("❌", "\033[91m"),
 }
@@ -67,6 +71,7 @@ EVENT_ASCII: Dict[str, str] = {
     SpectatorEvents.CONSENSUS: "[CONSENSUS]",
     SpectatorEvents.CONVERGENCE: "[CONVERGE]",
     SpectatorEvents.CONVERGED: "[DONE]",
+    SpectatorEvents.MEMORY_RECALL: "[MEMORY]",
     SpectatorEvents.SYSTEM: "[SYS]",
     SpectatorEvents.ERROR: "[ERR]",
 }

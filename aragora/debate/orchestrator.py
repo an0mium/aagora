@@ -266,6 +266,22 @@ class Arena:
             if not results:
                 return ""
 
+            # Emit memory_recall event for dashboard visualization ("Brain Flash")
+            top_similarity = results[0][2] if results else 0
+            if self.spectator:
+                self._notify_spectator(
+                    "memory_recall",
+                    details=f"Retrieved {len(results)} similar debates (top: {top_similarity:.0%})",
+                    metric=top_similarity
+                )
+            # Also emit to WebSocket stream for live dashboard
+            if self.event_emitter:
+                self.event_emitter.emit("memory_recall", {
+                    "query": task[:100],
+                    "hits": [{"topic": excerpt[:80], "similarity": round(sim, 2)} for _, excerpt, sim in results[:3]],
+                    "count": len(results)
+                })
+
             lines = ["## HISTORICAL CONTEXT (Similar Past Debates)"]
             lines.append("Learn from these previous debates on similar topics:\n")
 
@@ -1048,7 +1064,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             try:
                 IE, _ = _get_insight_classes()
                 extractor = IE()
-                insights = extractor.extract(result, [a.name for a in self.agents])
+                insights = await extractor.extract(result)
                 stored_count = await self.insight_store.store_debate_insights(insights)
                 if stored_count > 0:
                     print(f"  Extracted {insights.total_insights} insights ({stored_count} stored)")

@@ -718,6 +718,17 @@ class NomicLoop:
             self.insight_extractor = InsightExtractor()
             print(f"[insights] InsightExtractor initialized for pattern learning")
 
+        # InsightStore for persisting debate insights (debate consensus feature)
+        self.insight_store = None
+        if INSIGHTS_AVAILABLE:
+            try:
+                from aragora.insights.store import InsightStore
+                insights_path = self.nomic_dir / "aragora_insights.db"
+                self.insight_store = InsightStore(str(insights_path))
+                print(f"[insights] InsightStore initialized for debate persistence")
+            except Exception as e:
+                print(f"[insights] InsightStore init failed: {e}")
+
         # NomicIntegration for advanced feature coordination
         # Integrates: belief propagation, capability probing, staleness detection,
         # counterfactual branching, and checkpointing
@@ -1571,6 +1582,14 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
 
             self._log(f"  [insights] Extracted {insights.total_insights} insights: {insights.key_takeaway[:80]}")
 
+            # Persist insights to InsightStore database (debate consensus feature)
+            if self.insight_store and insights:
+                try:
+                    stored = await self.insight_store.store_debate_insights(insights)
+                    self._log(f"  [insights] Persisted {stored} insights to database")
+                except Exception as e:
+                    self._log(f"  [insights] Persistence error: {e}")
+
             # Feed key takeaway to ContinuumMemory for long-term learning
             if self.continuum and insights.key_takeaway:
                 self.continuum.add(
@@ -1609,6 +1628,14 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                             "category": pattern.metadata.get("category", "general"),
                         },
                     )
+
+            # Persist insights to InsightStore for dashboard access (debate consensus feature)
+            if self.insight_store and insights:
+                try:
+                    await self.insight_store.store_debate_insights(insights)
+                    self._log(f"  [insights] Persisted {insights.total_insights} insights to store")
+                except Exception as store_err:
+                    self._log(f"  [insights] Store error: {store_err}")
 
         except Exception as e:
             self._log(f"  [insights] Error extracting: {e}")
@@ -3163,7 +3190,7 @@ Synthesize these suggestions into a coherent, working implementation.
             # Fall back to regular arena
             env = Environment(task=task)
             protocol = DebateProtocol(rounds=2, consensus="majority")
-            arena = Arena(environment=env, agents=agents, protocol=protocol, memory=self.critique_store, debate_embeddings=self.debate_embeddings)
+            arena = Arena(environment=env, agents=agents, protocol=protocol, memory=self.critique_store, debate_embeddings=self.debate_embeddings, insight_store=self.insight_store)
             return await self._run_arena_with_logging(arena, phase_name)
 
         self._log(f"  Starting {phase_name} fractal debate (genesis mode)...")
@@ -3221,7 +3248,7 @@ Synthesize these suggestions into a coherent, working implementation.
             self._log(f"  Falling back to regular arena...")
             env = Environment(task=task)
             protocol = DebateProtocol(rounds=2, consensus="majority")
-            arena = Arena(environment=env, agents=agents, protocol=protocol, memory=self.critique_store, debate_embeddings=self.debate_embeddings)
+            arena = Arena(environment=env, agents=agents, protocol=protocol, memory=self.critique_store, debate_embeddings=self.debate_embeddings, insight_store=self.insight_store)
             return await self._run_arena_with_logging(arena, phase_name)
 
     async def phase_context_gathering(self) -> dict:
@@ -3503,6 +3530,7 @@ Recent changes:
             protocol,
             memory=self.critique_store,
             debate_embeddings=self.debate_embeddings,
+            insight_store=self.insight_store,
         )
         result = await self._run_arena_with_logging(arena, "debate")
 
@@ -3711,6 +3739,7 @@ Learn from past patterns shown above - repeat successes and avoid failures.""",
             protocol,
             memory=self.critique_store,
             debate_embeddings=self.debate_embeddings,
+            insight_store=self.insight_store,
             agent_weights=agent_weights,
         )
         result = await self._run_arena_with_logging(arena, "design")
