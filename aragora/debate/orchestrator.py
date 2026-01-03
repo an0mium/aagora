@@ -127,6 +127,21 @@ class Arena:
         # Apply agreement intensity guidance to all agents
         self._apply_agreement_intensity()
 
+        # Initialize convergence detector if enabled
+        self.convergence_detector = None
+        if self.protocol.convergence_detection:
+            self.convergence_detector = ConvergenceDetector(
+                convergence_threshold=self.protocol.convergence_threshold,
+                divergence_threshold=self.protocol.divergence_threshold,
+                min_rounds_before_check=1,
+            )
+
+        # Track responses for convergence detection
+        self._previous_round_responses: dict[str, str] = {}
+
+        # Cache for historical context (computed once per debate)
+        self._historical_context_cache: str = ""
+
     def _handle_user_event(self, event) -> None:
         """Handle incoming user participation events."""
         from aragora.server.stream import StreamEventType
@@ -166,18 +181,6 @@ class Arena:
             return "\n".join(lines)
         except Exception:
             return ""
-
-        # Initialize convergence detector if enabled
-        self.convergence_detector = None
-        if self.protocol.convergence_detection:
-            self.convergence_detector = ConvergenceDetector(
-                convergence_threshold=self.protocol.convergence_threshold,
-                divergence_threshold=self.protocol.divergence_threshold,
-                min_rounds_before_check=1,
-            )
-
-        # Track responses for convergence detection
-        self._previous_round_responses: dict[str, str] = {}
 
     def _assign_roles(self):
         """Assign roles to agents based on protocol."""
@@ -265,6 +268,15 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
     async def run(self) -> DebateResult:
         """Run the full debate and return results."""
         start_time = time.time()
+
+        # Fetch historical context once at debate start (for institutional memory)
+        if self.debate_embeddings:
+            try:
+                self._historical_context_cache = await self._fetch_historical_context(
+                    self.env.task, limit=2  # Limit to 2 to avoid prompt bloat
+                )
+            except Exception:
+                self._historical_context_cache = ""
 
         result = DebateResult(
             task=self.env.task,
@@ -996,8 +1008,14 @@ and building on others' ideas."""
         stance_str = self._get_stance_guidance(agent)
         stance_section = f"\n\n{stance_str}" if stance_str else ""
 
-        return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}
+        # Include historical context if available (capped at 800 chars to prevent bloat)
+        historical_section = ""
+        if self._historical_context_cache:
+            historical = self._historical_context_cache[:800]
+            historical_section = f"\n\n{historical}"
 
+        return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}
+{historical_section}
 Task: {self.env.task}{context_str}
 
 Please provide your best proposal to address this task. Be thorough and specific.

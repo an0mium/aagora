@@ -190,6 +190,12 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
     }
   }, []);
 
+  const sendMessage = useCallback((message: object) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    }
+  }, []);
+
   return {
     events,
     connected,
@@ -200,6 +206,7 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
     selectedLoopId,
     selectLoop,
     requestLoopList,
+    sendMessage,
   };
 }
 

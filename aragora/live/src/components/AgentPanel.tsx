@@ -58,8 +58,17 @@ export function AgentPanel({ events }: AgentPanelProps) {
     // For log_message, only include if it's not a duplicate of an agent_message
     if (e.type === 'log_message') {
       const msg = (e.data?.message as string) || '';
-      // Skip log messages that look like agent message summaries (they have agent_message equivalents)
-      if (msg.match(/^\s*\[proposer\]|\[critique\]/)) {
+      // Skip log messages that look like arena message summaries (they have agent_message equivalents)
+      // These have format: "    [role] agent (round N): content"
+      if (msg.match(/^\s*\[(proposer|critic|synthesizer|judge|reviewer|implementer)\]/i)) {
+        return false;
+      }
+      // Skip vote summaries (have vote events)
+      if (msg.match(/^\s*\[vote\]/i)) {
+        return false;
+      }
+      // Skip critique summaries (have critique events)
+      if (msg.match(/^\s*\[critique\]/i)) {
         return false;
       }
       return true;
@@ -214,8 +223,9 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
       break;
     case 'log_message':
       content = event.data.message as string;
-      preview = content.slice(0, 100);
-      icon = '📝';
+      preview = content.slice(0, 150) + (content.length > 150 ? '...' : '');
+      // Use agent-specific icons for attributed log messages
+      icon = agentName !== 'system' ? ROLE_ICONS.default : '📝';
       break;
     default:
       content = JSON.stringify(event.data, null, 2);
@@ -249,7 +259,7 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
       </button>
       {isExpanded && (
         <div className="px-3 pb-3 pt-0">
-          <div className="bg-bg/50 rounded-lg p-3 text-sm whitespace-pre-wrap break-words overflow-y-auto">
+          <div className="bg-bg/50 rounded-lg p-3 text-sm whitespace-pre-wrap break-words overflow-y-auto max-h-[500px]">
             {content}
           </div>
         </div>

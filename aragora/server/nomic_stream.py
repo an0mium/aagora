@@ -226,6 +226,7 @@ def create_nomic_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
         message: str,
         level: str = "info",
         phase: Optional[str] = None,
+        agent: Optional[str] = None,
     ) -> None:
         """Emit a log message for the dashboard."""
         emitter.emit(StreamEvent(
@@ -235,6 +236,7 @@ def create_nomic_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
                 "level": level,
                 "phase": phase,
             },
+            agent=agent or "",
         ))
 
     return {

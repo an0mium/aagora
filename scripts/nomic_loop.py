@@ -368,7 +368,7 @@ class NomicLoop:
         except Exception:
             pass  # Don't let persistence errors break the loop
 
-    def _log(self, message: str, also_print: bool = True, phase: str = None):
+    def _log(self, message: str, also_print: bool = True, phase: str = None, agent: str = None):
         """Log to file and optionally stdout. File is always flushed immediately."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_line = f"[{timestamp}] {message}"
@@ -383,7 +383,7 @@ class NomicLoop:
             sys.stdout.flush()
 
         # Also emit to stream for real-time dashboard
-        self._stream_emit("on_log_message", message, level="info", phase=phase)
+        self._stream_emit("on_log_message", message, level="info", phase=phase, agent=agent)
 
     def _save_state(self, state: dict):
         """Save current state for crash recovery and monitoring."""
@@ -689,9 +689,15 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
         async def review_with_agent(agent, name: str) -> tuple[str, str]:
             """Run review with one agent, returning (name, result)."""
             try:
+                self._log(f"    {name}: reviewing implementation...", agent=name)
                 result = await agent.generate(review_prompt, context=[])
+                self._log(f"    {name}: {result[:100] if result else 'No response'}...", agent=name)
+                # Emit full review
+                if result:
+                    self._stream_emit("on_log_message", result, level="info", phase="review", agent=name)
                 return (name, result[:200] if result else "No response")
             except Exception as e:
+                self._log(f"    {name}: review error - {e}", agent=name)
                 return (name, f"Error: {e}")
 
         # Run all 4 agents in parallel
@@ -936,12 +942,15 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
         async def gather_with_agent(agent, name: str, harness: str) -> tuple[str, str, str]:
             """Run exploration with one agent."""
             try:
-                self._log(f"  {name} ({harness}): exploring codebase...")
+                self._log(f"  {name} ({harness}): exploring codebase...", agent=name)
                 result = await agent.generate(explore_prompt, context=[])
-                self._log(f"  {name}: complete ({len(result) if result else 0} chars)")
+                self._log(f"  {name}: complete ({len(result) if result else 0} chars)", agent=name)
+                # Emit agent's full exploration result
+                if result:
+                    self._stream_emit("on_log_message", result, level="info", phase="context", agent=name)
                 return (name, harness, result if result else "No response")
             except Exception as e:
-                self._log(f"  {name}: error - {e}")
+                self._log(f"  {name}: error - {e}", agent=name)
                 return (name, harness, f"Error: {e}")
 
         # Build list of exploration tasks
@@ -1428,14 +1437,14 @@ The implementation MUST preserve all existing aragora functionality.""",
                 self._log(f"  All {tasks_completed} tasks completed successfully")
 
                 # Pre-verification review: All 3 agents review implementation in parallel
-                self._log("\n  Pre-verification review (all agents)...")
+                self._log("\n  Pre-verification review (all agents)...", agent="claude")
                 diff = self._get_git_diff()
                 if diff and len(diff) > 100:  # Only review if there are substantial changes
                     review_concerns = await self._parallel_implementation_review(diff)
                     if review_concerns:
-                        self._log(f"    Review concerns: {review_concerns[:200]}...")
+                        self._log(f"    Review concerns: {review_concerns[:200]}...", agent="claude")
                     else:
-                        self._log("    All agents approve the implementation")
+                        self._log("    All agents approve the implementation", agent="claude")
 
                 phase_duration = (datetime.now() - phase_start).total_seconds()
                 self._stream_emit(
@@ -1867,7 +1876,7 @@ CRITICAL SAFETY RULES:
                     test_output = check.get("output", "")
 
             # Step 1: Codex reviews the failed changes
-            self._log("\n  Step 1: Codex analyzing test failures...")
+            self._log("\n  Step 1: Codex analyzing test failures...", agent="codex")
             from aragora.implement import HybridExecutor
             executor = HybridExecutor(self.aragora_path)
             diff = self._get_git_diff()
@@ -1891,10 +1900,13 @@ Provide specific, actionable fixes. Focus on:
 """
             review_result = await executor.review_with_codex(review_prompt, timeout=2400)  # 40 min for thorough review
             iteration_result["codex_review"] = review_result
-            self._log(f"    Codex review complete")
+            self._log(f"    Codex review complete", agent="codex")
+            # Emit Codex's full review
+            if review_result.get("review"):
+                self._stream_emit("on_log_message", review_result["review"], level="info", phase="fix", agent="codex")
 
             # Step 2: Claude fixes based on Codex review
-            self._log("\n  Step 2: Claude applying fixes...")
+            self._log("\n  Step 2: Claude applying fixes...", agent="claude")
             fix_prompt = f"""{SAFETY_PREAMBLE}
 
 Fix the test failures in the codebase. Here's what went wrong and how to fix it:
@@ -1924,13 +1936,13 @@ Working directory: {self.aragora_path}
                 )
                 await fix_agent.generate(fix_prompt, context=[])
                 iteration_result["fix_applied"] = True
-                self._log("    Fixes applied")
+                self._log("    Fixes applied", agent="claude")
             except Exception as e:
                 iteration_result["fix_error"] = str(e)
-                self._log(f"    Fix failed: {e}")
+                self._log(f"    Fix failed: {e}", agent="claude")
 
             # Step 3: Gemini quick review (optional sanity check)
-            self._log("\n  Step 3: Gemini quick review...")
+            self._log("\n  Step 3: Gemini quick review...", agent="gemini")
             try:
                 gemini_review_prompt = f"""Quick review of fix attempt. Are these changes correct?
 
@@ -1944,9 +1956,12 @@ Reply with: LOOKS_GOOD or ISSUES: <brief description>
 """
                 gemini_result = await self.gemini.generate(gemini_review_prompt, context=[])
                 iteration_result["gemini_review"] = gemini_result[:200] if gemini_result else "No response"
-                self._log(f"    Gemini: {gemini_result[:100] if gemini_result else 'No response'}...")
+                self._log(f"    Gemini: {gemini_result[:100] if gemini_result else 'No response'}...", agent="gemini")
+                # Emit Gemini's full review
+                if gemini_result:
+                    self._stream_emit("on_log_message", gemini_result, level="info", phase="fix", agent="gemini")
             except Exception as e:
-                self._log(f"    Gemini review skipped: {e}")
+                self._log(f"    Gemini review skipped: {e}", agent="gemini")
 
             cycle_result["fix_iterations"].append(iteration_result)
 
