@@ -345,6 +345,10 @@ class ClaimsKernel:
 
         return {"nodes": nodes, "edges": edges}
 
+    def get_claims(self) -> list[TypedClaim]:
+        """Get all claims."""
+        return list(self.claims.values())
+
     def find_unsupported_claims(self) -> list[TypedClaim]:
         """Find claims with no supporting evidence."""
         return [

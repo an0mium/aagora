@@ -1658,7 +1658,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                 if agent:
                     importance = 0.7 if agent in winning_agents else 0.5
                     content = getattr(msg, 'content', str(msg))[:200]
-                    self.memory_stream.add_observation(
+                    self.memory_stream.observe(
                         agent_name=agent,
                         content=f"Debated '{task[:50]}...': {content}",
                         debate_id=f"cycle-{self.cycle_count}",
@@ -1979,14 +1979,17 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
         if not critique or not hasattr(critique, 'recommendations') or not critique.recommendations:
             return
         # Store in ConsensusMemory as settled insight
-        if self.consensus_memory and CONSENSUS_MEMORY_AVAILABLE:
+        if self.consensus_memory and CONSENSUS_MEMORY_AVAILABLE and ConsensusStrength:
             try:
                 for rec in critique.recommendations[:2]:
-                    self.consensus_memory.record_topic(
+                    self.consensus_memory.store_consensus(
                         topic=f"process-recommendation-{self.cycle_count}",
-                        outcome="settled",
-                        summary=rec,
-                        confidence=critique.overall_quality
+                        conclusion=rec,
+                        strength=ConsensusStrength.MODERATE,
+                        confidence=critique.overall_quality,
+                        participating_agents=["meta-critic"],
+                        agreeing_agents=["meta-critic"],
+                        domain="process-improvement"
                     )
             except Exception as e:
                 self._log(f"  [meta] Error storing recommendations: {e}")
