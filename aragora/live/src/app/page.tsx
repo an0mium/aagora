@@ -15,7 +15,7 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://api.aragora.ai';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
 
 export default function Home() {
-  const { events, connected, activeLoops, selectedLoopId, selectLoop, sendMessage } = useNomicStream(WS_URL);
+  const { events, connected, activeLoops, selectedLoopId, selectLoop, sendMessage, onAck, onError } = useNomicStream(WS_URL);
   const [nomicState, setNomicState] = useState<NomicState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,17 +90,25 @@ export default function Home() {
 
   // User participation handlers
   const handleUserVote = (choice: string) => {
+    if (!selectedLoopId) {
+      setError('No active debate loop selected. Please wait for a debate to start.');
+      return;
+    }
     sendMessage({
       type: 'user_vote',
-      loop_id: selectedLoopId || '',
+      loop_id: selectedLoopId,
       payload: { choice }
     });
   };
 
   const handleUserSuggestion = (suggestion: string) => {
+    if (!selectedLoopId) {
+      setError('No active debate loop selected. Please wait for a debate to start.');
+      return;
+    }
     sendMessage({
       type: 'user_suggestion',
-      loop_id: selectedLoopId || '',
+      loop_id: selectedLoopId,
       payload: { suggestion }
     });
   };
@@ -182,6 +190,8 @@ export default function Home() {
               events={events}
               onVote={handleUserVote}
               onSuggest={handleUserSuggestion}
+              onAck={onAck}
+              onError={onError}
             />
             <HistoryPanel />
           </div>

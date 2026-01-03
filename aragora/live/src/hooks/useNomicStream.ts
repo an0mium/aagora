@@ -16,6 +16,10 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Audience participation callbacks
+  const ackCallbacksRef = useRef<((msgType: string) => void)[]>([]);
+  const errorCallbacksRef = useRef<((message: string) => void)[]>([]);
+
   const connect = useCallback(() => {
     try {
       const ws = new WebSocket(wsUrl);
@@ -96,6 +100,20 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
                 return prev;
               });
             }
+            return;
+          }
+
+          // Handle audience participation acknowledgments
+          if (data.type === 'ack') {
+            const msgType = data.data.msg_type as string;
+            ackCallbacksRef.current.forEach(cb => cb(msgType));
+            return;
+          }
+
+          // Handle audience participation errors
+          if (data.type === 'error') {
+            const message = data.data.message as string;
+            errorCallbacksRef.current.forEach(cb => cb(message));
             return;
           }
 
@@ -196,6 +214,20 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
     }
   }, []);
 
+  const onAck = useCallback((callback: (msgType: string) => void) => {
+    ackCallbacksRef.current.push(callback);
+    return () => {
+      ackCallbacksRef.current = ackCallbacksRef.current.filter(cb => cb !== callback);
+    };
+  }, []);
+
+  const onError = useCallback((callback: (message: string) => void) => {
+    errorCallbacksRef.current.push(callback);
+    return () => {
+      errorCallbacksRef.current = errorCallbacksRef.current.filter(cb => cb !== callback);
+    };
+  }, []);
+
   return {
     events,
     connected,
@@ -207,6 +239,9 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
     selectLoop,
     requestLoopList,
     sendMessage,
+    // Audience participation
+    onAck,
+    onError,
   };
 }
 

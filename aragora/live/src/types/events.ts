@@ -26,7 +26,11 @@ export type StreamEventType =
   // Multi-loop events
   | 'loop_register'
   | 'loop_unregister'
-  | 'loop_list';
+  | 'loop_list'
+  // Audience participation events
+  | 'user_vote'
+  | 'user_suggestion'
+  | 'ack';
 
 export interface StreamEvent {
   type: StreamEventType;

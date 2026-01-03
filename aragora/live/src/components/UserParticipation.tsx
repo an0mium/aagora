@@ -1,18 +1,69 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { StreamEvent } from '@/types/events';
 
 interface UserParticipationProps {
   events: StreamEvent[];
   onVote: (choice: string) => void;
   onSuggest: (suggestion: string) => void;
+  onAck?: (callback: (msgType: string) => void) => () => void;
+  onError?: (callback: (message: string) => void) => () => void;
 }
 
-export function UserParticipation({ events, onVote, onSuggest }: UserParticipationProps) {
+type SubmissionState = 'idle' | 'pending' | 'success' | 'error' | 'rate_limited';
+
+export function UserParticipation({ events, onVote, onSuggest, onAck, onError }: UserParticipationProps) {
   const [voteChoice, setVoteChoice] = useState('');
   const [suggestion, setSuggestion] = useState('');
   const [hasVoted, setHasVoted] = useState(false);
+  const [voteState, setVoteState] = useState<SubmissionState>('idle');
+  const [suggestionState, setSuggestionState] = useState<SubmissionState>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Handle acknowledgments
+  useEffect(() => {
+    if (!onAck) return;
+    const unsubscribeAck = onAck((msgType) => {
+      if (msgType === 'user_vote') {
+        setVoteState('success');
+        setTimeout(() => setVoteState('idle'), 2000);
+      } else if (msgType === 'user_suggestion') {
+        setSuggestionState('success');
+        setTimeout(() => setSuggestionState('idle'), 2000);
+      }
+    });
+
+    return unsubscribeAck;
+  }, [onAck]);
+
+  // Handle errors (including rate limiting)
+  useEffect(() => {
+    if (!onError) return;
+    const unsubscribeError = onError((message) => {
+      const isRateLimited = message.toLowerCase().includes('rate limit');
+      const newState: SubmissionState = isRateLimited ? 'rate_limited' : 'error';
+
+      if (voteState === 'pending') {
+        setVoteState(newState);
+        setErrorMessage(message);
+      } else if (suggestionState === 'pending') {
+        setSuggestionState(newState);
+        setErrorMessage(message);
+      } else {
+        // Error came without pending state (e.g., general error)
+        setErrorMessage(message);
+      }
+
+      setTimeout(() => {
+        setVoteState((s) => s === newState ? 'idle' : s);
+        setSuggestionState((s) => s === newState ? 'idle' : s);
+        setErrorMessage(null);
+      }, isRateLimited ? 5000 : 3000);
+    });
+
+    return unsubscribeError;
+  }, [onError, voteState, suggestionState]);
 
   // Extract current proposals from recent agent messages
   const recentProposals = events
@@ -24,7 +75,8 @@ export function UserParticipation({ events, onVote, onSuggest }: UserParticipati
     }));
 
   const handleVote = () => {
-    if (voteChoice && !hasVoted) {
+    if (voteChoice && !hasVoted && voteState === 'idle') {
+      setVoteState('pending');
       onVote(voteChoice);
       setHasVoted(true);
       setVoteChoice('');
@@ -32,7 +84,8 @@ export function UserParticipation({ events, onVote, onSuggest }: UserParticipati
   };
 
   const handleSuggest = () => {
-    if (suggestion.trim()) {
+    if (suggestion.trim() && suggestionState === 'idle') {
+      setSuggestionState('pending');
       onSuggest(suggestion.trim());
       setSuggestion('');
     }
@@ -73,11 +126,26 @@ export function UserParticipation({ events, onVote, onSuggest }: UserParticipati
 
         <button
           onClick={handleVote}
-          disabled={!voteChoice || hasVoted}
-          className="w-full px-3 py-2 bg-accent text-white rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent/90"
+          disabled={!voteChoice || hasVoted || voteState !== 'idle'}
+          className={`w-full px-3 py-2 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+            voteState === 'success'
+              ? 'bg-success text-white'
+              : voteState === 'error' || voteState === 'rate_limited'
+              ? 'bg-warning text-white'
+              : voteState === 'pending'
+              ? 'bg-surface text-text animate-pulse'
+              : 'bg-accent text-white hover:bg-accent/90'
+          }`}
         >
-          {hasVoted ? 'Vote Submitted ✓' : 'Submit Vote'}
+          {voteState === 'pending' ? 'Submitting...' :
+           voteState === 'success' ? 'Vote Submitted ✓' :
+           voteState === 'rate_limited' ? 'Rate Limited - Wait' :
+           voteState === 'error' ? 'Failed - Try Again' :
+           hasVoted ? 'Vote Submitted ✓' : 'Submit Vote'}
         </button>
+        {voteState === 'error' && errorMessage && (
+          <p className="text-xs text-warning mt-1">{errorMessage}</p>
+        )}
       </div>
 
       {/* Suggestion Section */}
@@ -94,12 +162,30 @@ export function UserParticipation({ events, onVote, onSuggest }: UserParticipati
           <span className="text-xs text-text-muted">{suggestion.length}/500</span>
           <button
             onClick={handleSuggest}
-            disabled={!suggestion.trim()}
-            className="px-3 py-1 bg-secondary text-white rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-secondary/90"
+            disabled={!suggestion.trim() || suggestionState !== 'idle'}
+            className={`px-3 py-1 rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+              suggestionState === 'success'
+                ? 'bg-success text-white'
+                : suggestionState === 'error' || suggestionState === 'rate_limited'
+                ? 'bg-warning text-white'
+                : suggestionState === 'pending'
+                ? 'bg-surface text-text animate-pulse'
+                : 'bg-secondary text-white hover:bg-secondary/90'
+            }`}
           >
-            Suggest
+            {suggestionState === 'pending' ? '...' :
+             suggestionState === 'success' ? 'Sent ✓' :
+             suggestionState === 'rate_limited' ? 'Wait' :
+             suggestionState === 'error' ? 'Failed' :
+             'Suggest'}
           </button>
         </div>
+        {suggestionState === 'error' && errorMessage && (
+          <p className="text-xs text-warning mt-1">{errorMessage}</p>
+        )}
+        {suggestionState === 'rate_limited' && (
+          <p className="text-xs text-warning mt-1">Rate limited. Please wait before submitting again.</p>
+        )}
       </div>
     </div>
   );
