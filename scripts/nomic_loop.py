@@ -40,13 +40,22 @@ from typing import Optional, List
 # SAFETY CONSTANTS - Files that must NEVER be deleted or broken
 # =============================================================================
 PROTECTED_FILES = [
+    # Core nomic loop infrastructure
     "scripts/nomic_loop.py",  # The nomic loop itself - CRITICAL
     "scripts/run_nomic_with_stream.py",  # Streaming wrapper - protects --auto flag
+
+    # Core aragora modules
     "aragora/__init__.py",     # Core package initialization
     "aragora/core.py",         # Core types and abstractions
     "aragora/debate/orchestrator.py",  # Debate infrastructure
     "aragora/agents/__init__.py",      # Agent system
     "aragora/implement/__init__.py",   # Implementation system
+
+    # Valuable features added by nomic loop
+    "aragora/agents/cli_agents.py",    # CLI agent harnesses (KiloCode, Claude, Codex, Grok)
+    "aragora/server/stream.py",        # Streaming, AudienceInbox, TokenBucket
+    "aragora/memory/store.py",         # CritiqueStore, AgentReputation
+    "aragora/debate/embeddings.py",    # DebateEmbeddingsDatabase for historical search
 ]
 
 SAFETY_PREAMBLE = """
