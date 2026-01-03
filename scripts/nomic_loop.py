@@ -319,6 +319,146 @@ except ImportError:
     DESIGN_DOC_TEMPLATE = None
     DebateTemplate = None
 
+# PersonaManager for agent traits/expertise evolution (Phase 4)
+try:
+    from aragora.agents.personas import PersonaManager, get_or_create_persona, EXPERTISE_DOMAINS
+    PERSONAS_AVAILABLE = True
+except ImportError:
+    PERSONAS_AVAILABLE = False
+    PersonaManager = None
+    get_or_create_persona = None
+    EXPERTISE_DOMAINS = []
+
+# PromptEvolver for prompt evolution from winning patterns (Phase 4)
+try:
+    from aragora.evolution.evolver import PromptEvolver, EvolutionStrategy
+    EVOLVER_AVAILABLE = True
+except ImportError:
+    EVOLVER_AVAILABLE = False
+    PromptEvolver = None
+    EvolutionStrategy = None
+
+# Tournament for periodic competitive benchmarking (Phase 4)
+try:
+    from aragora.tournaments import Tournament, TournamentFormat, create_default_tasks
+    TOURNAMENT_AVAILABLE = True
+except ImportError:
+    TOURNAMENT_AVAILABLE = False
+    Tournament = None
+    TournamentFormat = None
+    create_default_tasks = None
+
+# ConvergenceDetector for early stopping (Phase 5)
+try:
+    from aragora.debate.convergence import ConvergenceDetector, ConvergenceResult
+    CONVERGENCE_AVAILABLE = True
+except ImportError:
+    CONVERGENCE_AVAILABLE = False
+    ConvergenceDetector = None
+    ConvergenceResult = None
+
+# MetaCritiqueAnalyzer for process feedback (Phase 5)
+try:
+    from aragora.debate.meta import MetaCritiqueAnalyzer, MetaCritique
+    META_CRITIQUE_AVAILABLE = True
+except ImportError:
+    META_CRITIQUE_AVAILABLE = False
+    MetaCritiqueAnalyzer = None
+    MetaCritique = None
+
+# EloSystem for agent skill tracking (Phase 5)
+try:
+    from aragora.ranking.elo import EloSystem, AgentRating
+    ELO_AVAILABLE = True
+except ImportError:
+    ELO_AVAILABLE = False
+    EloSystem = None
+    AgentRating = None
+
+# AgentSelector for smart team selection (Phase 5)
+try:
+    from aragora.routing.selection import AgentSelector, AgentProfile, TaskRequirements
+    SELECTOR_AVAILABLE = True
+except ImportError:
+    SELECTOR_AVAILABLE = False
+    AgentSelector = None
+    AgentProfile = None
+    TaskRequirements = None
+
+# RiskRegister for risk tracking (Phase 5)
+try:
+    from aragora.pipeline.risk_register import RiskLevel
+    RISK_REGISTER_AVAILABLE = True
+except ImportError:
+    RISK_REGISTER_AVAILABLE = False
+    RiskLevel = None
+
+# =============================================================================
+# Phase 6: Verifiable Reasoning & Robustness Testing
+# =============================================================================
+
+# ClaimsKernel for structured reasoning (Phase 6)
+try:
+    from aragora.reasoning.claims import (
+        ClaimsKernel, TypedClaim, TypedEvidence, ClaimRelation,
+        ClaimType, RelationType, EvidenceType
+    )
+    CLAIMS_KERNEL_AVAILABLE = True
+except ImportError:
+    CLAIMS_KERNEL_AVAILABLE = False
+    ClaimsKernel = None
+    TypedClaim = None
+    ClaimType = None
+    RelationType = None
+
+# ProvenanceManager for evidence tracking (Phase 6)
+try:
+    from aragora.reasoning.provenance import (
+        ProvenanceManager, ProvenanceChain, SourceType, TransformationType
+    )
+    PROVENANCE_AVAILABLE = True
+except ImportError:
+    PROVENANCE_AVAILABLE = False
+    ProvenanceManager = None
+    SourceType = None
+
+# BeliefNetwork for probabilistic reasoning (Phase 6)
+try:
+    from aragora.reasoning.belief import (
+        BeliefNetwork, BeliefPropagationAnalyzer, BeliefDistribution
+    )
+    BELIEF_NETWORK_AVAILABLE = True
+except ImportError:
+    BELIEF_NETWORK_AVAILABLE = False
+    BeliefNetwork = None
+    BeliefPropagationAnalyzer = None
+
+# ProofExecutor for executable verification (Phase 6)
+try:
+    from aragora.verification.proofs import (
+        ProofExecutor, ClaimVerifier, VerificationProof, VerificationReport,
+        ProofType, ProofStatus, ProofBuilder
+    )
+    PROOF_EXECUTOR_AVAILABLE = True
+except ImportError:
+    PROOF_EXECUTOR_AVAILABLE = False
+    ProofExecutor = None
+    ClaimVerifier = None
+    VerificationReport = None
+    ProofBuilder = None
+
+# ScenarioMatrix for robustness testing (Phase 6)
+try:
+    from aragora.debate.scenarios import (
+        ScenarioMatrix, MatrixDebateRunner, ScenarioComparator,
+        Scenario, ScenarioType, OutcomeCategory
+    )
+    SCENARIO_MATRIX_AVAILABLE = True
+except ImportError:
+    SCENARIO_MATRIX_AVAILABLE = False
+    ScenarioMatrix = None
+    ScenarioComparator = None
+
 
 class NomicLoop:
     """
@@ -478,6 +618,123 @@ class NomicLoop:
             except Exception as e:
                 print(f"[integration] Failed to initialize: {e}")
                 self.nomic_integration = None
+
+        # Phase 3: MemoryStream for per-agent persistent memory
+        self.memory_stream = None
+        if MEMORY_STREAM_AVAILABLE:
+            memory_db_path = self.nomic_dir / "agent_memories.db"
+            self.memory_stream = MemoryStream(str(memory_db_path))
+            print(f"[memory] Per-agent MemoryStream initialized")
+
+        # Phase 3: LocalDocsConnector for evidence grounding
+        self.local_docs = None
+        if LOCAL_DOCS_AVAILABLE:
+            self.local_docs = LocalDocsConnector(
+                root_path=str(self.aragora_path),
+                file_types='all'
+            )
+            print(f"[connectors] LocalDocsConnector initialized for evidence grounding")
+
+        # Phase 3: CounterfactualOrchestrator for deadlock resolution
+        self.counterfactual = None
+        if COUNTERFACTUAL_AVAILABLE:
+            self.counterfactual = CounterfactualOrchestrator()
+            print(f"[counterfactual] Deadlock resolution via forking enabled")
+
+        # Phase 3: CapabilityProber for agent quality assurance
+        self.prober = None
+        if PROBER_AVAILABLE:
+            self.prober = CapabilityProber()
+            print(f"[prober] Agent capability probing enabled")
+
+        # Phase 4: PersonaManager for agent traits/expertise evolution
+        self.persona_manager = None
+        if PERSONAS_AVAILABLE:
+            persona_db_path = self.nomic_dir / "agent_personas.db"
+            self.persona_manager = PersonaManager(str(persona_db_path))
+            print(f"[personas] Agent personality evolution enabled")
+
+        # Phase 4: PromptEvolver for prompt evolution from winning patterns
+        self.prompt_evolver = None
+        if EVOLVER_AVAILABLE:
+            evolver_db_path = self.nomic_dir / "prompt_evolution.db"
+            self.prompt_evolver = PromptEvolver(
+                db_path=str(evolver_db_path),
+                critique_store=self.critique_store,
+                strategy=EvolutionStrategy.HYBRID
+            )
+            print(f"[evolver] Prompt evolution enabled")
+
+        # Phase 4: Tournament tracking for periodic competitive benchmarking
+        self.last_tournament_cycle = 0
+        self.tournament_interval = 20  # Run tournament every 20 cycles
+
+        # Phase 5: ConvergenceDetector for early stopping
+        self.convergence_detector = None
+        if CONVERGENCE_AVAILABLE:
+            self.convergence_detector = ConvergenceDetector(
+                convergence_threshold=0.85,
+                min_rounds_before_check=2
+            )
+            print(f"[convergence] Early stopping enabled")
+
+        # Phase 5: MetaCritiqueAnalyzer for process feedback
+        self.meta_analyzer = None
+        if META_CRITIQUE_AVAILABLE:
+            self.meta_analyzer = MetaCritiqueAnalyzer()
+            print(f"[meta] Process feedback enabled")
+
+        # Phase 5: EloSystem for agent skill tracking
+        self.elo_system = None
+        if ELO_AVAILABLE:
+            elo_db_path = self.nomic_dir / "agent_elo.db"
+            self.elo_system = EloSystem(str(elo_db_path))
+            print(f"[elo] Agent skill tracking enabled")
+
+        # Phase 5: AgentSelector for smart team selection
+        self.agent_selector = None
+        if SELECTOR_AVAILABLE and ELO_AVAILABLE and self.elo_system:
+            self.agent_selector = AgentSelector(
+                elo_system=self.elo_system,
+                persona_manager=self.persona_manager
+            )
+            print(f"[selector] Smart agent selection enabled")
+
+        # =================================================================
+        # Phase 6: Verifiable Reasoning & Robustness Testing
+        # =================================================================
+
+        # Phase 6: ClaimsKernel for structured reasoning (P16)
+        self.claims_kernel = None
+        if CLAIMS_KERNEL_AVAILABLE:
+            self.claims_kernel = ClaimsKernel(debate_id=f"nomic-cycle-0")
+            print(f"[claims] Structured reasoning enabled")
+
+        # Phase 6: ProvenanceManager for evidence tracking (P17)
+        self.provenance_manager = None
+        if PROVENANCE_AVAILABLE:
+            self.provenance_manager = ProvenanceManager(debate_id=f"nomic-cycle-0")
+            print(f"[provenance] Evidence chain tracking enabled")
+
+        # Phase 6: BeliefNetwork for probabilistic reasoning (P18)
+        self.belief_network = None
+        if BELIEF_NETWORK_AVAILABLE:
+            self.belief_network = BeliefNetwork(debate_id=f"nomic-cycle-0")
+            print(f"[belief] Probabilistic reasoning enabled")
+
+        # Phase 6: ProofExecutor for executable verification (P19)
+        self.proof_executor = None
+        self.claim_verifier = None
+        if PROOF_EXECUTOR_AVAILABLE:
+            self.proof_executor = ProofExecutor(allow_filesystem=True, default_timeout=30.0)
+            self.claim_verifier = ClaimVerifier(self.proof_executor)
+            print(f"[proofs] Executable verification enabled")
+
+        # Phase 6: ScenarioComparator for robustness testing (P20)
+        self.scenario_comparator = None
+        if SCENARIO_MATRIX_AVAILABLE:
+            self.scenario_comparator = ScenarioComparator()
+            print(f"[scenarios] Robustness testing enabled")
 
         # Setup streaming (optional)
         self.stream_emitter = stream_emitter
@@ -1098,6 +1355,703 @@ Propose additions that unlock new capabilities and create emergent value.""" + s
         except Exception as e:
             self._log(f"  [insights] Error extracting: {e}")
 
+    # =========================================================================
+    # Phase 3 Helper Methods
+    # =========================================================================
+
+    def _format_agent_memories(self, agent_name: str, task: str, limit: int = 3) -> str:
+        """Format per-agent relevant memories for prompt injection (P3: MemoryStream)."""
+        if not self.memory_stream or not MEMORY_STREAM_AVAILABLE:
+            return ""
+        try:
+            memories = self.memory_stream.retrieve(
+                agent_name=agent_name,
+                query=task[:200],
+                limit=limit
+            )
+            if not memories:
+                return ""
+            lines = [f"## Your memories ({agent_name}):"]
+            for m in memories:
+                content = m.memory.content[:150] if hasattr(m, 'memory') else str(m)[:150]
+                lines.append(f"- {content}...")
+            return "\n".join(lines)
+        except Exception as e:
+            self._log(f"  [memory] Error retrieving memories: {e}")
+            return ""
+
+    async def _record_agent_memories(self, result, task: str) -> None:
+        """Record observations to per-agent memory streams (P3: MemoryStream)."""
+        if not self.memory_stream or not MEMORY_STREAM_AVAILABLE:
+            return
+        try:
+            # Identify winning agents
+            winning_agents = set()
+            if result.final_answer:
+                for agent in [self.gemini, self.codex, self.claude, self.grok]:
+                    if agent.name.lower() in result.final_answer.lower():
+                        winning_agents.add(agent.name)
+
+            # Record each agent's observations
+            for msg in result.messages:
+                agent = getattr(msg, 'agent', None)
+                if not agent and isinstance(msg, dict):
+                    agent = msg.get('agent')
+                if agent:
+                    importance = 0.7 if agent in winning_agents else 0.5
+                    content = getattr(msg, 'content', str(msg))[:200]
+                    self.memory_stream.add_observation(
+                        agent_name=agent,
+                        content=f"Debated '{task[:50]}...': {content}",
+                        debate_id=f"cycle-{self.cycle_count}",
+                        importance=importance
+                    )
+            self._log(f"  [memory] Recorded {len(result.messages)} observations")
+        except Exception as e:
+            self._log(f"  [memory] Error recording: {e}")
+
+    def _gather_codebase_evidence(self, task: str, limit: int = 5) -> str:
+        """Gather relevant evidence from codebase for debate context (P4: LocalDocsConnector)."""
+        if not self.local_docs or not LOCAL_DOCS_AVAILABLE:
+            return ""
+        try:
+            evidence = self.local_docs.search(query=task[:200], limit=limit)
+            if not evidence:
+                return ""
+            lines = ["## Relevant Codebase Evidence:"]
+            for e in evidence:
+                source = getattr(e, 'source', 'unknown')
+                content = getattr(e, 'content', str(e))[:200]
+                lines.append(f"- [{source}]: {content}...")
+            return "\n".join(lines)
+        except Exception as e:
+            self._log(f"  [evidence] Error gathering: {e}")
+            return ""
+
+    async def _handle_debate_deadlock(self, result, arena, task: str):
+        """Fork debate on disputed assumptions if deadlocked (P5: CounterfactualOrchestrator)."""
+        if not self.counterfactual or not COUNTERFACTUAL_AVAILABLE:
+            return result
+
+        # Only handle if actually deadlocked
+        if result.consensus_reached and result.confidence >= 0.5:
+            return result
+
+        try:
+            # Find pivot claim from dissenting views
+            pivot = await self.counterfactual.detect_pivot_claim(result)
+            if not pivot or not pivot.should_branch:
+                return result
+
+            self._log(f"  [counterfactual] Forking on: {pivot.statement[:80]}...")
+
+            # Fork into branches
+            branches = await self.counterfactual.fork_on_claim(
+                arena=arena,
+                pivot_claim=pivot,
+                parent_result=result
+            )
+
+            # Synthesize conditional consensus
+            conditional = await self.counterfactual.synthesize_branches(branches)
+            self._log(f"  [counterfactual] Conditional consensus: {conditional.summary[:100]}")
+
+            # Update result with conditional consensus
+            result.final_answer = conditional.summary
+            result.consensus_reached = True
+            result.confidence = conditional.confidence
+            if not hasattr(result, 'metadata') or result.metadata is None:
+                result.metadata = {}
+            result.metadata["conditional"] = True
+            result.metadata["branches"] = len(branches)
+
+            return result
+        except Exception as e:
+            self._log(f"  [counterfactual] Error: {e}")
+            return result
+
+    async def _probe_agent_capabilities(self) -> None:
+        """Run capability probes on agents to detect weaknesses (P6: CapabilityProber)."""
+        if not self.prober or not PROBER_AVAILABLE:
+            return
+        if self.cycle_count % 5 != 0:  # Run every 5 cycles
+            return
+
+        try:
+            self._log(f"  [prober] Running capability probes...")
+            agents = [self.gemini, self.codex, self.claude, self.grok]
+
+            for agent in agents:
+                report = await self.prober.probe_agent(
+                    agent=agent,
+                    probe_types=[ProbeType.CONTRADICTION, ProbeType.HALLUCINATION]
+                )
+                if report and hasattr(report, 'vulnerabilities') and report.vulnerabilities:
+                    self._log(f"  [prober] {agent.name}: {len(report.vulnerabilities)} issues found")
+                    # Penalize agent reputation
+                    if self.critique_store:
+                        for vuln in report.vulnerabilities:
+                            severity_value = vuln.severity.value if hasattr(vuln.severity, 'value') else str(vuln.severity)
+                            self._log(f"    [prober] {vuln.vulnerability_description[:60]} (severity: {severity_value})")
+        except Exception as e:
+            self._log(f"  [prober] Error: {e}")
+
+    def _select_debate_template(self, task: str):
+        """Select appropriate debate template based on task content (P7: DebateTemplates)."""
+        if not TEMPLATES_AVAILABLE:
+            return None
+        task_lower = task.lower()
+        if any(kw in task_lower for kw in ["code review", "review code", "pr review"]):
+            return CODE_REVIEW_TEMPLATE
+        if any(kw in task_lower for kw in ["design", "architecture", "rfc"]):
+            return DESIGN_DOC_TEMPLATE
+        return None  # Use default debate format
+
+    def _apply_template_to_protocol(self, protocol, template) -> None:
+        """Modify protocol based on template settings (P7: DebateTemplates)."""
+        if template and hasattr(template, 'max_rounds'):
+            protocol.rounds = min(protocol.rounds, template.max_rounds)
+            if hasattr(template, 'consensus_threshold'):
+                # Store threshold for later use
+                protocol.consensus_threshold = template.consensus_threshold
+            self._log(f"  [template] Using {template.name}")
+
+    # =========================================================================
+    # Phase 4 Helper Methods: Agent Evolution Mechanisms
+    # =========================================================================
+
+    def _init_agent_personas(self) -> None:
+        """Initialize or load personas for all agents (P8: PersonaManager)."""
+        if not self.persona_manager or not PERSONAS_AVAILABLE:
+            return
+        try:
+            for agent in [self.gemini, self.codex, self.claude, self.grok]:
+                persona = get_or_create_persona(self.persona_manager, agent.name)
+                top_exp = persona.top_expertise[:2] if persona.top_expertise else []
+                self._log(f"  [persona] {agent.name}: {persona.trait_string}, top: {top_exp}")
+        except Exception as e:
+            self._log(f"  [persona] Error initializing: {e}")
+
+    def _record_persona_performance(self, result, task: str) -> None:
+        """Update persona expertise based on debate outcome (P8: PersonaManager)."""
+        if not self.persona_manager or not PERSONAS_AVAILABLE:
+            return
+        try:
+            # Detect domain from task
+            task_lower = task.lower()
+            domain = None
+            for d in EXPERTISE_DOMAINS:
+                if d in task_lower:
+                    domain = d
+                    break
+            if not domain:
+                domain = "architecture"  # default
+
+            # Track unique agents that participated
+            participating_agents = set()
+            for msg in result.messages:
+                agent = getattr(msg, 'agent', None) or (msg.get('agent') if isinstance(msg, dict) else None)
+                if agent:
+                    participating_agents.add(agent)
+
+            # Record performance for each unique agent
+            success = result.consensus_reached and result.confidence >= 0.6
+            for agent_name in participating_agents:
+                self.persona_manager.record_performance(
+                    agent_name=agent_name,
+                    domain=domain,
+                    success=success,
+                    debate_id=f"cycle-{self.cycle_count}"
+                )
+            self._log(f"  [persona] Recorded performance in {domain} for {len(participating_agents)} agents")
+        except Exception as e:
+            self._log(f"  [persona] Error: {e}")
+
+    def _get_persona_context(self, agent_name: str) -> str:
+        """Get persona context for injection into agent prompts (P8: PersonaManager)."""
+        if not self.persona_manager or not PERSONAS_AVAILABLE:
+            return ""
+        try:
+            persona = self.persona_manager.get_persona(agent_name)
+            if persona:
+                return persona.to_prompt_context()
+            return ""
+        except Exception:
+            return ""
+
+    async def _extract_and_store_patterns(self, result) -> None:
+        """Extract winning patterns from successful debates (P9: PromptEvolver)."""
+        if not self.prompt_evolver or not EVOLVER_AVAILABLE:
+            return
+        if not result.consensus_reached or result.confidence < 0.6:
+            return  # Only learn from successful debates
+        try:
+            patterns = self.prompt_evolver.extract_winning_patterns([result])
+            if patterns:
+                self.prompt_evolver.store_patterns(patterns)
+                self._log(f"  [evolver] Extracted {len(patterns)} patterns from debate")
+        except Exception as e:
+            self._log(f"  [evolver] Error extracting patterns: {e}")
+
+    async def _evolve_agent_prompts(self) -> None:
+        """Evolve agent prompts based on accumulated patterns (P9: PromptEvolver)."""
+        if not self.prompt_evolver or not EVOLVER_AVAILABLE:
+            return
+        if self.cycle_count % 10 != 0:  # Run every 10 cycles
+            return
+
+        try:
+            self._log(f"  [evolver] Evolving agent prompts...")
+            patterns = self.prompt_evolver.get_top_patterns(limit=5)
+            if not patterns:
+                self._log(f"  [evolver] No patterns accumulated yet")
+                return
+
+            for agent in [self.gemini, self.codex, self.claude, self.grok]:
+                if hasattr(agent, 'system_prompt') and agent.system_prompt:
+                    self.prompt_evolver.apply_evolution(agent, patterns)
+                    version = self.prompt_evolver.get_prompt_version(agent.name)
+                    if version:
+                        self._log(f"  [evolver] {agent.name}: Evolved to v{version.version}")
+        except Exception as e:
+            self._log(f"  [evolver] Error evolving prompts: {e}")
+
+    def _update_prompt_performance(self, agent_name: str, result) -> None:
+        """Update performance metrics for current prompt version (P9: PromptEvolver)."""
+        if not self.prompt_evolver or not EVOLVER_AVAILABLE:
+            return
+        try:
+            version = self.prompt_evolver.get_prompt_version(agent_name)
+            if version:
+                self.prompt_evolver.update_performance(agent_name, version.version, result)
+        except Exception:
+            pass
+
+    async def _run_tournament_if_due(self) -> None:
+        """Run a tournament to benchmark agents if interval reached (P10: Tournament)."""
+        if not TOURNAMENT_AVAILABLE or not Tournament:
+            return
+        if self.cycle_count - self.last_tournament_cycle < self.tournament_interval:
+            return
+
+        try:
+            self._log(f"\n=== TOURNAMENT (Cycle {self.cycle_count}) ===")
+            agents = [self.gemini, self.codex, self.claude, self.grok]
+            tasks = create_default_tasks()[:3]  # Use 3 tasks for speed
+
+            tournament = Tournament(
+                name=f"Cycle-{self.cycle_count}-Tournament",
+                agents=agents,
+                tasks=tasks,
+                format=TournamentFormat.FREE_FOR_ALL,
+                db_path=str(self.nomic_dir / "tournaments.db")
+            )
+
+            # Define debate runner for tournament
+            async def run_tournament_debate(env, debate_agents):
+                arena = Arena(agents=debate_agents, protocol=DebateProtocol(rounds=3))
+                return await arena.run(env)
+
+            result = await tournament.run(run_tournament_debate, parallel=False)
+            self.last_tournament_cycle = self.cycle_count
+
+            # Log standings
+            self._log(f"  [tournament] Champion: {result.champion}")
+            for i, standing in enumerate(result.standings[:4]):
+                self._log(f"  [tournament] #{i+1} {standing.agent_name}: {standing.points}pts, {standing.win_rate:.0%} win rate")
+
+            # Update persona expertise based on tournament performance
+            if self.persona_manager and PERSONAS_AVAILABLE:
+                for standing in result.standings:
+                    for task in tasks:
+                        self.persona_manager.record_performance(
+                            agent_name=standing.agent_name,
+                            domain=task.domain,
+                            success=standing.win_rate > 0.5,
+                            debate_id=f"tournament-{self.cycle_count}"
+                        )
+        except Exception as e:
+            self._log(f"  [tournament] Error: {e}")
+
+    # =========================================================================
+    # Phase 5 Helper Methods: Efficiency, Process Feedback, Agent Ranking
+    # =========================================================================
+
+    def _check_debate_convergence(
+        self,
+        current_responses: dict,
+        previous_responses: dict,
+        round_number: int
+    ):
+        """Check if debate has converged and can stop early (P11: ConvergenceDetector)."""
+        if not self.convergence_detector or not CONVERGENCE_AVAILABLE:
+            return None
+        try:
+            result = self.convergence_detector.check_convergence(
+                current_responses, previous_responses, round_number
+            )
+            if result and result.converged:
+                self._log(f"  [convergence] Debate converged! "
+                         f"(avg similarity: {result.avg_similarity:.0%})")
+            return result
+        except Exception as e:
+            self._log(f"  [convergence] Error: {e}")
+            return None
+
+    def _analyze_debate_process(self, result):
+        """Analyze debate process for issues and recommendations (P12: MetaCritiqueAnalyzer)."""
+        if not self.meta_analyzer or not META_CRITIQUE_AVAILABLE:
+            return None
+        try:
+            critique = self.meta_analyzer.analyze(result)
+            self._log(f"  [meta] Debate quality: {critique.overall_quality:.0%}")
+            if critique.observations:
+                issues = [o for o in critique.observations if o.observation_type == "issue"]
+                if issues:
+                    self._log(f"  [meta] Issues found: {len(issues)}")
+            if critique.recommendations:
+                self._log(f"  [meta] Top recommendation: {critique.recommendations[0][:80]}")
+            return critique
+        except Exception as e:
+            self._log(f"  [meta] Error: {e}")
+            return None
+
+    def _store_meta_recommendations(self, critique) -> None:
+        """Store meta-critique recommendations for future cycle improvement (P12)."""
+        if not critique or not hasattr(critique, 'recommendations') or not critique.recommendations:
+            return
+        # Store in ConsensusMemory as settled insight
+        if self.consensus_memory and CONSENSUS_MEMORY_AVAILABLE:
+            try:
+                for rec in critique.recommendations[:2]:
+                    self.consensus_memory.record_topic(
+                        topic=f"process-recommendation-{self.cycle_count}",
+                        outcome="settled",
+                        summary=rec,
+                        confidence=critique.overall_quality
+                    )
+            except Exception as e:
+                self._log(f"  [meta] Error storing recommendations: {e}")
+
+    def _detect_domain(self, task: str) -> str:
+        """Detect task domain from content (P13: EloSystem helper)."""
+        task_lower = task.lower()
+        domains = ["security", "performance", "architecture", "testing", "error_handling"]
+        for d in domains:
+            if d in task_lower:
+                return d
+        return "general"
+
+    def _record_elo_match(self, result, task: str) -> None:
+        """Record debate as ELO match to update agent ratings (P13: EloSystem)."""
+        if not self.elo_system or not ELO_AVAILABLE:
+            return
+        try:
+            # Extract participants from result
+            participants = []
+            scores = {}
+            for msg in result.messages:
+                agent = getattr(msg, 'agent', None) or (msg.get('agent') if isinstance(msg, dict) else None)
+                if agent and agent not in participants:
+                    participants.append(agent)
+                    # Score based on whether agent's view prevailed
+                    scores[agent] = result.confidence if result.consensus_reached else 0.5
+
+            if len(participants) >= 2:
+                domain = self._detect_domain(task)
+                changes = self.elo_system.record_match(
+                    debate_id=f"cycle-{self.cycle_count}",
+                    participants=participants,
+                    scores=scores,
+                    domain=domain
+                )
+                self._log(f"  [elo] Updated ratings for {len(participants)} agents in {domain}")
+        except Exception as e:
+            self._log(f"  [elo] Error: {e}")
+
+    def _log_elo_leaderboard(self) -> None:
+        """Log current ELO leaderboard (P13: EloSystem)."""
+        if not self.elo_system or not ELO_AVAILABLE:
+            return
+        if self.cycle_count % 5 != 0:  # Every 5 cycles
+            return
+        try:
+            leaderboard = self.elo_system.get_leaderboard(limit=4)
+            self._log(f"  [elo] === LEADERBOARD ===")
+            for i, rating in enumerate(leaderboard):
+                self._log(f"  [elo] #{i+1} {rating.agent_name}: {rating.elo:.0f} "
+                         f"({rating.wins}W/{rating.losses}L)")
+        except Exception:
+            pass
+
+    def _select_debate_team(self, task: str) -> list:
+        """Select optimal agent team for the task (P14: AgentSelector)."""
+        default_team = [self.gemini, self.codex, self.claude, self.grok]
+        if not self.agent_selector or not SELECTOR_AVAILABLE:
+            return default_team
+        try:
+            # Register agents if not done
+            for agent in default_team:
+                profile = AgentProfile(
+                    name=agent.name,
+                    agent_type=agent.model if hasattr(agent, 'model') else agent.name,
+                    elo_rating=self.elo_system.get_rating(agent.name).elo if self.elo_system else 1500
+                )
+                self.agent_selector.register_agent(profile)
+
+            requirements = TaskRequirements(
+                task_id=f"cycle-{self.cycle_count}",
+                description=task[:200],
+                primary_domain=self._detect_domain(task),
+                min_agents=3,
+                max_agents=4,
+                quality_priority=0.7,
+                diversity_preference=0.5
+            )
+            team = self.agent_selector.select_team(requirements)
+            self._log(f"  [selector] Selected team: {[a.name for a in team.agents]}")
+            # Map back to actual agent objects
+            agent_map = {a.name: a for a in default_team}
+            return [agent_map[p.name] for p in team.agents if p.name in agent_map]
+        except Exception as e:
+            self._log(f"  [selector] Error: {e}, using default team")
+            return default_team
+
+    def _track_debate_risks(self, result, task: str) -> None:
+        """Track risks from debates with low consensus or confidence (P15: RiskRegister)."""
+        if not RISK_REGISTER_AVAILABLE:
+            return
+        # Only track if consensus is weak
+        if result.consensus_reached and result.confidence >= 0.7:
+            return
+        try:
+            import json
+            risk_level = "high" if not result.consensus_reached else "medium"
+            risk_entry = {
+                "cycle": self.cycle_count,
+                "task": task[:100],
+                "confidence": result.confidence,
+                "consensus": result.consensus_reached,
+                "level": risk_level
+            }
+            risk_file = self.nomic_dir / "risk_register.jsonl"
+            with open(risk_file, "a") as f:
+                f.write(json.dumps(risk_entry) + "\n")
+            self._log(f"  [risk] Tracked {risk_level} risk: low consensus on task")
+        except Exception as e:
+            self._log(f"  [risk] Error: {e}")
+
+    # =========================================================================
+    # Phase 6: Verifiable Reasoning & Robustness Testing Helper Methods
+    # =========================================================================
+
+    def _extract_claims_from_debate(self, result) -> None:
+        """Extract typed claims from debate result and populate kernel (P16: ClaimsKernel)."""
+        if not self.claims_kernel or not CLAIMS_KERNEL_AVAILABLE:
+            return
+        try:
+            # Reset kernel for new debate
+            self.claims_kernel = ClaimsKernel(debate_id=f"nomic-cycle-{self.cycle_count}")
+
+            # Extract claims from messages
+            for msg in result.messages:
+                agent = getattr(msg, 'agent', None) or (msg.get('agent') if isinstance(msg, dict) else None)
+                content = getattr(msg, 'content', None) or (msg.get('content', '') if isinstance(msg, dict) else '')
+                role = getattr(msg, 'role', None) or (msg.get('role', 'proposer') if isinstance(msg, dict) else 'proposer')
+
+                if not agent or not content:
+                    continue
+
+                claim_type = ClaimType.PROPOSAL if role == 'proposer' else ClaimType.OBJECTION
+                self.claims_kernel.add_claim(
+                    statement=content[:500],
+                    author=agent,
+                    claim_type=claim_type,
+                    confidence=result.confidence if result.consensus_reached else 0.5
+                )
+            self._log(f"  [claims] Extracted {len(self.claims_kernel.claims)} claims")
+        except Exception as e:
+            self._log(f"  [claims] Error: {e}")
+
+    def _analyze_claim_structure(self) -> dict:
+        """Analyze the claim structure for insights (P16: ClaimsKernel)."""
+        if not self.claims_kernel or not CLAIMS_KERNEL_AVAILABLE:
+            return {}
+        try:
+            unsupported = self.claims_kernel.find_unsupported_claims()
+            contradictions = self.claims_kernel.find_contradictions()
+            strongest = self.claims_kernel.get_strongest_claims(3)
+            coverage = self.claims_kernel.get_evidence_coverage()
+
+            self._log(f"  [claims] Unsupported: {len(unsupported)}, "
+                     f"Contradictions: {len(contradictions)}, "
+                     f"Coverage: {coverage['coverage_ratio']:.0%}")
+
+            return {
+                "unsupported_count": len(unsupported),
+                "contradiction_count": len(contradictions),
+                "strongest_claims": [(c.statement[:100], s) for c, s in strongest],
+                "evidence_coverage": coverage
+            }
+        except Exception as e:
+            self._log(f"  [claims] Analysis error: {e}")
+            return {}
+
+    def _record_evidence_provenance(self, content: str, source_type: str, source_id: str) -> str:
+        """Record evidence with provenance tracking (P17: ProvenanceManager)."""
+        if not self.provenance_manager or not PROVENANCE_AVAILABLE:
+            return ""
+        try:
+            source = SourceType.AGENT_GENERATED if source_type == "agent" else SourceType.CODE_ANALYSIS
+            record = self.provenance_manager.record_evidence(
+                content=content[:1000],
+                source_type=source,
+                source_id=source_id
+            )
+            return record.id
+        except Exception as e:
+            self._log(f"  [provenance] Error: {e}")
+            return ""
+
+    def _verify_evidence_chain(self) -> tuple:
+        """Verify integrity of evidence chain (P17: ProvenanceManager)."""
+        if not self.provenance_manager or not PROVENANCE_AVAILABLE:
+            return True, []
+        try:
+            valid, errors = self.provenance_manager.verify_chain_integrity()
+            if not valid:
+                self._log(f"  [provenance] Chain integrity issues: {len(errors)}")
+            return valid, errors
+        except Exception as e:
+            self._log(f"  [provenance] Verification error: {e}")
+            return False, [str(e)]
+
+    def _build_belief_network(self) -> None:
+        """Build belief network from claims kernel (P18: BeliefNetwork)."""
+        if not self.belief_network or not BELIEF_NETWORK_AVAILABLE:
+            return
+        if not self.claims_kernel or not CLAIMS_KERNEL_AVAILABLE:
+            return
+        try:
+            self.belief_network = BeliefNetwork(debate_id=f"nomic-cycle-{self.cycle_count}")
+            self.belief_network.from_claims_kernel(self.claims_kernel)
+            result = self.belief_network.propagate()
+            self._log(f"  [belief] Network built: {len(self.belief_network.nodes)} nodes, "
+                     f"converged={result.converged} after {result.iterations} iterations")
+        except Exception as e:
+            self._log(f"  [belief] Error: {e}")
+
+    def _identify_debate_cruxes(self) -> list:
+        """Identify key claims that would most impact debate outcome (P18: BeliefNetwork)."""
+        if not self.belief_network or not BELIEF_NETWORK_AVAILABLE:
+            return []
+        try:
+            analyzer = BeliefPropagationAnalyzer(self.belief_network)
+            cruxes = analyzer.identify_debate_cruxes(top_k=3)
+            if cruxes:
+                self._log(f"  [belief] Top crux: {cruxes[0]['statement'][:80]}...")
+            return cruxes
+        except Exception as e:
+            self._log(f"  [belief] Crux analysis error: {e}")
+            return []
+
+    def _get_consensus_probability(self) -> dict:
+        """Estimate probability of consensus based on belief network (P18: BeliefNetwork)."""
+        if not self.belief_network or not BELIEF_NETWORK_AVAILABLE:
+            return {"probability": 0.5}
+        try:
+            analyzer = BeliefPropagationAnalyzer(self.belief_network)
+            return analyzer.compute_consensus_probability()
+        except Exception:
+            return {"probability": 0.5}
+
+    async def _create_verification_proofs(self, result) -> int:
+        """Create verification proofs for testable claims in debate result (P19: ProofExecutor)."""
+        if not self.claim_verifier or not PROOF_EXECUTOR_AVAILABLE:
+            return 0
+        try:
+            proof_count = 0
+            # Look for code-related claims that can be verified
+            final_answer = result.final_answer or ""
+            if "```" in final_answer:
+                # Extract code block
+                code_start = final_answer.find("```")
+                code_end = final_answer.find("```", code_start + 3)
+                if code_end > code_start:
+                    code_block = final_answer[code_start+3:code_end].strip()
+                    # Skip language identifier if present
+                    if "\n" in code_block:
+                        first_line = code_block.split("\n")[0]
+                        if first_line.strip().isalpha():
+                            code_block = "\n".join(code_block.split("\n")[1:])
+
+                    builder = ProofBuilder(claim_id=f"cycle-{self.cycle_count}-final", created_by="nomic")
+                    # Create syntax verification proof
+                    proof = builder.assertion(
+                        description="Verify proposed code is syntactically valid Python",
+                        code=f"import ast\ncode = '''{code_block[:300]}'''\nast.parse(code)",
+                        assertion="True"
+                    )
+                    self.claim_verifier.add_proof(proof)
+                    proof_count += 1
+            return proof_count
+        except Exception as e:
+            self._log(f"  [proofs] Proof creation error: {e}")
+            return 0
+
+    async def _run_verification_proofs(self):
+        """Execute all pending verification proofs (P19: ProofExecutor)."""
+        if not self.claim_verifier or not PROOF_EXECUTOR_AVAILABLE:
+            return None
+        try:
+            results = await self.claim_verifier.verify_all()
+            if not results:
+                return None
+            passed = sum(1 for r in results if r.passed)
+            self._log(f"  [proofs] Verified {passed}/{len(results)} proofs passed")
+
+            # Build report
+            report = VerificationReport(debate_id=f"cycle-{self.cycle_count}")
+            report.total_proofs = len(results)
+            report.proofs_passed = passed
+            report.proofs_failed = len(results) - passed
+            return report
+        except Exception as e:
+            self._log(f"  [proofs] Verification error: {e}")
+            return None
+
+    async def _run_robustness_check(self, task: str, base_context: str = "") -> dict:
+        """Run quick robustness check across key scenarios (P20: ScenarioMatrix)."""
+        if not SCENARIO_MATRIX_AVAILABLE or self.cycle_count % 5 != 0:
+            return {}
+        try:
+            self._log(f"  [scenarios] Running robustness check...")
+            matrix = ScenarioMatrix.from_presets("risk")
+
+            # Create lightweight debate function
+            async def quick_debate(task_text, context):
+                env = Environment(task=task_text, context=context)
+                protocol = DebateProtocol(rounds=1, consensus="majority")
+                agents = [self.gemini, self.claude] if hasattr(self, 'claude') else [self.gemini]
+                arena = Arena(env, agents, protocol)
+                return await arena.run(env)
+
+            runner = MatrixDebateRunner(quick_debate, max_parallel=2)
+            result = await runner.run_matrix(task, matrix, base_context)
+
+            self._log(f"  [scenarios] Outcome: {result.outcome_category.value}")
+            if result.universal_conclusions:
+                self._log(f"  [scenarios] Universal: {len(result.universal_conclusions)} conclusions")
+
+            return {
+                "outcome": result.outcome_category.value,
+                "scenarios_run": len(result.results),
+                "universal_conclusions": result.universal_conclusions[:3]
+            }
+        except Exception as e:
+            self._log(f"  [scenarios] Error: {e}")
+            return {}
+
     def _record_replay_event(self, event_type: str, agent: str, content: str, round_num: int = 0) -> None:
         """Record an event to the ReplayRecorder if active."""
         if not self.replay_recorder:
@@ -1717,6 +2671,11 @@ Claude and Codex have read the actual codebase. DO NOT propose features that alr
         if consensus_context:
             learning_context += f"\n{consensus_context}\n"
 
+        # Add codebase evidence (P4: LocalDocsConnector)
+        evidence_context = self._gather_codebase_evidence(topic_hint)
+        if evidence_context:
+            learning_context += f"\n{evidence_context}\n"
+
         task = f"""{SAFETY_PREAMBLE}
 
 What single improvement would most benefit aragora RIGHT NOW?
@@ -1753,9 +2712,12 @@ Recent changes:
             proposer_count=4,  # All 4 agents participate
         )
 
+        # Phase 5: Select optimal debate team (P14: AgentSelector)
+        debate_team = self._select_debate_team(topic_hint)
+
         arena = Arena(
             env,
-            [self.gemini, self.codex, self.claude, self.grok],
+            debate_team,
             protocol,
             memory=self.critique_store,
             debate_embeddings=self.debate_embeddings,
@@ -1765,7 +2727,7 @@ Recent changes:
         # Update agent reputation based on debate outcome
         if self.critique_store and result.consensus_reached:
             winning_proposal = result.final_answer[:200] if result.final_answer else ""
-            for agent in [self.gemini, self.codex, self.claude, self.grok]:
+            for agent in debate_team:
                 # Check if this agent's proposal was selected
                 proposal_accepted = agent.name.lower() in winning_proposal.lower()
                 self.critique_store.update_reputation(
@@ -1779,6 +2741,34 @@ Recent changes:
 
         # Extract and store insights for pattern learning (P2: InsightExtractor)
         await self._extract_and_store_insights(result)
+
+        # Record agent memories for cumulative learning (P3: MemoryStream)
+        await self._record_agent_memories(result, topic_hint)
+
+        # Phase 4: Record persona performance (P8: PersonaManager)
+        self._record_persona_performance(result, topic_hint)
+
+        # Phase 4: Extract and store winning patterns (P9: PromptEvolver)
+        await self._extract_and_store_patterns(result)
+
+        # Phase 4: Update prompt performance metrics (P9: PromptEvolver)
+        for agent in debate_team:
+            self._update_prompt_performance(agent.name, result)
+
+        # Phase 5: Analyze debate process and store recommendations (P12: MetaCritiqueAnalyzer)
+        meta_critique = self._analyze_debate_process(result)
+        self._store_meta_recommendations(meta_critique)
+
+        # Phase 5: Update ELO ratings (P13: EloSystem)
+        self._record_elo_match(result, topic_hint)
+
+        # Phase 5: Track risks from low-consensus debates (P15: RiskRegister)
+        self._track_debate_risks(result, topic_hint)
+
+        # Handle deadlocks via counterfactual branching (P5: CounterfactualOrchestrator)
+        # This is a fallback when NomicIntegration isn't available
+        if not self.nomic_integration and not result.consensus_reached:
+            result = await self._handle_debate_deadlock(result, arena, topic_hint)
 
         # NomicIntegration: Belief analysis and deadlock detection
         belief_analysis = None
@@ -2783,6 +3773,9 @@ CRITICAL SAFETY RULES:
             )
             self._log(f"  [viz] Cartographer ready for cycle {self.cycle_count}")
 
+        # Phase 4: Initialize agent personas at cycle start
+        self._init_agent_personas()
+
         # === SAFETY: Create backup before any changes ===
         backup_path = self._create_backup(f"cycle_{self.cycle_count}")
 
@@ -3145,6 +4138,9 @@ Working directory: {self.aragora_path}
         else:
             cycle_result["outcome"] = "not_committed"
 
+        # Phase 5: Log ELO leaderboard every 5 cycles (P13: EloSystem)
+        self._log_elo_leaderboard()
+
         cycle_result["duration_seconds"] = (datetime.now() - cycle_start).total_seconds()
         self.history.append(cycle_result)
 
@@ -3248,6 +4244,15 @@ Working directory: {self.aragora_path}
                             self._log(f"  [meta] MetaLearner error: {e}")
             except Exception as e:
                 self._log(f"  [continuum] Storage error: {e}")
+
+        # Run capability probes periodically (P6: CapabilityProber)
+        await self._probe_agent_capabilities()
+
+        # Phase 4: Agent Evolution - evolve prompts periodically (every 10 cycles)
+        await self._evolve_agent_prompts()
+
+        # Phase 4: Agent Evolution - run tournament periodically (every 20 cycles)
+        await self._run_tournament_if_due()
 
         return cycle_result
 

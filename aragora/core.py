@@ -50,8 +50,8 @@ class Vote:
     """A vote for a proposal."""
     agent: str
     choice: str  # which proposal/agent they vote for
-    confidence: float  # 0-1
     reasoning: str
+    confidence: float = 1.0  # 0-1, default to full confidence
     continue_debate: bool = True  # Whether agent thinks debate should continue
 
 

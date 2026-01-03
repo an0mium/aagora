@@ -1,7 +1,7 @@
 {
   "phase": "verify",
   "stage": "complete",
-  "all_passed": false,
+  "all_passed": true,
   "checks": [
     {
       "check": "syntax",
@@ -15,11 +15,11 @@
     },
     {
       "check": "tests",
-      "passed": false,
-      "output": "________\ntests/test_replay.py:35: in test_save_debate\n    votes=[Vote(agent=\"agent1\", choice=\"accept\", reasoning=\"Good proposal\")],\nE   TypeError: Vote.__init__() missing 1 required positional argument: 'confidence'\n=========================== short test summary info ============================\nFAILED tests/test_replay.py::TestDebateRecorder::test_save_debate - TypeError...\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed, 143 passed, 2 skipped in 5.96s\n",
+      "passed": true,
+      "output": "........................................................................ [ 30%]\n.................ss..................................................... [ 61%]\n........................................................................ [ 92%]\n.................                                                        [100%]\n231 passed, 2 skipped in 11.56s\n",
       "note": ""
     }
   ],
-  "saved_at": "2026-01-03T11:47:57.260291",
+  "saved_at": "2026-01-03T13:09:00.974676",
   "cycle": 2
 }
