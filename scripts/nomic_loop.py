@@ -1004,6 +1004,17 @@ class NomicLoop:
             )
             print(f"[synthesizer] Grounded persona synthesis enabled")
 
+        # Phase 9: FlipDetector for position reversal tracking (cached instance)
+        self.flip_detector = None
+        if FLIP_DETECTOR_AVAILABLE:
+            try:
+                from aragora.insights.flip_detector import FlipDetector
+                flip_db_path = self.nomic_dir / "aragora_personas.db"
+                self.flip_detector = FlipDetector(str(flip_db_path))
+                print(f"[flip] Position flip detection enabled")
+            except Exception as e:
+                print(f"[flip] Initialization failed: {e}")
+
         # =================================================================
         # Phase 6: Verifiable Reasoning & Robustness Testing
         # =================================================================
@@ -2576,10 +2587,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
 
                     # Inject flip detection warnings (P9: FlipDetector integration)
                     try:
-                        if FLIP_DETECTOR_AVAILABLE and self.nomic_dir:
-                            from aragora.insights.flip_detector import FlipDetector
-                            flip_detector = FlipDetector(str(self.nomic_dir / "aragora_personas.db"))
-                            consistency = flip_detector.get_agent_consistency(agent.name)
+                        if self.flip_detector:
+                            consistency = self.flip_detector.get_agent_consistency(agent.name)
                             if consistency.total_flips > 0:
                                 flip_warning = f"\n\n## Consistency Warning\n"
                                 flip_warning += f"You have changed your position {consistency.total_flips} times.\n"
@@ -2588,8 +2597,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                                 flip_warning += f"Consistency score: {consistency.consistency_score:.0%}\n"
                                 flip_warning += f"Be mindful of intellectual consistency. Acknowledge past positions when changing."
                                 full_prompt += flip_warning
-                    except Exception:
-                        pass  # Don't break on flip detection failure
+                    except Exception as e:
+                        self._log(f"  [flip] Warning injection failed for {agent.name}: {e}")
 
                     # Prepend identity to system prompt
                     original_prompt = getattr(agent, 'system_prompt', '') or ''
@@ -5243,20 +5252,18 @@ Recent changes:
                 self._log(f"  [integration] Post-debate analysis failed: {e}")
 
         # Phase 9: Comprehensive flip detection (P9: FlipDetector)
-        # Run every 3 cycles for efficiency
-        if FLIP_DETECTOR_AVAILABLE and self.cycle_count % 3 == 0:
+        # Run every 3 cycles for efficiency (use cached FlipDetector instance)
+        if self.flip_detector and self.cycle_count % 3 == 0:
             try:
-                flip_detector = FlipDetector(str(self.nomic_dir / "aragora_personas.db"))
-
                 # Detect flips for all debate participants
                 total_flips_detected = 0
                 consistency_warnings = []
                 for agent in debate_team:
-                    flips = flip_detector.detect_flips_for_agent(agent.name, lookback_positions=20)
+                    flips = self.flip_detector.detect_flips_for_agent(agent.name, lookback_positions=20)
                     total_flips_detected += len(flips)
 
                     # Check consistency and flag concerning agents
-                    consistency = flip_detector.get_agent_consistency(agent.name)
+                    consistency = self.flip_detector.get_agent_consistency(agent.name)
                     if consistency.contradictions >= 2 or consistency.consistency_score < 0.6:
                         consistency_warnings.append(
                             f"{agent.name}: {consistency.contradictions} contradictions, "
@@ -5272,7 +5279,7 @@ Recent changes:
 
                 # Get and log summary every 10 cycles
                 if self.cycle_count % 10 == 0:
-                    summary = flip_detector.get_flip_summary()
+                    summary = self.flip_detector.get_flip_summary()
                     if summary.get("total_flips", 0) > 0:
                         self._log(f"  [flip] Summary: {summary.get('total_flips', 0)} total flips, "
                                   f"{summary.get('by_type', {})} by type")
