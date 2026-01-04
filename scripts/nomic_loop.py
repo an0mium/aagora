@@ -4999,8 +4999,21 @@ Recent changes:
         # Phase 6: Create verification proofs for code claims (P19: ProofExecutor)
         await self._create_verification_proofs(result)
 
-        # Phase 7: Generate reliability report (P24: ReliabilityScorer)
-        self._generate_reliability_report()
+        # Phase 7: Generate reliability report and filter low-reliability claims (P24: ReliabilityScorer)
+        reliability_report = self._generate_reliability_report()
+        if reliability_report and self.claims_kernel:
+            try:
+                claims_results = reliability_report.get("claims", {})
+                low_reliability_ids = [
+                    cid for cid, data in claims_results.items()
+                    if data.get("level") in ("VERY_LOW", "SPECULATIVE")
+                ]
+                if low_reliability_ids:
+                    self._log(f"  [reliability] Filtering {len(low_reliability_ids)} low-reliability claims")
+                    # Mark low-reliability claims for exclusion from design phase
+                    result.low_reliability_claim_ids = low_reliability_ids
+            except Exception as e:
+                self._log(f"  [reliability] Filtering error: {e}")
 
         # Phase 7: Finalize debate trace (P25: DebateTracer)
         self._finalize_debate_trace(result)
