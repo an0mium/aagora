@@ -3506,6 +3506,106 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
                     break
         return touched_protected
 
+    def _should_use_deep_audit(self, topic: str, phase: str = "design") -> tuple[bool, str]:
+        """Determine if a topic warrants deep audit mode.
+
+        Returns:
+            (should_use: bool, reason: str)
+        """
+        if not DEEP_AUDIT_AVAILABLE:
+            return False, "Deep audit not available"
+
+        topic_lower = topic.lower()
+
+        # High-priority triggers for deep audit
+        critical_keywords = [
+            "architecture", "security", "authentication", "authorization",
+            "database", "migration", "breaking change", "api contract",
+            "consensus", "voting", "protocol", "protected file",
+        ]
+
+        strategy_keywords = [
+            "strategy", "design pattern", "refactor", "restructure",
+            "system design", "infrastructure", "scale", "performance",
+        ]
+
+        # Check for critical topics
+        for keyword in critical_keywords:
+            if keyword in topic_lower:
+                return True, f"Critical topic detected: {keyword}"
+
+        # Check for strategy topics in design phase
+        if phase == "design":
+            for keyword in strategy_keywords:
+                if keyword in topic_lower:
+                    return True, f"Strategy topic detected: {keyword}"
+
+        # Check topic length/complexity (long topics often more complex)
+        if len(topic) > 500:
+            return True, "Complex topic (length > 500 chars)"
+
+        return False, "Standard topic, normal debate sufficient"
+
+    async def _run_deep_audit_for_design(
+        self, improvement: str, design_context: str = ""
+    ) -> Optional[dict]:
+        """Run Deep Audit Mode for design phase of critical topics.
+
+        Uses STRATEGY_AUDIT config with cross-examination enabled.
+
+        Returns:
+            dict with verdict details, or None if audit not run
+        """
+        if not DEEP_AUDIT_AVAILABLE or not run_deep_audit:
+            return None
+
+        self._log("    [deep-audit] Running strategic design audit (5-round)")
+
+        try:
+            audit_agents = [self.gemini, self.codex, self.claude, self.grok]
+
+            # Use CODE_ARCHITECTURE_AUDIT for strategic design review
+            verdict = await run_deep_audit(
+                task=f"""STRATEGIC DESIGN REVIEW
+
+## Proposed Improvement
+{improvement[:8000]}
+
+{design_context}
+
+## Your Task
+1. Evaluate the architectural soundness of this proposal
+2. Identify potential risks and unintended consequences
+3. Check for conflicts with existing systems
+4. Assess complexity vs. value tradeoff
+5. Propose refinements or alternatives if needed
+6. Flag any concerns that need unanimous agreement before proceeding
+
+Cross-examine each other's reasoning. Be thorough.""",
+                agents=audit_agents,
+                config=CODE_ARCHITECTURE_AUDIT,
+            )
+
+            result = {
+                "confidence": verdict.confidence,
+                "unanimous_issues": verdict.unanimous_issues,
+                "split_opinions": verdict.split_opinions,
+                "risk_areas": verdict.risk_areas,
+                "approved": len(verdict.unanimous_issues) == 0,
+            }
+
+            self._log(f"    [deep-audit] Design confidence: {verdict.confidence:.0%}")
+            if verdict.unanimous_issues:
+                self._log(f"    [deep-audit] Blocking issues: {len(verdict.unanimous_issues)}")
+                for issue in verdict.unanimous_issues[:3]:
+                    self._log(f"      - {issue[:150]}...")
+
+            return result
+
+        except Exception as e:
+            self._log(f"    [deep-audit] Design audit failed: {e}")
+            return None
+
     async def _run_deep_audit_for_protected_files(
         self, diff: str, touched_files: list[str]
     ) -> tuple[bool, Optional[str]]:
@@ -4582,6 +4682,23 @@ Recent changes:
 
         # Record phase change
         self._record_replay_event("phase", "system", "design")
+
+        # Check if this topic warrants deep audit
+        should_deep_audit, audit_reason = self._should_use_deep_audit(improvement, phase="design")
+        if should_deep_audit:
+            self._log(f"  [deep-audit] {audit_reason}")
+            deep_audit_result = await self._run_deep_audit_for_design(improvement)
+            if deep_audit_result and not deep_audit_result.get("approved", True):
+                self._log("  [deep-audit] Design rejected by deep audit - returning issues for rework")
+                phase_duration = (datetime.now() - phase_start).total_seconds()
+                self._stream_emit("on_phase_end", "design", self.cycle_count, False, phase_duration)
+                return {
+                    "success": False,
+                    "phase": "design",
+                    "design": None,
+                    "rejected_by_deep_audit": True,
+                    "issues": deep_audit_result.get("unanimous_issues", []),
+                }
 
         # Gather learning context for design (Titans/MIRAS + ContinuumMemory)
         successful_patterns = self._format_successful_patterns(limit=3)
