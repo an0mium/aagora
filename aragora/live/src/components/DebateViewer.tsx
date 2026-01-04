@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { fetchDebateById, type DebateArtifact } from '@/utils/supabase';
 import { AsciiBannerCompact } from '@/components/AsciiBanner';
@@ -33,8 +33,11 @@ interface TranscriptMessage {
   timestamp?: number;
 }
 
-export default function DebateViewerPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+interface DebateViewerProps {
+  debateId: string;
+}
+
+export function DebateViewer({ debateId }: DebateViewerProps) {
   const [debate, setDebate] = useState<DebateArtifact | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +46,7 @@ export default function DebateViewerPage({ params }: { params: Promise<{ id: str
   useEffect(() => {
     async function loadDebate() {
       try {
-        const data = await fetchDebateById(id);
+        const data = await fetchDebateById(debateId);
         if (data) {
           setDebate(data);
         } else {
@@ -57,7 +60,7 @@ export default function DebateViewerPage({ params }: { params: Promise<{ id: str
     }
 
     loadDebate();
-  }, [id]);
+  }, [debateId]);
 
   const handleShare = async () => {
     const url = window.location.href;
