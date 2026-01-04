@@ -1990,10 +1990,13 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             return result
 
     async def _probe_agent_capabilities(self) -> None:
-        """Run capability probes on agents to detect weaknesses (P6: CapabilityProber)."""
+        """Run capability probes on agents to detect weaknesses (P6: CapabilityProber).
+
+        Now runs every 2 cycles (was every 5) for better agent quality tracking.
+        """
         if not self.prober or not PROBER_AVAILABLE:
             return
-        if self.cycle_count % 5 != 0:  # Run every 5 cycles
+        if self.cycle_count % 2 != 0:  # Run every 2 cycles for faster feedback
             return
 
         try:
@@ -2924,8 +2927,11 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             return None
 
     async def _run_robustness_check(self, task: str, base_context: str = "") -> dict:
-        """Run quick robustness check across key scenarios (P20: ScenarioMatrix)."""
-        if not SCENARIO_MATRIX_AVAILABLE or self.cycle_count % 5 != 0:
+        """Run quick robustness check across key scenarios (P20: ScenarioMatrix).
+
+        Now runs every cycle (was every 5) to catch edge cases before implementation.
+        """
+        if not SCENARIO_MATRIX_AVAILABLE:
             return {}
         try:
             self._log(f"  [scenarios] Running robustness check...")
