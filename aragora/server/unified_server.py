@@ -606,6 +606,15 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             limit = self._safe_int(query, 'limit', 10, 50)
             min_success = float(query.get('min_success', ['0.5'])[0])
             self._get_critique_patterns(limit, min_success)
+        elif path == '/api/critiques/archive':
+            self._get_archive_stats()
+        elif path == '/api/reputation/all':
+            self._get_all_reputations()
+        elif path.startswith('/api/agent/') and path.endswith('/reputation'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            self._get_agent_reputation(agent)
 
         # Agent Comparison API
         elif path == '/api/agent/compare':
@@ -2075,6 +2084,92 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "critique_patterns")}, status=500)
+
+    def _get_archive_stats(self) -> None:
+        """Get archive statistics from critique store."""
+        if not self._check_rate_limit():
+            return
+
+        if not CRITIQUE_STORE_AVAILABLE:
+            self._send_json({"error": "Critique store not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"archived": 0, "by_type": {}})
+                return
+
+            store = CritiqueStore(str(db_path))
+            stats = store.get_archive_stats()
+            self._send_json(stats)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "archive_stats")}, status=500)
+
+    def _get_all_reputations(self) -> None:
+        """Get all agent reputations ranked by score."""
+        if not self._check_rate_limit():
+            return
+
+        if not CRITIQUE_STORE_AVAILABLE:
+            self._send_json({"error": "Critique store not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"reputations": [], "count": 0})
+                return
+
+            store = CritiqueStore(str(db_path))
+            reputations = store.get_all_reputations()
+            self._send_json({
+                "reputations": [
+                    {
+                        "agent": r.agent_name,
+                        "score": r.reputation_score,
+                        "vote_weight": store.get_vote_weight(r.agent_name),
+                        "proposal_acceptance_rate": r.proposal_acceptance_rate,
+                        "critique_value": r.critique_value,
+                        "debates_participated": r.debates_participated,
+                    }
+                    for r in reputations
+                ],
+                "count": len(reputations),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "reputations")}, status=500)
+
+    def _get_agent_reputation(self, agent: str) -> None:
+        """Get reputation for a specific agent."""
+        if not self._check_rate_limit():
+            return
+
+        if not CRITIQUE_STORE_AVAILABLE:
+            self._send_json({"error": "Critique store not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"agent": agent, "message": "No reputation data"})
+                return
+
+            store = CritiqueStore(str(db_path))
+            rep = store.get_reputation(agent)
+            if rep:
+                self._send_json({
+                    "agent": agent,
+                    "score": rep.reputation_score,
+                    "vote_weight": store.get_vote_weight(agent),
+                    "proposal_acceptance_rate": rep.proposal_acceptance_rate,
+                    "critique_value": rep.critique_value,
+                    "debates_participated": rep.debates_participated,
+                })
+            else:
+                self._send_json({"agent": agent, "score": 0.5, "message": "No reputation data"})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "agent_reputation")}, status=500)
 
     def _get_ranking_stats(self) -> None:
         """Get ELO ranking system statistics."""
