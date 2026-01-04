@@ -329,6 +329,33 @@ class Arena:
 
         return citation_needs
 
+    def _extract_debate_domain(self) -> str:
+        """Extract domain from the debate task for calibration tracking.
+
+        Uses heuristics to categorize the debate topic.
+        """
+        task_lower = self.env.task.lower()
+
+        # Domain detection heuristics
+        if any(w in task_lower for w in ["security", "hack", "vulnerability", "auth", "encrypt"]):
+            return "security"
+        elif any(w in task_lower for w in ["performance", "speed", "optimize", "cache", "latency"]):
+            return "performance"
+        elif any(w in task_lower for w in ["test", "testing", "coverage", "regression"]):
+            return "testing"
+        elif any(w in task_lower for w in ["design", "architecture", "pattern", "structure"]):
+            return "architecture"
+        elif any(w in task_lower for w in ["bug", "error", "fix", "crash", "exception"]):
+            return "debugging"
+        elif any(w in task_lower for w in ["api", "endpoint", "rest", "graphql"]):
+            return "api"
+        elif any(w in task_lower for w in ["database", "sql", "query", "schema"]):
+            return "database"
+        elif any(w in task_lower for w in ["ui", "frontend", "react", "css", "layout"]):
+            return "frontend"
+        else:
+            return "general"
+
     def _select_critics_for_proposal(self, proposal_agent: str, all_critics: list[Agent]) -> list[Agent]:
         """Select which critics should critique the given proposal based on topology."""
         if self.protocol.topology == "all-to-all":
@@ -1357,6 +1384,26 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         )
                     except Exception:
                         pass
+
+                # Record calibration predictions (vote predictions vs consensus outcome)
+                if self.calibration_tracker:
+                    try:
+                        debate_id = result.id if hasattr(result, 'id') else self.env.task[:50]
+                        for v in result.votes:
+                            if not isinstance(v, Exception):
+                                # A prediction is "correct" if it matches the winning position
+                                canonical = choice_mapping.get(v.choice, v.choice)
+                                correct = (canonical == winner)
+                                self.calibration_tracker.record_prediction(
+                                    agent=v.agent,
+                                    confidence=v.confidence,
+                                    correct=correct,
+                                    domain=self._extract_debate_domain(),
+                                    debate_id=debate_id,
+                                )
+                        print(f"  [calibration] Recorded {len(result.votes)} predictions")
+                    except Exception as e:
+                        print(f"  [calibration] Error recording predictions: {e}")
             else:
                 result.final_answer = list(proposals.values())[0]
                 result.consensus_reached = False
@@ -1459,6 +1506,25 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             self.recorder.record_phase_change(f"consensus_reached: {winner}")
                         except Exception:
                             pass
+
+                    # Record calibration predictions for unanimous mode
+                    if self.calibration_tracker:
+                        try:
+                            debate_id = result.id if hasattr(result, 'id') else self.env.task[:50]
+                            for v in result.votes:
+                                if not isinstance(v, Exception):
+                                    canonical = choice_mapping.get(v.choice, v.choice)
+                                    correct = (canonical == winner)
+                                    self.calibration_tracker.record_prediction(
+                                        agent=v.agent,
+                                        confidence=v.confidence,
+                                        correct=correct,
+                                        domain=self._extract_debate_domain(),
+                                        debate_id=debate_id,
+                                    )
+                            print(f"  [calibration] Recorded {len(result.votes)} predictions (unanimous)")
+                        except Exception as e:
+                            print(f"  [calibration] Error recording predictions: {e}")
                 else:
                     # Not unanimous - no consensus
                     result.final_answer = f"[No unanimous consensus reached]\n\nProposals:\n" + "\n\n---\n\n".join(

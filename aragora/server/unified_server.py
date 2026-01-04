@@ -158,6 +158,18 @@ except ImportError:
     PulseManager = None
     TrendingTopic = None
 
+# Optional FormalVerificationManager for theorem proving
+try:
+    from aragora.verification.formal import (
+        FormalVerificationManager,
+        get_formal_verification_manager,
+    )
+    FORMAL_VERIFICATION_AVAILABLE = True
+except ImportError:
+    FORMAL_VERIFICATION_AVAILABLE = False
+    FormalVerificationManager = None
+    get_formal_verification_manager = None
+
 # Optional Broadcast module for podcast generation
 try:
     from aragora.broadcast import broadcast_debate
@@ -890,6 +902,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._suggest_cross_pollinations()
         elif path == '/api/routing/recommendations':
             self._get_routing_recommendations()
+        elif path == '/api/verification/formal-verify':
+            self._formal_verify_claim()
+        elif path == '/api/insights/extract-detailed':
+            self._extract_detailed_insights()
         else:
             self.send_error(404, f"Unknown POST endpoint: {path}")
 
@@ -3041,6 +3057,229 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid JSON body"}, status=400)
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "routing_recommendations")}, status=500)
+
+    def _formal_verify_claim(self) -> None:
+        """Attempt formal verification of a claim using Z3 SMT solver.
+
+        POST body:
+            claim: The claim to verify (required)
+            claim_type: Optional hint (assertion, logical, arithmetic, etc.)
+            context: Optional additional context
+            timeout: Timeout in seconds (default: 30, max: 120)
+
+        Returns:
+            status: proof_found, proof_failed, translation_failed, etc.
+            is_verified: True if claim was formally proven
+            formal_statement: The SMT-LIB2 translation (if successful)
+            proof_hash: Hash of the proof (if found)
+        """
+        if not self._check_rate_limit():
+            return
+
+        if not FORMAL_VERIFICATION_AVAILABLE:
+            self._send_json({
+                "error": "Formal verification not available",
+                "hint": "Install z3-solver: pip install z3-solver"
+            }, status=503)
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body) if body else {}
+
+            claim = data.get('claim', '').strip()
+            if not claim:
+                self._send_json({"error": "Missing required field: claim"}, status=400)
+                return
+
+            claim_type = data.get('claim_type')
+            context = data.get('context', '')
+            timeout = min(float(data.get('timeout', 30)), 120)
+
+            # Get the formal verification manager
+            manager = get_formal_verification_manager()
+
+            # Check backend availability
+            status_report = manager.status_report()
+            if not status_report.get("any_available"):
+                self._send_json({
+                    "error": "No formal verification backends available",
+                    "backends": status_report.get("backends", []),
+                }, status=503)
+                return
+
+            # Run verification asynchronously
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    manager.attempt_formal_verification(
+                        claim=claim,
+                        claim_type=claim_type,
+                        context=context,
+                        timeout_seconds=timeout,
+                    )
+                )
+            finally:
+                loop.close()
+
+            # Build response
+            response = result.to_dict()
+            response["claim"] = claim
+            if claim_type:
+                response["claim_type"] = claim_type
+
+            self._send_json(response)
+
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON body"}, status=400)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "formal_verification")}, status=500)
+
+    def _extract_detailed_insights(self) -> None:
+        """Extract detailed insights from debate content.
+
+        POST body:
+            content: The debate content to analyze (required)
+            debate_id: Optional debate ID for context
+            extract_claims: Whether to extract claims (default: True)
+            extract_evidence: Whether to extract evidence chains (default: True)
+            extract_patterns: Whether to extract argumentation patterns (default: True)
+
+        Returns detailed analysis of the debate content.
+        """
+        if not self._check_rate_limit():
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body) if body else {}
+
+            content = data.get('content', '').strip()
+            if not content:
+                self._send_json({"error": "Missing required field: content"}, status=400)
+                return
+
+            debate_id = data.get('debate_id', '')
+            extract_claims = data.get('extract_claims', True)
+            extract_evidence = data.get('extract_evidence', True)
+            extract_patterns = data.get('extract_patterns', True)
+
+            result = {
+                "debate_id": debate_id,
+                "content_length": len(content),
+            }
+
+            # Extract claims if requested
+            if extract_claims:
+                claims = self._extract_claims_from_content(content)
+                result["claims"] = claims
+
+            # Extract evidence chains if requested
+            if extract_evidence:
+                evidence = self._extract_evidence_from_content(content)
+                result["evidence_chains"] = evidence
+
+            # Extract patterns if requested
+            if extract_patterns:
+                patterns = self._extract_patterns_from_content(content)
+                result["patterns"] = patterns
+
+            self._send_json(result)
+
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON body"}, status=400)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "insight_extraction")}, status=500)
+
+    def _extract_claims_from_content(self, content: str) -> list:
+        """Extract claims from content using simple heuristics."""
+        import re
+
+        claims = []
+        sentences = re.split(r'[.!?]+', content)
+
+        # Claim indicators
+        claim_patterns = [
+            r'\b(therefore|thus|hence|consequently|as a result)\b',
+            r'\b(I believe|we argue|it is clear|evidence shows)\b',
+            r'\b(should|must|need to|ought to)\b',
+            r'\b(is better|is worse|is more|is less)\b',
+        ]
+
+        for i, sentence in enumerate(sentences):
+            sentence = sentence.strip()
+            if len(sentence) < 10:
+                continue
+
+            for pattern in claim_patterns:
+                if re.search(pattern, sentence, re.IGNORECASE):
+                    claims.append({
+                        "text": sentence[:500],
+                        "position": i,
+                        "type": "argument" if "should" in sentence.lower() else "assertion",
+                    })
+                    break
+
+        return claims[:20]  # Limit to 20 claims
+
+    def _extract_evidence_from_content(self, content: str) -> list:
+        """Extract evidence chains from content."""
+        import re
+
+        evidence = []
+
+        # Evidence indicators
+        evidence_patterns = [
+            (r'according to ([^,.]+)', 'citation'),
+            (r'research shows ([^.]+)', 'research'),
+            (r'data indicates ([^.]+)', 'data'),
+            (r'for example,? ([^.]+)', 'example'),
+            (r'studies have shown ([^.]+)', 'study'),
+        ]
+
+        for pattern, etype in evidence_patterns:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                evidence.append({
+                    "text": match.group(0)[:300],
+                    "type": etype,
+                    "source": match.group(1)[:100] if match.groups() else None,
+                })
+
+        return evidence[:15]  # Limit to 15 evidence items
+
+    def _extract_patterns_from_content(self, content: str) -> list:
+        """Extract argumentation patterns from content."""
+        patterns = []
+
+        content_lower = content.lower()
+
+        # Pattern detection
+        if 'on one hand' in content_lower and 'on the other hand' in content_lower:
+            patterns.append({"type": "balanced_comparison", "strength": "strong"})
+
+        if 'while' in content_lower and 'however' in content_lower:
+            patterns.append({"type": "concession_rebuttal", "strength": "medium"})
+
+        if content_lower.count('first') > 0 and content_lower.count('second') > 0:
+            patterns.append({"type": "enumerated_argument", "strength": "medium"})
+
+        if 'if' in content_lower and 'then' in content_lower:
+            patterns.append({"type": "conditional_reasoning", "strength": "medium"})
+
+        if 'because' in content_lower:
+            count = content_lower.count('because')
+            patterns.append({
+                "type": "causal_reasoning",
+                "strength": "strong" if count > 2 else "medium",
+                "instances": count,
+            })
+
+        return patterns
 
     def _get_tournament_standings(self, tournament_id: str) -> None:
         """Get current tournament standings."""

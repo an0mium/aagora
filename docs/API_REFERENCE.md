@@ -1542,6 +1542,65 @@ ws.onmessage = (event) => {
 
 ---
 
+## Formal Verification
+
+Formal claim verification using theorem provers.
+
+#### POST /api/verification/formal-verify
+Attempt formal verification of a logical claim.
+
+**Request Body:**
+```json
+{
+  "claim": "If A implies B and B implies C, then A implies C",
+  "debate_id": "debate-123",
+  "context": "Optional context for the claim"
+}
+```
+
+**Response:**
+```json
+{
+  "verified": true,
+  "method": "lean",
+  "proof_sketch": "...",
+  "confidence": 0.95
+}
+```
+
+---
+
+### Detailed Insights
+
+#### POST /api/insights/extract-detailed
+Extract detailed insights from debate content.
+
+**Request Body:**
+```json
+{
+  "debate_id": "debate-123",
+  "content": "The debate transcript or summary...",
+  "focus": "security"
+}
+```
+
+**Response:**
+```json
+{
+  "insights": [
+    {
+      "type": "pattern",
+      "description": "Security vulnerability pattern detected",
+      "confidence": 0.85,
+      "actionable": true
+    }
+  ],
+  "count": 3
+}
+```
+
+---
+
 ## Error Responses
 
 All endpoints return errors in this format:

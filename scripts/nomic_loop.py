@@ -6994,9 +6994,24 @@ Working directory: {self.aragora_path}
                         )
                         adjustments = self.meta_learner.adjust_hyperparameters(metrics)
                         if adjustments:
+                            # Get the actual numeric hyperparameters after adjustments
+                            new_hyperparams = self.meta_learner.get_current_hyperparams()
                             # Apply adjustments to ContinuumMemory
-                            self.continuum.hyperparams.update(adjustments)
+                            if hasattr(self.continuum, 'hyperparams') and isinstance(self.continuum.hyperparams, dict):
+                                self.continuum.hyperparams.update(new_hyperparams)
+                            elif hasattr(self.continuum, 'hyperparams'):
+                                for key, value in new_hyperparams.items():
+                                    if hasattr(self.continuum.hyperparams, key):
+                                        setattr(self.continuum.hyperparams, key, value)
                             self._log(f"  [meta] Applied hyperparameter adjustments: {list(adjustments.keys())}")
+
+                            # Also apply relevant adjustments to next debate protocol
+                            # MetaLearner's consensus_rate metric influences debate behavior
+                            if hasattr(self, 'debate_protocol') and metrics.consensus_rate < 0.5:
+                                # Low consensus rate - allow more rounds for debate
+                                if hasattr(self.debate_protocol, 'rounds'):
+                                    self.debate_protocol.rounds = min(5, self.debate_protocol.rounds + 1)
+                                    self._log(f"  [meta] Increased debate rounds to {self.debate_protocol.rounds} (low consensus)")
                     except Exception as e:
                         self._log(f"  [meta] MetaLearner error: {e}")
             except Exception as e:

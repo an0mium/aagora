@@ -5,12 +5,16 @@ Provides REST endpoints for fetching debates and serves the viewer HTML.
 """
 
 import json
+import logging
 import os
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 # Allowed origins for CORS - configure via environment variable
 ALLOWED_ORIGINS = os.getenv("ARAGORA_ALLOWED_ORIGINS", "").split(",")
