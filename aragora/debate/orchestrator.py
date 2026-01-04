@@ -65,6 +65,23 @@ def _get_calibration_tracker():
 InsightExtractor = None
 InsightStore = None
 CitationExtractor = None
+BeliefNetwork = None
+BeliefPropagationAnalyzer = None
+
+def _get_belief_analyzer():
+    """Lazy-load BeliefPropagationAnalyzer to avoid circular imports."""
+    global BeliefNetwork, BeliefPropagationAnalyzer
+    if BeliefPropagationAnalyzer is None:
+        try:
+            from aragora.reasoning.belief import (
+                BeliefNetwork as _BN,
+                BeliefPropagationAnalyzer as _BPA,
+            )
+            BeliefNetwork = _BN
+            BeliefPropagationAnalyzer = _BPA
+        except ImportError:
+            pass
+    return BeliefNetwork, BeliefPropagationAnalyzer
 
 def _get_citation_extractor():
     """Lazy-load CitationExtractor to avoid circular imports."""
@@ -235,6 +252,7 @@ class Arena:
         dissent_retriever=None,  # Optional DissentRetriever for historical minority views
         flip_detector=None,  # Optional FlipDetector for position reversal detection
         calibration_tracker=None,  # Optional CalibrationTracker for prediction accuracy
+        continuum_memory=None,  # Optional ContinuumMemory for cross-debate learning
         loop_id: str = "",  # Loop ID for multi-loop scoping
         strict_loop_scoping: bool = False,  # Drop events without loop_id when True
     ):
@@ -256,6 +274,7 @@ class Arena:
         self.dissent_retriever = dissent_retriever  # For historical minority views in debates
         self.flip_detector = flip_detector  # For detecting position reversals
         self.calibration_tracker = calibration_tracker  # For prediction accuracy tracking
+        self.continuum_memory = continuum_memory  # For cross-debate learning
         self.loop_id = loop_id  # Loop ID for scoping events
         self.strict_loop_scoping = strict_loop_scoping  # Enforce loop_id on all events
 
@@ -1421,6 +1440,32 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         print(f"  [calibration] Recorded {len(result.votes)} predictions")
                     except Exception as e:
                         print(f"  [calibration] Error recording predictions: {e}")
+
+                # Analyze belief network to identify cruxes (key disagreement points)
+                BN, BPA = _get_belief_analyzer()
+                if BN and BPA and result.messages:
+                    try:
+                        # Build belief network from debate messages
+                        network = BN()
+                        for msg in result.messages:
+                            if msg.role in ("proposer", "critic"):
+                                # Add claims from debate as belief nodes
+                                network.add_claim(
+                                    claim_id=f"{msg.agent}_{hash(msg.content[:100])}",
+                                    statement=msg.content[:500],
+                                    author=msg.agent,
+                                    initial_confidence=0.5,
+                                )
+                        # Run belief propagation and identify cruxes
+                        if network.nodes:
+                            network.propagate(iterations=3)
+                            analyzer = BPA(network)
+                            result.debate_cruxes = analyzer.identify_debate_cruxes(top_k=3)
+                            result.evidence_suggestions = analyzer.suggest_evidence_targets()[:3]
+                            if result.debate_cruxes:
+                                print(f"  [belief] Identified {len(result.debate_cruxes)} debate cruxes")
+                    except Exception as e:
+                        print(f"  [belief] Analysis error: {e}")
             else:
                 result.final_answer = list(proposals.values())[0]
                 result.consensus_reached = False

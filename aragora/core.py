@@ -129,6 +129,9 @@ class DebateResult:
     disagreement_report: Optional["DisagreementReport"] = None
     # Evidence grounding (Heavy3-inspired)
     grounded_verdict: Optional[Any] = None  # GroundedVerdict from aragora.reasoning.citations
+    # Belief network analysis - identifies key claims that drive disagreement
+    debate_cruxes: list[dict] = field(default_factory=list)  # From BeliefPropagationAnalyzer
+    evidence_suggestions: list[dict] = field(default_factory=list)  # Claims needing evidence
 
     def summary(self) -> str:
         """Human-readable summary of the debate."""
