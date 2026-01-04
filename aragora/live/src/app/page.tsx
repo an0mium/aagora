@@ -24,6 +24,7 @@ import { AsciiBannerCompact } from '@/components/AsciiBanner';
 import { StatusBar, StatusPill } from '@/components/StatusBar';
 import { Scanlines, CRTVignette } from '@/components/MatrixRain';
 import { BootSequence } from '@/components/BootSequence';
+import { LandingPage } from '@/components/LandingPage';
 import type { NomicState } from '@/types/events';
 
 // WebSocket URL - can be overridden via environment variable
@@ -31,9 +32,31 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://api.aragora.ai';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
 
 type ViewMode = 'tabs' | 'stream' | 'deep-audit';
+type SiteMode = 'landing' | 'dashboard' | 'loading';
 
 export default function Home() {
   const { events, connected, activeLoops, selectedLoopId, selectLoop, sendMessage, onAck, onError } = useNomicStream(WS_URL);
+
+  // Domain detection - show landing page on aragora.ai, dashboard on live.aragora.ai
+  const [siteMode, setSiteMode] = useState<SiteMode>('loading');
+
+  useEffect(() => {
+    const hostname = window.location.hostname;
+    // Show landing page on aragora.ai (but not live.aragora.ai or localhost)
+    if (hostname === 'aragora.ai' || hostname === 'www.aragora.ai') {
+      setSiteMode('landing');
+    } else {
+      setSiteMode('dashboard');
+    }
+  }, []);
+
+  // Handle debate started from landing page - switch to dashboard view
+  const handleDebateStarted = useCallback((debateId: string) => {
+    // Select this debate in the stream
+    selectLoop(debateId);
+    // Switch to dashboard view to see the debate
+    setSiteMode('dashboard');
+  }, [selectLoop]);
   const [nomicState, setNomicState] = useState<NomicState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('tabs');
@@ -157,6 +180,27 @@ export default function Home() {
     });
   };
 
+  // Loading state - show minimal loading indicator
+  if (siteMode === 'loading') {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="text-acid-green font-mono animate-pulse">INITIALIZING...</div>
+      </div>
+    );
+  }
+
+  // Landing page for aragora.ai
+  if (siteMode === 'landing') {
+    return (
+      <LandingPage
+        apiBase={API_URL}
+        wsUrl={WS_URL}
+        onDebateStarted={handleDebateStarted}
+      />
+    );
+  }
+
+  // Dashboard for live.aragora.ai and localhost
   return (
     <>
       {/* Boot Sequence */}

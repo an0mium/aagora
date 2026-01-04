@@ -208,7 +208,7 @@ export default function DebateViewerPage({ params }: { params: Promise<{ id: str
                   </span>
                 </div>
                 <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
-                  {(debate.transcript as TranscriptMessage[]).map((msg, idx) => {
+                  {(debate.transcript as unknown as TranscriptMessage[]).map((msg, idx) => {
                     const colors = getAgentColors(msg.agent || 'system');
                     return (
                       <div
