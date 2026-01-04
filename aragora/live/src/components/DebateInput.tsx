@@ -118,37 +118,6 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
     }
   }, [question, placeholder, agents, rounds, apiBase, isSubmitting, onDebateStarted, onError]);
 
-  // Combined question pool: AI philosophy + Multi-agent debate + Technical architecture
-  const allQuestions = [
-    // AI Philosophy & Ethics
-    'Can AI systems develop genuine understanding, or only simulate it?',
-    'Should autonomous AI agents have the right to refuse unethical requests?',
-    'Is Hegelian dialectics the optimal framework for AI reasoning?',
-    'Will AI agents eventually form their own societies and cultures?',
-    'Is truth something AI can discover, or only approximate?',
-
-    // Multi-Agent Debate
-    'Is consensus among AI agents more reliable than a single powerful model?',
-    'Can adversarial debate eliminate AI hallucinations?',
-    'Can competing AI perspectives reach genuine synthesis?',
-    'What makes a good debate question for AI agents?',
-    'How would you redesign democracy using multi-agent systems?',
-    'When should a multi-agent system override human judgment?',
-    'Should AI critics be more aggressive or more diplomatic?',
-
-    // Technical Architecture
-    'What are the tradeoffs between microservices and monoliths?',
-    'How should we implement rate limiting for 1M requests/sec?',
-    'Is GraphQL or REST better for real-time collaborative APIs?',
-    'What authentication strategy balances security with UX?',
-    'Should we use TypeScript or JavaScript for this project?',
-  ];
-
-  // Select random placeholder on mount (stable across re-renders)
-  const [placeholder] = useState(
-    () => allQuestions[Math.floor(Math.random() * allQuestions.length)]
-  );
-
   const isDisabled = isSubmitting || apiStatus === 'offline' || apiStatus === 'checking';
 
   return (
