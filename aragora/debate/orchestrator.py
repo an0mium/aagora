@@ -1532,6 +1532,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
         # === Update agent relationships for grounded personas ===
         winner_agent = max(vote_tally.items(), key=lambda x: x[1])[0] if vote_tally else None
+        result.winner = winner_agent  # Ensure winner is set for downstream systems (ELO, PersonaManager, etc.)
         self._update_agent_relationships(
             debate_id=result.id if hasattr(result, 'id') else self.env.task[:50],
             participants=[a.name for a in self.agents],
