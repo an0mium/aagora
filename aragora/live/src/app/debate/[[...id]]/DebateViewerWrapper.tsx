@@ -1,6 +1,6 @@
 'use client';
 
-import { useParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { DebateViewer } from '@/components/DebateViewer';
 import Link from 'next/link';
 import { Scanlines, CRTVignette } from '@/components/MatrixRain';
@@ -8,9 +8,25 @@ import { AsciiBannerCompact } from '@/components/AsciiBanner';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function DebateViewerWrapper() {
-  const params = useParams();
-  const idSegments = params.id as string[] | undefined;
-  const debateId = idSegments?.[0];
+  const [debateId, setDebateId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Extract debate ID from actual browser URL: /debate/abc123 -> abc123
+    const pathSegments = window.location.pathname.split('/').filter(Boolean);
+    const id = pathSegments[1] || null; // ['debate', 'abc123'] -> 'abc123'
+    setDebateId(id);
+    setIsLoading(false);
+  }, []);
+
+  // Show loading while determining debate ID
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="text-acid-green font-mono animate-pulse">LOADING...</div>
+      </div>
+    );
+  }
 
   // No ID provided - show message
   if (!debateId) {

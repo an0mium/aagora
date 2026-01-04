@@ -19,9 +19,25 @@ import sqlite3
 class EmbeddingProvider:
     """Base class for embedding providers."""
 
+    def __init__(self, dimension: int = 256):
+        self.dimension = dimension
+
     async def embed(self, text: str) -> list[float]:
-        """Generate embedding for text."""
-        raise NotImplementedError
+        """Generate embedding for text.
+
+        Default implementation uses hash-based pseudo-embedding for graceful
+        degradation when no API keys are available. Subclasses should override
+        for proper semantic embeddings.
+        """
+        # Hash-based fallback embedding (deterministic, no API required)
+        # Uses multiple hash seeds to create a fixed-dimension vector
+        embedding = []
+        for seed in range(self.dimension):
+            h = hashlib.md5(f"{seed}:{text}".encode()).digest()
+            # Convert first 4 bytes to float in [-1, 1]
+            val = struct.unpack('<i', h[:4])[0] / (2**31)
+            embedding.append(val)
+        return embedding
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""

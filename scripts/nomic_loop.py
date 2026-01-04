@@ -1009,7 +1009,8 @@ class NomicLoop:
         if FLIP_DETECTOR_AVAILABLE:
             try:
                 from aragora.insights.flip_detector import FlipDetector
-                flip_db_path = self.nomic_dir / "aragora_personas.db"
+                # Use grounded_positions.db where PositionLedger stores data
+                flip_db_path = self.nomic_dir / "grounded_positions.db"
                 self.flip_detector = FlipDetector(str(flip_db_path))
                 print(f"[flip] Position flip detection enabled")
             except Exception as e:

@@ -468,6 +468,85 @@ Upload a document for processing.
 
 ---
 
+### Debate Analytics
+
+Real-time debate analytics and pattern detection.
+
+#### GET /api/analytics/disagreements
+Get debates with significant disagreements or failed consensus.
+
+**Parameters:**
+- `limit` (int, default=20, max=100): Maximum records to return
+
+**Response:**
+```json
+{
+  "disagreements": [
+    {
+      "debate_id": "debate-123",
+      "topic": "Rate limiter design",
+      "agents": ["claude", "gemini"],
+      "dissent_count": 2,
+      "consensus_reached": false,
+      "confidence": 0.45,
+      "timestamp": "2026-01-04T12:00:00Z"
+    }
+  ],
+  "count": 5
+}
+```
+
+#### GET /api/analytics/role-rotation
+Get agent role assignments across debates.
+
+**Parameters:**
+- `limit` (int, default=50, max=200): Maximum rotations to return
+
+**Response:**
+```json
+{
+  "rotations": [
+    {
+      "debate_id": "debate-123",
+      "agent": "claude",
+      "role": "proposer",
+      "timestamp": "2026-01-04T12:00:00Z"
+    }
+  ],
+  "summary": {
+    "claude": {"proposer": 10, "critic": 8, "judge": 5},
+    "gemini": {"proposer": 8, "critic": 12, "judge": 3}
+  },
+  "count": 50
+}
+```
+
+#### GET /api/analytics/early-stops
+Get debates that terminated before completing all planned rounds.
+
+**Parameters:**
+- `limit` (int, default=20, max=100): Maximum records to return
+
+**Response:**
+```json
+{
+  "early_stops": [
+    {
+      "debate_id": "debate-123",
+      "topic": "Consensus algorithm",
+      "rounds_completed": 2,
+      "rounds_planned": 5,
+      "reason": "early_consensus",
+      "consensus_early": true,
+      "timestamp": "2026-01-04T12:00:00Z"
+    }
+  ],
+  "count": 3
+}
+```
+
+---
+
 ### Learning Evolution
 
 #### GET /api/learning/evolution

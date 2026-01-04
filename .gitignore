@@ -78,6 +78,15 @@ logs/
 config.local.yaml
 .DS_Store
 
+# Environment files (security - never commit secrets)
+**/.env
+**/.env.local
+**/.env.production
+**/.env.*.local
+!**/.env.example
+!**/.env.local.example
+!**/.env.template
+
 # Live dashboard
 aragora/live/node_modules/
 aragora/live/.next/
