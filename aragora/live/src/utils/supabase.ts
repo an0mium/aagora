@@ -172,6 +172,42 @@ export function subscribeToEvents(
   };
 }
 
+// Fetch a single debate by ID (for permalinks)
+export async function fetchDebateById(debateId: string): Promise<DebateArtifact | null> {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('debate_artifacts')
+    .select('*')
+    .eq('id', debateId)
+    .single();
+
+  if (error) {
+    console.error('Error fetching debate:', error);
+    return null;
+  }
+
+  return data;
+}
+
+// Fetch recent debates (for browsing)
+export async function fetchRecentDebates(limit = 20): Promise<DebateArtifact[]> {
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('debate_artifacts')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('Error fetching recent debates:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
 // Subscribe to all new events (for global monitoring)
 export function subscribeToAllEvents(
   onEvent: (event: StreamEventRow) => void

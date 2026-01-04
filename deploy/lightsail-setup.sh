@@ -47,7 +47,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/aragora
 Environment="PATH=/home/ubuntu/aragora/venv/bin:/usr/bin"
-ExecStart=/home/ubuntu/aragora/venv/bin/python -m aragora.server.unified_server --host 0.0.0.0 --port 8765
+ExecStart=/home/ubuntu/aragora/venv/bin/python -m aragora.server --host 0.0.0.0 --port 8765
 Restart=always
 RestartSec=5
 
