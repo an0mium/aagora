@@ -863,17 +863,29 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(e), "flips": []})
 
     def _serve_file(self, filename: str) -> None:
-        """Serve a static file."""
+        """Serve a static file with path traversal protection."""
         if not self.static_dir:
             self.send_error(404, "Static directory not configured")
             return
 
-        filepath = self.static_dir / filename
+        # Security: Resolve paths and prevent directory traversal
+        try:
+            filepath = (self.static_dir / filename).resolve()
+            static_dir_resolved = self.static_dir.resolve()
+
+            # Ensure resolved path is within static directory
+            if not str(filepath).startswith(str(static_dir_resolved)):
+                self.send_error(403, "Access denied")
+                return
+        except (ValueError, OSError):
+            self.send_error(400, "Invalid path")
+            return
+
         if not filepath.exists():
             # Try index.html for SPA routing
             filepath = self.static_dir / "index.html"
             if not filepath.exists():
-                self.send_error(404, f"File not found: {filename}")
+                self.send_error(404, "File not found")
                 return
 
         # Determine content type
@@ -899,8 +911,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._add_cors_headers()
             self.end_headers()
             self.wfile.write(content)
-        except Exception as e:
-            self.send_error(500, str(e))
+        except Exception:
+            self.send_error(500, "Failed to read file")
 
     def _send_json(self, data, status: int = 200) -> None:
         """Send JSON response."""
@@ -913,10 +925,27 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def _add_cors_headers(self) -> None:
-        """Add CORS headers for cross-origin requests."""
-        self.send_header('Access-Control-Allow-Origin', '*')
+        """Add CORS headers with origin validation."""
+        # Security: Validate origin against allowlist instead of wildcard
+        allowed_origins = {
+            'http://localhost:3000',
+            'http://localhost:8080',
+            'http://127.0.0.1:3000',
+            'http://127.0.0.1:8080',
+            'https://aragora.ai',
+            'https://www.aragora.ai',
+        }
+        request_origin = self.headers.get('Origin', '')
+
+        if request_origin in allowed_origins:
+            self.send_header('Access-Control-Allow-Origin', request_origin)
+        elif not request_origin:
+            # Same-origin requests don't have Origin header
+            pass
+        # else: no CORS header = browser blocks cross-origin request
+
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Filename')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Filename, Authorization')
 
     def log_message(self, format: str, *args) -> None:
         """Suppress default logging."""
