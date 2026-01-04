@@ -82,3 +82,5 @@ config.local.yaml
 aragora/live/node_modules/
 aragora/live/.next/
 aragora/live/out/
+.nomic/backups/
+tsconfig.tsbuildinfo

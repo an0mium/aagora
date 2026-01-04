@@ -22,7 +22,12 @@ class AuthConfig:
         self.enabled = False
         self.api_token: Optional[str] = None
         self.token_ttl = 3600  # 1 hour default
-        self.allowed_origins: list[str] = ["*"]  # CORS origins
+        self.allowed_origins: list[str] = [
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "https://aragora.ai",
+            "https://live.aragora.ai",
+        ]  # CORS origins (safe defaults)
         # Rate limiting
         self.rate_limit_per_minute = 60  # Default requests per minute per token
         self._token_request_counts: Dict[str, list] = {}  # token -> timestamps

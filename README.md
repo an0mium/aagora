@@ -370,6 +370,12 @@ Configuration:
 | `GET /api/flips/recent` | Position reversal events |
 | `GET /api/flips/summary` | Flip statistics by type/agent |
 | `GET /api/agent/{name}/consistency` | Agent consistency score |
+| `GET /api/calibration/leaderboard` | Agents ranked by calibration (accuracy vs confidence) |
+| `GET /api/agent/{name}/calibration` | Detailed calibration metrics for agent |
+| `GET /api/personas` | All agent personas with traits/expertise |
+| `GET /api/agent/{name}/persona` | Persona for specific agent |
+| `GET /api/agent/{name}/performance` | Agent performance summary |
+| `GET /api/learning/evolution` | Learning pattern evolution over time |
 | `WS /ws` | Real-time debate streaming |
 
 ### WebSocket Events
@@ -380,9 +386,11 @@ type EventType =
   | "debate_start" | "debate_end"
   | "round_start" | "agent_message"
   | "critique" | "vote" | "consensus"
-  | "flip_detected"  // Position reversal
-  | "memory_recall"  // Historical context
-  | "match_recorded" // ELO update
+  | "flip_detected"   // Position reversal
+  | "memory_recall"   // Historical context
+  | "match_recorded"  // ELO update
+  | "audience_drain"  // User events processed
+  | "calibration"     // Accuracy metrics update
 ```
 
 ## Security
@@ -395,6 +403,7 @@ Aragora implements several security measures:
 - **Path Traversal Protection**: Static file serving validates paths against base directory
 - **CORS Validation**: Origin allowlist prevents unauthorized cross-origin requests (no wildcards)
 - **Generic Error Messages**: Internal errors don't leak stack traces to clients
+- **Error Message Sanitization**: API error responses redact patterns resembling API keys and tokens
 - **Process Cleanup**: CLI agents properly kill and await zombie processes on exceptions
 - **Backpressure Control**: Stream event queues are capped to prevent memory exhaustion
 - **WebSocket Message Limits**: Max message size of 64KB prevents memory exhaustion

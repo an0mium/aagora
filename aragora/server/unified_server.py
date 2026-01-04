@@ -30,6 +30,10 @@ ALLOWED_AGENT_TYPES = frozenset({
     "anthropic-api", "openai-api"
 })
 
+# Maximum number of agents per debate (DoS protection)
+MAX_AGENTS_PER_DEBATE = 10
+MAX_MULTIPART_PARTS = 10
+
 # Optional Supabase persistence
 try:
     from aragora.persistence import SupabaseClient
@@ -285,8 +289,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Document storage not configured"}, status=500)
             return
 
-        # Get content length
-        content_length = int(self.headers.get('Content-Length', 0))
+        # Get content length with validation
+        try:
+            content_length = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            self._send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
         if content_length == 0:
             self._send_json({"error": "No content provided"}, status=400)
             return
@@ -294,7 +303,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         # Check max size (10MB)
         max_size = 10 * 1024 * 1024
         if content_length > max_size:
-            self._send_json({"error": f"File too large. Max size: 10MB"}, status=400)
+            self._send_json({"error": "File too large. Max size: 10MB"}, status=413)
             return
 
         content_type = self.headers.get('Content-Type', '')
@@ -405,10 +414,20 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Event streaming not configured"}, status=500)
             return
 
-        # Parse JSON body
-        content_length = int(self.headers.get('Content-Length', 0))
+        # Parse JSON body with size validation
+        try:
+            content_length = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            self._send_json({"error": "Invalid Content-Length header"}, status=400)
+            return
+
         if content_length == 0:
             self._send_json({"error": "No content provided"}, status=400)
+            return
+
+        # Limit debate request size to 1MB
+        if content_length > 1024 * 1024:
+            self._send_json({"error": "Request too large"}, status=413)
             return
 
         try:
@@ -449,9 +468,19 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             import asyncio as _asyncio
 
             try:
-                # Parse agents
+                # Parse agents with bounds check
+                agent_list = [s.strip() for s in agents_str.split(",") if s.strip()]
+                if len(agent_list) > MAX_AGENTS_PER_DEBATE:
+                    _active_debates[debate_id]["status"] = "error"
+                    _active_debates[debate_id]["error"] = f"Too many agents. Maximum: {MAX_AGENTS_PER_DEBATE}"
+                    return
+                if len(agent_list) < 2:
+                    _active_debates[debate_id]["status"] = "error"
+                    _active_debates[debate_id]["error"] = "At least 2 agents required for a debate"
+                    return
+
                 agent_specs = []
-                for spec in agents_str.split(","):
+                for spec in agent_list:
                     spec = spec.strip()
                     if ":" in spec:
                         agent_type, role = spec.split(":", 1)

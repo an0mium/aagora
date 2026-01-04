@@ -24,6 +24,9 @@ if not ALLOWED_ORIGINS or ALLOWED_ORIGINS == [""]:
         "https://www.aragora.ai",
     ]
 
+# Maximum request body size (50 MB) to prevent memory exhaustion
+MAX_REQUEST_SIZE = 50 * 1024 * 1024
+
 from aragora.server.storage import DebateStorage
 from aragora.replay.storage import ReplayStorage
 from aragora.replay.reader import ReplayReader
@@ -168,10 +171,19 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             self.send_error(500, "Replay storage not configured")
             return
 
-        # Read POST data
-        content_length = int(self.headers.get('Content-Length', 0))
+        # Read POST data with size validation
+        try:
+            content_length = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            self.send_error(400, "Invalid Content-Length header")
+            return
+
         if content_length == 0:
             self.send_error(400, "Missing request body")
+            return
+
+        if content_length > MAX_REQUEST_SIZE:
+            self.send_error(413, "Payload too large")
             return
 
         try:
