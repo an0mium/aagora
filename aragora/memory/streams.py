@@ -8,13 +8,17 @@ Inspired by Stanford Generative Agents, this module provides:
 - Periodic reflection to synthesize higher-level insights
 """
 
+import asyncio
 import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import hashlib
+
+if TYPE_CHECKING:
+    from aragora.memory.embeddings import EmbeddingProvider
 
 
 @dataclass
@@ -66,49 +70,54 @@ class MemoryStream:
     Supports retrieval by recency, importance, and relevance.
     """
 
-    def __init__(self, db_path: str = "aragora_memory.db"):
+    def __init__(
+        self,
+        db_path: str = "aragora_memory.db",
+        embedding_provider: Optional["EmbeddingProvider"] = None,
+    ):
         self.db_path = Path(db_path)
+        self.embedding_provider = embedding_provider
+        self._embedding_cache: dict[str, list[float]] = {}
         self._init_db()
 
     def _init_db(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                agent_name TEXT NOT NULL,
-                memory_type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                importance REAL DEFAULT 0.5,
-                debate_id TEXT,
-                metadata TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    memory_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    importance REAL DEFAULT 0.5,
+                    debate_id TEXT,
+                    metadata TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_memories_agent
-            ON memories(agent_name)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_memories_agent
+                ON memories(agent_name)
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_memories_type
-            ON memories(agent_name, memory_type)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_memories_type
+                ON memories(agent_name, memory_type)
+            """)
 
-        # Reflection schedule tracking
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reflection_schedule (
-                agent_name TEXT PRIMARY KEY,
-                last_reflection TEXT,
-                memories_since_reflection INTEGER DEFAULT 0
-            )
-        """)
+            # Reflection schedule tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS reflection_schedule (
+                    agent_name TEXT PRIMARY KEY,
+                    last_reflection TEXT,
+                    memories_since_reflection INTEGER DEFAULT 0
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def _generate_id(self, agent_name: str, content: str) -> str:
         """Generate unique memory ID."""
@@ -142,39 +151,38 @@ class MemoryStream:
         memory_id = self._generate_id(agent_name, content)
         created_at = datetime.now().isoformat()
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO memories (id, agent_name, memory_type, content, importance, debate_id, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                memory_id,
-                agent_name,
-                memory_type,
-                content,
-                importance,
-                debate_id,
-                json.dumps(metadata or {}),
-                created_at,
-            ),
-        )
+            cursor.execute(
+                """
+                INSERT INTO memories (id, agent_name, memory_type, content, importance, debate_id, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    memory_id,
+                    agent_name,
+                    memory_type,
+                    content,
+                    importance,
+                    debate_id,
+                    json.dumps(metadata or {}),
+                    created_at,
+                ),
+            )
 
-        # Update reflection schedule
-        cursor.execute(
-            """
-            INSERT INTO reflection_schedule (agent_name, memories_since_reflection)
-            VALUES (?, 1)
-            ON CONFLICT(agent_name) DO UPDATE SET
-                memories_since_reflection = memories_since_reflection + 1
-            """,
-            (agent_name,),
-        )
+            # Update reflection schedule
+            cursor.execute(
+                """
+                INSERT INTO reflection_schedule (agent_name, memories_since_reflection)
+                VALUES (?, 1)
+                ON CONFLICT(agent_name) DO UPDATE SET
+                    memories_since_reflection = memories_since_reflection + 1
+                """,
+                (agent_name,),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return Memory(
             id=memory_id,
@@ -220,26 +228,25 @@ class MemoryStream:
         Returns:
             List of RetrievedMemory objects sorted by score
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        sql = """
-            SELECT id, agent_name, memory_type, content, importance, debate_id, metadata, created_at
-            FROM memories
-            WHERE agent_name = ? AND importance >= ?
-        """
-        params = [agent_name, min_importance]
+            sql = """
+                SELECT id, agent_name, memory_type, content, importance, debate_id, metadata, created_at
+                FROM memories
+                WHERE agent_name = ? AND importance >= ?
+            """
+            params = [agent_name, min_importance]
 
-        if memory_type:
-            sql += " AND memory_type = ?"
-            params.append(memory_type)
+            if memory_type:
+                sql += " AND memory_type = ?"
+                params.append(memory_type)
 
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit * 3)  # Fetch more for scoring
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit * 3)  # Fetch more for scoring
 
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
 
         memories = []
         for row in rows:
@@ -278,82 +285,122 @@ class MemoryStream:
 
     def _relevance_score(self, content: str, query: str) -> float:
         """
-        Calculate relevance score (simple keyword matching).
+        Calculate relevance score using embeddings or keyword matching.
 
-        TODO: Replace with embedding-based similarity for better results.
+        Uses semantic similarity via embeddings when available, otherwise
+        falls back to simple keyword matching.
         """
         if not query:
             return 0.5
 
+        # Try embedding-based similarity if provider available
+        if self.embedding_provider:
+            try:
+                return self._embedding_similarity(content, query)
+            except Exception:
+                pass  # Fall back to keyword matching
+
+        # Keyword matching fallback
         content_lower = content.lower()
         query_words = query.lower().split()
 
         matches = sum(1 for word in query_words if word in content_lower)
         return min(1.0, matches / max(len(query_words), 1))
 
-    def get_recent(self, agent_name: str, limit: int = 20) -> list[Memory]:
-        """Get most recent memories for an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    def _embedding_similarity(self, content: str, query: str) -> float:
+        """Calculate cosine similarity between content and query embeddings."""
+        from aragora.memory.embeddings import cosine_similarity
 
-        cursor.execute(
-            """
-            SELECT id, agent_name, memory_type, content, importance, debate_id, metadata, created_at
-            FROM memories
-            WHERE agent_name = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (agent_name, limit),
+        # Get or compute embeddings (with caching)
+        content_key = hashlib.md5(content[:500].encode()).hexdigest()
+        query_key = hashlib.md5(query.encode()).hexdigest()
+
+        # Check cache
+        if content_key not in self._embedding_cache:
+            # Run embedding synchronously (provider.embed is async)
+            loop = asyncio.new_event_loop()
+            try:
+                self._embedding_cache[content_key] = loop.run_until_complete(
+                    self.embedding_provider.embed(content[:500])
+                )
+            finally:
+                loop.close()
+
+        if query_key not in self._embedding_cache:
+            loop = asyncio.new_event_loop()
+            try:
+                self._embedding_cache[query_key] = loop.run_until_complete(
+                    self.embedding_provider.embed(query)
+                )
+            finally:
+                loop.close()
+
+        # Compute similarity
+        return cosine_similarity(
+            self._embedding_cache[content_key],
+            self._embedding_cache[query_key]
         )
 
-        memories = [
-            Memory(
-                id=row[0],
-                agent_name=row[1],
-                memory_type=row[2],
-                content=row[3],
-                importance=row[4],
-                debate_id=row[5],
-                metadata=json.loads(row[6]) if row[6] else {},
-                created_at=row[7],
-            )
-            for row in cursor.fetchall()
-        ]
+    def get_recent(self, agent_name: str, limit: int = 20) -> list[Memory]:
+        """Get most recent memories for an agent."""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        conn.close()
+            cursor.execute(
+                """
+                SELECT id, agent_name, memory_type, content, importance, debate_id, metadata, created_at
+                FROM memories
+                WHERE agent_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (agent_name, limit),
+            )
+
+            memories = [
+                Memory(
+                    id=row[0],
+                    agent_name=row[1],
+                    memory_type=row[2],
+                    content=row[3],
+                    importance=row[4],
+                    debate_id=row[5],
+                    metadata=json.loads(row[6]) if row[6] else {},
+                    created_at=row[7],
+                )
+                for row in cursor.fetchall()
+            ]
+
         return memories
 
     def should_reflect(self, agent_name: str, threshold: int = 10) -> bool:
         """Check if agent should perform reflection."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT memories_since_reflection FROM reflection_schedule WHERE agent_name = ?",
-            (agent_name,),
-        )
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                "SELECT memories_since_reflection FROM reflection_schedule WHERE agent_name = ?",
+                (agent_name,),
+            )
+            row = cursor.fetchone()
 
         return row is not None and row[0] >= threshold
 
     def mark_reflected(self, agent_name: str):
         """Mark that agent has performed reflection."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            UPDATE reflection_schedule
-            SET last_reflection = ?, memories_since_reflection = 0
-            WHERE agent_name = ?
-            """,
-            (datetime.now().isoformat(), agent_name),
-        )
+            cursor.execute(
+                """
+                UPDATE reflection_schedule
+                SET last_reflection = ?, memories_since_reflection = 0
+                WHERE agent_name = ?
+                """,
+                (datetime.now().isoformat(), agent_name),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def generate_reflection_prompt(self, agent_name: str, limit: int = 20) -> str:
         """
@@ -427,25 +474,24 @@ Format each insight on a new line starting with "INSIGHT:"
 
     def get_stats(self, agent_name: str) -> dict:
         """Get memory statistics for an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN memory_type = 'observation' THEN 1 ELSE 0 END) as observations,
-                SUM(CASE WHEN memory_type = 'reflection' THEN 1 ELSE 0 END) as reflections,
-                SUM(CASE WHEN memory_type = 'insight' THEN 1 ELSE 0 END) as insights,
-                AVG(importance) as avg_importance
-            FROM memories
-            WHERE agent_name = ?
-            """,
-            (agent_name,),
-        )
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN memory_type = 'observation' THEN 1 ELSE 0 END) as observations,
+                    SUM(CASE WHEN memory_type = 'reflection' THEN 1 ELSE 0 END) as reflections,
+                    SUM(CASE WHEN memory_type = 'insight' THEN 1 ELSE 0 END) as insights,
+                    AVG(importance) as avg_importance
+                FROM memories
+                WHERE agent_name = ?
+                """,
+                (agent_name,),
+            )
 
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
 
         return {
             "total_memories": row[0] or 0,
