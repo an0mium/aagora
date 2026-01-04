@@ -206,7 +206,7 @@ export function DeepAuditView({ events, isActive, onToggle }: DeepAuditViewProps
                             )}
                           </div>
                         </div>
-                        <p className="text-xs text-text-muted whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                        <p className="agent-output text-text-muted whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
                           {msg.content.slice(0, 500)}
                           {msg.content.length > 500 && '...'}
                         </p>

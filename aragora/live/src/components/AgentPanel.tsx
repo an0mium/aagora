@@ -290,7 +290,7 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
             )}
             <span className="text-xs text-text-muted ml-auto">{timestamp}</span>
           </div>
-          <p className="text-sm text-text-muted whitespace-pre-wrap break-words">{preview}</p>
+          <p className="agent-output text-text-muted whitespace-pre-wrap break-words">{preview}</p>
         </div>
         <span className="text-text-muted flex-shrink-0">
           {isExpanded ? '▼' : '▶'}
@@ -298,7 +298,7 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
       </button>
       {isExpanded && (
         <div className="px-3 pb-3 pt-0">
-          <div className="bg-bg/50 rounded-lg p-3 text-sm whitespace-pre-wrap break-words">
+          <div className="agent-output bg-bg/50 rounded-lg p-3 whitespace-pre-wrap break-words">
             {content}
           </div>
         </div>

@@ -216,7 +216,7 @@ function ComparisonPane({ agents, selectedAgent, onSelectAgent, agentData, posit
 
             {/* Content */}
             <div className={`p-4 rounded-lg ${colors.bg} border ${colors.border}`}>
-              <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+              <div className="agent-output whitespace-pre-wrap break-words">
                 {agentData.content}
               </div>
             </div>

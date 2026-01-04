@@ -86,7 +86,7 @@ export function VerdictCard({ events }: VerdictCardProps) {
       <div className="p-4">
         {/* Recommendation */}
         <div className="mb-4">
-          <p className="text-sm text-text leading-relaxed">
+          <p className="agent-output text-text">
             {isExpanded
               ? verdict.recommendation
               : verdict.recommendation.slice(0, 300) + (verdict.recommendation.length > 300 ? '...' : '')}

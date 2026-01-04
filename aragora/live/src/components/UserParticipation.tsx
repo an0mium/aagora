@@ -123,7 +123,7 @@ export function UserParticipation({ events, onVote, onSuggest, onAck, onError }:
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-accent">{proposal.agent}</div>
-                  <div className="text-xs text-text-muted whitespace-pre-wrap break-words max-h-48 overflow-y-auto">{proposal.content}</div>
+                  <div className="agent-output text-text-muted whitespace-pre-wrap break-words max-h-48 overflow-y-auto">{proposal.content}</div>
                 </div>
               </div>
             ))}
@@ -163,7 +163,7 @@ export function UserParticipation({ events, onVote, onSuggest, onAck, onError }:
           value={suggestion}
           onChange={(e) => setSuggestion(e.target.value)}
           placeholder="Share your thoughts or suggest an improvement..."
-          className="w-full h-20 p-2 bg-surface border border-border rounded text-sm resize-none"
+          className="user-input w-full h-20 p-2 bg-surface border border-border rounded resize-none"
           maxLength={500}
         />
         <div className="flex justify-between items-center mt-2">

@@ -204,14 +204,14 @@ export function AgentTabs({ events }: AgentTabsProps) {
                         <span>•</span>
                         <span>{new Date(msg.timestamp * 1000).toLocaleTimeString()}</span>
                       </div>
-                      <div className="text-sm whitespace-pre-wrap break-words">
+                      <div className="agent-output whitespace-pre-wrap break-words">
                         {msg.content}
                       </div>
                     </div>
                   ))}
               </div>
             ) : (
-              <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
+              <div className="agent-output whitespace-pre-wrap break-words">
                 {currentAgent.latestContent}
               </div>
             )}
