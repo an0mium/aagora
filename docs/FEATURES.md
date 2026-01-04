@@ -750,6 +750,60 @@ if staleness.needs_redebate:
 
 ---
 
+## Phase 10: Thread-Safe Audience Participation
+
+### Thread-Safe Arena Mailbox
+**File:** `aragora/debate/orchestrator.py`
+
+Decouples event ingestion from consumption using a thread-safe queue pattern for live audience interaction.
+
+```python
+from aragora.debate.orchestrator import Arena, DebateProtocol
+
+arena = Arena(
+    environment=env,
+    agents=agents,
+    protocol=DebateProtocol(rounds=3),
+    event_emitter=emitter,
+    loop_id="my-debate-123",
+    strict_loop_scoping=True,  # Only accept events for this loop
+)
+
+# WebSocket thread calls _handle_user_event - enqueues to thread-safe queue
+# Debate thread calls _drain_user_events before each prompt build
+```
+
+**Key Features:**
+- `_user_event_queue: queue.Queue` - Thread-safe event buffer
+- `_handle_user_event()` - Enqueues without blocking debate loop
+- `_drain_user_events()` - Moves events to lists at safe sync points
+- `strict_loop_scoping` - Rejects events not matching current loop_id
+
+### Loop Scoping
+
+Multi-tenant event isolation ensures votes/suggestions go to correct debate:
+
+```python
+# Events with matching loop_id are processed
+event.loop_id = "my-debate-123"  # Accepted
+
+# Events from other loops are ignored
+event.loop_id = "other-debate"  # Dropped
+
+# Strict mode also rejects events without loop_id
+arena = Arena(..., strict_loop_scoping=True)
+```
+
+### Test Coverage
+
+Comprehensive tests in `tests/test_audience_participation.py`:
+- `TestMailboxThreadSafety` - Concurrent enqueue/drain safety
+- `TestLoopScoping` - Multi-tenant event isolation
+- `TestEdgeCases` - Empty queue, malformed events
+- `TestSuggestionIntegration` - Vote/suggestion separation
+
+---
+
 ## API Reference
 
 See [API_REFERENCE.md](./API_REFERENCE.md) for complete HTTP and WebSocket API documentation.

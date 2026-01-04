@@ -82,6 +82,34 @@ List recent debates.
 #### GET /api/debates/:slug
 Get a specific debate by slug/ID.
 
+#### POST /api/debate
+Start an ad-hoc debate. **Rate limited**.
+
+**Request Body:**
+```json
+{
+  "question": "Should we use token bucket or sliding window for rate limiting?",
+  "agents": "claude,gemini",
+  "rounds": 3,
+  "consensus": "majority"
+}
+```
+
+**Parameters:**
+- `question` (string, required): Topic/question to debate
+- `agents` (string, default="claude,openai"): Comma-separated agent list (max 10)
+- `rounds` (int, default=3): Number of debate rounds
+- `consensus` (string, default="majority"): Consensus method
+
+**Response:**
+```json
+{
+  "debate_id": "debate-abc123",
+  "status": "started",
+  "message": "Debate started with 2 agents"
+}
+```
+
 ---
 
 ### History (Supabase)
@@ -254,6 +282,123 @@ Get flips for a specific agent.
 
 ---
 
+### Consensus Memory
+
+Historical consensus data and similarity search.
+
+#### GET /api/consensus/similar
+Find debates similar to a topic.
+
+**Parameters:**
+- `topic` (string, required): Topic to search for
+- `limit` (int, default=5, max=20): Maximum results to return
+
+**Response:**
+```json
+{
+  "query": "rate limiting",
+  "results": [
+    {
+      "topic": "Rate limiter design",
+      "conclusion": "Token bucket preferred",
+      "strength": "strong",
+      "confidence": 0.85,
+      "similarity": 0.92,
+      "agents": ["claude", "gemini"],
+      "dissent_count": 1,
+      "timestamp": "2026-01-03T10:00:00Z"
+    }
+  ],
+  "count": 3
+}
+```
+
+#### GET /api/consensus/settled
+Get high-confidence settled topics.
+
+**Parameters:**
+- `min_confidence` (float, default=0.8): Minimum confidence threshold
+- `limit` (int, default=20, max=100): Maximum topics to return
+
+**Response:**
+```json
+{
+  "min_confidence": 0.8,
+  "topics": [
+    {
+      "topic": "Consensus algorithm choice",
+      "conclusion": "Weighted voting preferred",
+      "confidence": 0.95,
+      "strength": "strong",
+      "timestamp": "2026-01-04T08:00:00Z"
+    }
+  ],
+  "count": 15
+}
+```
+
+#### GET /api/consensus/stats
+Get consensus memory statistics.
+
+**Response:**
+```json
+{
+  "total_consensus": 150,
+  "total_dissents": 42,
+  "by_strength": {
+    "strong": 80,
+    "moderate": 50,
+    "weak": 20
+  },
+  "by_domain": {
+    "general": 100,
+    "architecture": 30,
+    "security": 20
+  },
+  "avg_confidence": 0.78
+}
+```
+
+#### GET /api/consensus/domain/:domain
+Get consensus history for a domain.
+
+**Parameters:**
+- `limit` (int, default=50, max=200): Maximum records to return
+
+---
+
+### Agent Profile (Combined)
+
+#### GET /api/agent/:name/profile
+Get a combined profile with ELO, persona, consistency, and calibration data.
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "ranking": {
+    "rating": 1523,
+    "recent_matches": 10
+  },
+  "persona": {
+    "type": "analytical",
+    "primary_stance": "pragmatic",
+    "specializations": ["architecture", "security"],
+    "debate_count": 45
+  },
+  "consistency": {
+    "score": 0.92,
+    "recent_flips": 2
+  },
+  "calibration": {
+    "brier_score": 0.15,
+    "prediction_count": 30
+  }
+}
+```
+
+---
+
 ### Replays
 
 #### GET /api/replays
@@ -388,6 +533,11 @@ Other origins are blocked by the browser.
 ## Security Notes
 
 1. **Path traversal protection**: All file paths are validated to prevent directory traversal attacks
-2. **Input validation**: All integer parameters have bounds checking
-3. **Error sanitization**: Internal errors are not exposed to clients
+2. **Input validation**: All integer/float parameters have bounds checking
+3. **Error sanitization**: API keys and tokens are redacted from error messages
 4. **Origin validation**: CORS uses allowlist instead of wildcard
+5. **SQL injection prevention**: LIKE patterns are escaped to prevent wildcard injection
+6. **Rate limiting**: Expensive endpoints (debate creation, uploads) are rate limited
+7. **Query bounds**: Maximum 10 agents per debate, 10 parts per multipart upload
+8. **Database timeouts**: SQLite connections have 30-second timeout to prevent deadlocks
+9. **Content-Length validation**: Headers validated to prevent integer parsing attacks
