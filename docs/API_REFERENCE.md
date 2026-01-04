@@ -450,6 +450,34 @@ Get a specific replay by ID.
 
 ---
 
+### Broadcast (Podcast Generation)
+
+Generate audio podcasts from debate traces.
+
+#### POST /api/debates/:id/broadcast
+Generate an MP3 podcast from a debate.
+
+**Rate limited**. Requires the broadcast module (`pip install aragora[broadcast]`).
+
+**Response:**
+```json
+{
+  "success": true,
+  "debate_id": "rate-limiter-2026-01-01",
+  "audio_path": "/tmp/aragora_debate_rate-limiter.mp3",
+  "format": "mp3"
+}
+```
+
+**Error Response (503):**
+```json
+{
+  "error": "Broadcast module not available"
+}
+```
+
+---
+
 ### Documents
 
 #### GET /api/documents
