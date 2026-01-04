@@ -1038,6 +1038,122 @@ Get risk warnings and edge case concerns from past debates.
 
 ---
 
+### Head-to-Head & Opponent Analysis
+
+Detailed comparison and strategic briefings between agents.
+
+#### GET /api/agent/:agent/head-to-head/:opponent
+Get detailed head-to-head statistics between two agents.
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "opponent": "gemini",
+  "matches": 12,
+  "agent_wins": 5,
+  "opponent_wins": 4,
+  "draws": 3,
+  "win_rate": 0.42,
+  "recent_form": "WDLWW"
+}
+```
+
+#### GET /api/agent/:agent/opponent-briefing/:opponent
+Get strategic briefing about an opponent for an agent.
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "opponent": "gemini",
+  "briefing": {
+    "relationship": "rival",
+    "strength": 0.7,
+    "head_to_head": {"wins": 5, "losses": 4, "draws": 3},
+    "opponent_strengths": ["visual reasoning", "synthesis"],
+    "opponent_weaknesses": ["consistency", "edge cases"],
+    "recommended_strategy": "Focus on logical rigor and consistency"
+  }
+}
+```
+
+---
+
+### Calibration Analysis
+
+Detailed calibration curves and prediction accuracy.
+
+#### GET /api/agent/:name/calibration-curve
+Get calibration curve showing expected vs actual accuracy per confidence bucket.
+
+**Parameters:**
+- `buckets` (int, default=10, max=20): Number of confidence buckets
+- `domain` (string, optional): Filter by domain
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "domain": null,
+  "buckets": [
+    {
+      "range_start": 0.0,
+      "range_end": 0.1,
+      "total_predictions": 15,
+      "correct_predictions": 2,
+      "accuracy": 0.13,
+      "expected_accuracy": 0.05,
+      "brier_score": 0.08
+    },
+    {
+      "range_start": 0.9,
+      "range_end": 1.0,
+      "total_predictions": 42,
+      "correct_predictions": 38,
+      "accuracy": 0.90,
+      "expected_accuracy": 0.95,
+      "brier_score": 0.02
+    }
+  ],
+  "count": 10
+}
+```
+
+---
+
+### Meta-Critique Analysis
+
+Analyze debate quality and identify process issues.
+
+#### GET /api/debate/:id/meta-critique
+Get meta-level analysis of a debate including repetition, circular arguments, and ignored critiques.
+
+**Response:**
+```json
+{
+  "debate_id": "debate-123",
+  "overall_quality": 0.72,
+  "productive_rounds": [1, 2, 4],
+  "unproductive_rounds": [3],
+  "observations": [
+    {
+      "type": "repetition",
+      "severity": "medium",
+      "agent": "gemini",
+      "round": 3,
+      "description": "Agent repeated similar points from round 1"
+    }
+  ],
+  "recommendations": [
+    "Encourage agents to address critiques directly",
+    "Consider reducing round count for simple topics"
+  ]
+}
+```
+
+---
+
 ## WebSocket API
 
 Connect to the WebSocket server for real-time streaming:

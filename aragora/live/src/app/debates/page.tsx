@@ -217,7 +217,7 @@ export default function DebatesPage() {
             {'═'.repeat(40)}
           </div>
           <p className="text-text-muted">
-            {'>'} ARAGORA DEBATE ARCHIVE // {debates.length} DEBATES
+            {'>'} AGORA DEBATE ARCHIVE // {debates.length} DEBATES
           </p>
           <p className="text-acid-cyan mt-2">
             <Link

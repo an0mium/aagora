@@ -430,81 +430,80 @@ class ContinuumMemory:
         Returns:
             Updated surprise score
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Get current state
-        cursor.execute(
-            """
-            SELECT success_count, failure_count, surprise_score, tier
-            FROM continuum_memory WHERE id = ?
-            """,
-            (id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            return 0.0
-
-        success_count, failure_count, old_surprise, tier = row
-        total = success_count + failure_count
-
-        # Calculate expected success rate (base rate)
-        expected_rate = success_count / total if total > 0 else 0.5
-
-        # Actual outcome
-        actual = 1.0 if success else 0.0
-
-        # Success rate surprise component
-        success_surprise = abs(actual - expected_rate)
-
-        # Combine surprise signals
-        weights = self.hyperparams
-        new_surprise = (
-            weights["surprise_weight_success"] * success_surprise +
-            weights["surprise_weight_agent"] * (agent_prediction_error or 0.0)
-        )
-
-        # Exponential moving average for surprise
-        alpha = 0.3
-        updated_surprise = old_surprise * (1 - alpha) + new_surprise * alpha
-
-        # Update consolidation score
-        update_count = total + 1
-        consolidation = min(1.0, math.log(1 + update_count) / math.log(
-            self.hyperparams["consolidation_threshold"]
-        ))
-
-        # Update database
-        if success:
+            # Get current state
             cursor.execute(
                 """
-                UPDATE continuum_memory
-                SET success_count = success_count + 1,
-                    update_count = update_count + 1,
-                    surprise_score = ?,
-                    consolidation_score = ?,
-                    updated_at = ?
-                WHERE id = ?
+                SELECT success_count, failure_count, surprise_score, tier
+                FROM continuum_memory WHERE id = ?
                 """,
-                (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                (id,),
             )
-        else:
-            cursor.execute(
-                """
-                UPDATE continuum_memory
-                SET failure_count = failure_count + 1,
-                    update_count = update_count + 1,
-                    surprise_score = ?,
-                    consolidation_score = ?,
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (updated_surprise, consolidation, datetime.now().isoformat(), id),
+            row = cursor.fetchone()
+            if not row:
+                return 0.0
+
+            success_count, failure_count, old_surprise, tier = row
+            total = success_count + failure_count
+
+            # Calculate expected success rate (base rate)
+            expected_rate = success_count / total if total > 0 else 0.5
+
+            # Actual outcome
+            actual = 1.0 if success else 0.0
+
+            # Success rate surprise component
+            success_surprise = abs(actual - expected_rate)
+
+            # Combine surprise signals
+            weights = self.hyperparams
+            new_surprise = (
+                weights["surprise_weight_success"] * success_surprise +
+                weights["surprise_weight_agent"] * (agent_prediction_error or 0.0)
             )
 
-        conn.commit()
-        conn.close()
+            # Exponential moving average for surprise
+            alpha = 0.3
+            updated_surprise = old_surprise * (1 - alpha) + new_surprise * alpha
+
+            # Update consolidation score
+            update_count = total + 1
+            consolidation = min(1.0, math.log(1 + update_count) / math.log(
+                self.hyperparams["consolidation_threshold"]
+            ))
+
+            # Update database
+            if success:
+                cursor.execute(
+                    """
+                    UPDATE continuum_memory
+                    SET success_count = success_count + 1,
+                        update_count = update_count + 1,
+                        surprise_score = ?,
+                        consolidation_score = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE continuum_memory
+                    SET failure_count = failure_count + 1,
+                        update_count = update_count + 1,
+                        surprise_score = ?,
+                        consolidation_score = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                )
+
+            conn.commit()
+
         return updated_surprise
 
     def get_learning_rate(self, tier: MemoryTier, update_count: int) -> float:
@@ -523,61 +522,58 @@ class ContinuumMemory:
 
         Returns the new tier if promoted, None otherwise.
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT tier, surprise_score, last_promotion_at FROM continuum_memory WHERE id = ?",
-            (id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            return None
-
-        current_tier = MemoryTier(row[0])
-        surprise_score = row[1]
-        last_promotion = row[2]
-
-        # Check cooldown
-        if last_promotion:
-            last_dt = datetime.fromisoformat(last_promotion)
-            hours_since = (datetime.now() - last_dt).total_seconds() / 3600
-            if hours_since < self.hyperparams["promotion_cooldown_hours"]:
-                conn.close()
+            cursor.execute(
+                "SELECT tier, surprise_score, last_promotion_at FROM continuum_memory WHERE id = ?",
+                (id,),
+            )
+            row = cursor.fetchone()
+            if not row:
                 return None
 
-        # Determine new tier
-        tier_order = [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM, MemoryTier.FAST]
-        current_idx = tier_order.index(current_tier)
-        if current_idx >= len(tier_order) - 1:
-            conn.close()
-            return None  # Already at fastest
+            current_tier = MemoryTier(row[0])
+            surprise_score = row[1]
+            last_promotion = row[2]
 
-        new_tier = tier_order[current_idx + 1]
-        now = datetime.now().isoformat()
+            # Check cooldown
+            if last_promotion:
+                last_dt = datetime.fromisoformat(last_promotion)
+                hours_since = (datetime.now() - last_dt).total_seconds() / 3600
+                if hours_since < self.hyperparams["promotion_cooldown_hours"]:
+                    return None
 
-        # Update tier
-        cursor.execute(
-            """
-            UPDATE continuum_memory
-            SET tier = ?, last_promotion_at = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (new_tier.value, now, now, id),
-        )
+            # Determine new tier
+            tier_order = [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM, MemoryTier.FAST]
+            current_idx = tier_order.index(current_tier)
+            if current_idx >= len(tier_order) - 1:
+                return None  # Already at fastest
 
-        # Record transition
-        cursor.execute(
-            """
-            INSERT INTO tier_transitions (memory_id, from_tier, to_tier, reason, surprise_score)
-            VALUES (?, ?, ?, 'high_surprise', ?)
-            """,
-            (id, current_tier.value, new_tier.value, surprise_score),
-        )
+            new_tier = tier_order[current_idx + 1]
+            now = datetime.now().isoformat()
 
-        conn.commit()
-        conn.close()
+            # Update tier
+            cursor.execute(
+                """
+                UPDATE continuum_memory
+                SET tier = ?, last_promotion_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (new_tier.value, now, now, id),
+            )
+
+            # Record transition
+            cursor.execute(
+                """
+                INSERT INTO tier_transitions (memory_id, from_tier, to_tier, reason, surprise_score)
+                VALUES (?, ?, ?, 'high_surprise', ?)
+                """,
+                (id, current_tier.value, new_tier.value, surprise_score),
+            )
+
+            conn.commit()
+
         return new_tier
 
     def demote(self, id: str) -> Optional[MemoryTier]:
@@ -586,57 +582,54 @@ class ContinuumMemory:
 
         Returns the new tier if demoted, None otherwise.
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT tier, surprise_score, update_count FROM continuum_memory WHERE id = ?",
-            (id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            return None
+            cursor.execute(
+                "SELECT tier, surprise_score, update_count FROM continuum_memory WHERE id = ?",
+                (id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
 
-        current_tier = MemoryTier(row[0])
-        surprise_score = row[1]
-        update_count = row[2]
+            current_tier = MemoryTier(row[0])
+            surprise_score = row[1]
+            update_count = row[2]
 
-        # Need enough updates to be confident about stability
-        if update_count < 10:
-            conn.close()
-            return None
+            # Need enough updates to be confident about stability
+            if update_count < 10:
+                return None
 
-        tier_order = [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM, MemoryTier.FAST]
-        current_idx = tier_order.index(current_tier)
-        if current_idx <= 0:
-            conn.close()
-            return None  # Already at slowest
+            tier_order = [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM, MemoryTier.FAST]
+            current_idx = tier_order.index(current_tier)
+            if current_idx <= 0:
+                return None  # Already at slowest
 
-        new_tier = tier_order[current_idx - 1]
-        now = datetime.now().isoformat()
+            new_tier = tier_order[current_idx - 1]
+            now = datetime.now().isoformat()
 
-        # Update tier
-        cursor.execute(
-            """
-            UPDATE continuum_memory
-            SET tier = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (new_tier.value, now, id),
-        )
+            # Update tier
+            cursor.execute(
+                """
+                UPDATE continuum_memory
+                SET tier = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (new_tier.value, now, id),
+            )
 
-        # Record transition
-        cursor.execute(
-            """
-            INSERT INTO tier_transitions (memory_id, from_tier, to_tier, reason, surprise_score)
-            VALUES (?, ?, ?, 'high_stability', ?)
-            """,
-            (id, current_tier.value, new_tier.value, surprise_score),
-        )
+            # Record transition
+            cursor.execute(
+                """
+                INSERT INTO tier_transitions (memory_id, from_tier, to_tier, reason, surprise_score)
+                VALUES (?, ?, ?, 'high_stability', ?)
+                """,
+                (id, current_tier.value, new_tier.value, surprise_score),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+
         return new_tier
 
     def consolidate(self) -> Dict[str, int]:
@@ -648,84 +641,86 @@ class ContinuumMemory:
         Returns:
             Dict with counts of promotions and demotions
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         promotions = 0
         demotions = 0
 
-        # Find candidates for promotion (high surprise)
-        for tier in [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM]:
-            config = TIER_CONFIGS[tier]
-            cursor.execute(
-                """
-                SELECT id FROM continuum_memory
-                WHERE tier = ? AND surprise_score > ?
-                """,
-                (tier.value, config.promotion_threshold),
-            )
-            for (id,) in cursor.fetchall():
-                if self.promote(id):
-                    promotions += 1
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Find candidates for demotion (high stability)
-        for tier in [MemoryTier.FAST, MemoryTier.MEDIUM, MemoryTier.SLOW]:
-            config = TIER_CONFIGS[tier]
-            cursor.execute(
-                """
-                SELECT id FROM continuum_memory
-                WHERE tier = ?
-                  AND (1.0 - surprise_score) > ?
-                  AND update_count > 10
-                """,
-                (tier.value, config.demotion_threshold),
-            )
-            for (id,) in cursor.fetchall():
-                if self.demote(id):
-                    demotions += 1
+            # Find candidates for promotion (high surprise)
+            for tier in [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM]:
+                config = TIER_CONFIGS[tier]
+                cursor.execute(
+                    """
+                    SELECT id FROM continuum_memory
+                    WHERE tier = ? AND surprise_score > ?
+                    """,
+                    (tier.value, config.promotion_threshold),
+                )
+                promotion_ids = [row[0] for row in cursor.fetchall()]
 
-        conn.close()
+            # Find candidates for demotion (high stability)
+            for tier in [MemoryTier.FAST, MemoryTier.MEDIUM, MemoryTier.SLOW]:
+                config = TIER_CONFIGS[tier]
+                cursor.execute(
+                    """
+                    SELECT id FROM continuum_memory
+                    WHERE tier = ?
+                      AND (1.0 - surprise_score) > ?
+                      AND update_count > 10
+                    """,
+                    (tier.value, config.demotion_threshold),
+                )
+                demotion_ids = [row[0] for row in cursor.fetchall()]
+
+        # Process promotions/demotions outside the connection context
+        for id in promotion_ids:
+            if self.promote(id):
+                promotions += 1
+        for id in demotion_ids:
+            if self.demote(id):
+                demotions += 1
+
         return {"promotions": promotions, "demotions": demotions}
 
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about the continuum memory system."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        stats = {}
+            stats = {}
 
-        # Count by tier
-        cursor.execute("""
-            SELECT tier, COUNT(*), AVG(importance), AVG(surprise_score), AVG(consolidation_score)
-            FROM continuum_memory
-            GROUP BY tier
-        """)
-        stats["by_tier"] = {
-            row[0]: {
-                "count": row[1],
-                "avg_importance": row[2] or 0,
-                "avg_surprise": row[3] or 0,
-                "avg_consolidation": row[4] or 0,
+            # Count by tier
+            cursor.execute("""
+                SELECT tier, COUNT(*), AVG(importance), AVG(surprise_score), AVG(consolidation_score)
+                FROM continuum_memory
+                GROUP BY tier
+            """)
+            stats["by_tier"] = {
+                row[0]: {
+                    "count": row[1],
+                    "avg_importance": row[2] or 0,
+                    "avg_surprise": row[3] or 0,
+                    "avg_consolidation": row[4] or 0,
+                }
+                for row in cursor.fetchall()
             }
-            for row in cursor.fetchall()
-        }
 
-        # Total counts
-        cursor.execute("SELECT COUNT(*) FROM continuum_memory")
-        stats["total_memories"] = cursor.fetchone()[0]
+            # Total counts
+            cursor.execute("SELECT COUNT(*) FROM continuum_memory")
+            stats["total_memories"] = cursor.fetchone()[0]
 
-        # Transition history
-        cursor.execute("""
-            SELECT from_tier, to_tier, COUNT(*)
-            FROM tier_transitions
-            GROUP BY from_tier, to_tier
-        """)
-        stats["transitions"] = [
-            {"from": row[0], "to": row[1], "count": row[2]}
-            for row in cursor.fetchall()
-        ]
+            # Transition history
+            cursor.execute("""
+                SELECT from_tier, to_tier, COUNT(*)
+                FROM tier_transitions
+                GROUP BY from_tier, to_tier
+            """)
+            stats["transitions"] = [
+                {"from": row[0], "to": row[1], "count": row[2]}
+                for row in cursor.fetchall()
+            ]
 
-        conn.close()
         return stats
 
     def export_for_tier(self, tier: MemoryTier) -> List[Dict[str, Any]]:

@@ -679,6 +679,42 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             else:
                 self._get_agent_comparison(agent_a, agent_b)
 
+        # Head-to-Head & Opponent Briefing API
+        elif '/head-to-head/' in path and path.startswith('/api/agent/'):
+            # Pattern: /api/agent/{agent}/head-to-head/{opponent}
+            parts = path.split('/')
+            if len(parts) >= 6:
+                agent = parts[3]
+                opponent = parts[5]
+                self._get_head_to_head(agent, opponent)
+            else:
+                self._send_json({"error": "Invalid path format"}, status=400)
+        elif '/opponent-briefing/' in path and path.startswith('/api/agent/'):
+            # Pattern: /api/agent/{agent}/opponent-briefing/{opponent}
+            parts = path.split('/')
+            if len(parts) >= 6:
+                agent = parts[3]
+                opponent = parts[5]
+                self._get_opponent_briefing(agent, opponent)
+            else:
+                self._send_json({"error": "Invalid path format"}, status=400)
+
+        # Calibration Curve API
+        elif path.startswith('/api/agent/') and path.endswith('/calibration-curve'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            buckets = self._safe_int(query, 'buckets', 10, 20)
+            domain = query.get('domain', [None])[0]
+            self._get_calibration_curve(agent, buckets, domain)
+
+        # Meta-Critique API
+        elif path.startswith('/api/debate/') and path.endswith('/meta-critique'):
+            debate_id = self._extract_path_segment(path, 3, "debate_id")
+            if debate_id is None:
+                return
+            self._get_meta_critique(debate_id)
+
         # Static file serving
         elif path in ('/', '/index.html'):
             self._serve_file('index.html')
@@ -2525,6 +2561,143 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 })
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "agent_comparison")}, status=500)
+
+    def _get_head_to_head(self, agent: str, opponent: str) -> None:
+        """Get detailed head-to-head statistics between two agents."""
+        if not self._check_rate_limit():
+            return
+
+        if not RANKING_AVAILABLE or not self.elo_system:
+            self._send_json({"error": "Ranking system not available"}, status=503)
+            return
+
+        try:
+            h2h = self.elo_system.get_head_to_head(agent, opponent)
+            if h2h:
+                self._send_json({
+                    "agent": agent,
+                    "opponent": opponent,
+                    **h2h,
+                })
+            else:
+                self._send_json({
+                    "agent": agent,
+                    "opponent": opponent,
+                    "matches": 0,
+                    "message": "No head-to-head data available"
+                })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "head_to_head")}, status=500)
+
+    def _get_opponent_briefing(self, agent: str, opponent: str) -> None:
+        """Get strategic briefing about an opponent for an agent."""
+        if not self._check_rate_limit():
+            return
+
+        if not RELATIONSHIP_TRACKER_AVAILABLE:
+            self._send_json({"error": "Relationship tracker not available"}, status=503)
+            return
+
+        try:
+            from aragora.agents.grounded import PersonaSynthesizer
+            synthesizer = PersonaSynthesizer(
+                elo_system=self.elo_system,
+                calibration_tracker=CalibrationTracker() if CALIBRATION_AVAILABLE else None,
+                position_ledger=self.position_ledger,
+            )
+            briefing = synthesizer.get_opponent_briefing(agent, opponent)
+            if briefing:
+                self._send_json({
+                    "agent": agent,
+                    "opponent": opponent,
+                    "briefing": briefing,
+                })
+            else:
+                self._send_json({
+                    "agent": agent,
+                    "opponent": opponent,
+                    "briefing": None,
+                    "message": "No opponent data available"
+                })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "opponent_briefing")}, status=500)
+
+    def _get_calibration_curve(self, agent: str, buckets: int, domain: str = None) -> None:
+        """Get calibration curve (expected vs actual accuracy per bucket)."""
+        if not self._check_rate_limit():
+            return
+
+        if not CALIBRATION_AVAILABLE:
+            self._send_json({"error": "Calibration tracker not available"}, status=503)
+            return
+
+        try:
+            tracker = CalibrationTracker()
+            curve = tracker.get_calibration_curve(agent, num_buckets=buckets, domain=domain)
+            self._send_json({
+                "agent": agent,
+                "domain": domain,
+                "buckets": [
+                    {
+                        "range_start": b.range_start,
+                        "range_end": b.range_end,
+                        "total_predictions": b.total_predictions,
+                        "correct_predictions": b.correct_predictions,
+                        "accuracy": b.accuracy,
+                        "expected_accuracy": (b.range_start + b.range_end) / 2,
+                        "brier_score": b.brier_score,
+                    }
+                    for b in curve
+                ],
+                "count": len(curve),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "calibration_curve")}, status=500)
+
+    def _get_meta_critique(self, debate_id: str) -> None:
+        """Get meta-level analysis of a debate (repetition, circular arguments, etc)."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.debate.meta import MetaCritiqueAnalyzer
+            from aragora.debate.traces import DebateTrace
+
+            # Load debate trace
+            if not self.nomic_dir:
+                self._send_json({"error": "Nomic directory not configured"}, status=503)
+                return
+
+            trace_path = self.nomic_dir / "traces" / f"{debate_id}.json"
+            if not trace_path.exists():
+                self._send_json({"error": "Debate trace not found"}, status=404)
+                return
+
+            trace = DebateTrace.load(trace_path)
+            result = trace.to_debate_result()
+
+            analyzer = MetaCritiqueAnalyzer()
+            critique = analyzer.analyze(result)
+
+            self._send_json({
+                "debate_id": debate_id,
+                "overall_quality": critique.overall_quality,
+                "productive_rounds": critique.productive_rounds,
+                "unproductive_rounds": critique.unproductive_rounds,
+                "observations": [
+                    {
+                        "type": o.observation_type,
+                        "severity": o.severity,
+                        "agent": o.agent,
+                        "round": o.round_num,
+                        "description": o.description,
+                    }
+                    for o in critique.observations
+                ],
+                "recommendations": critique.recommendations,
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "meta_critique")}, status=500)
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""

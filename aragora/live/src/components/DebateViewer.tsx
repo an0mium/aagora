@@ -573,7 +573,7 @@ export function DebateViewer({ debateId }: DebateViewerProps) {
             {'═'.repeat(40)}
           </div>
           <p className="text-text-muted">
-            {'>'} ARAGORA DEBATE VIEWER // PERMALINK
+            {'>'} AGORA DEBATE VIEWER // PERMALINK
           </p>
           <p className="text-acid-cyan mt-2">
             <a
