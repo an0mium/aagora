@@ -21,6 +21,20 @@ from aragora.debate.convergence import (
 from aragora.spectate.stream import SpectatorStream
 from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
 
+# Optional position tracking for truth-grounded personas
+PositionTracker = None
+
+def _get_position_tracker():
+    """Lazy-load PositionTracker to avoid circular imports."""
+    global PositionTracker
+    if PositionTracker is None:
+        try:
+            from aragora.agents.truth_grounding import PositionTracker as _PT
+            PositionTracker = _PT
+        except ImportError:
+            pass
+    return PositionTracker
+
 # Lazy import to avoid circular dependencies
 InsightExtractor = None
 InsightStore = None
@@ -124,6 +138,7 @@ class Arena:
         insight_store=None,  # Optional InsightStore for extracting learnings from debates
         recorder=None,  # Optional ReplayRecorder for debate recording
         agent_weights: dict[str, float] = None,  # Optional reliability weights from capability probing
+        position_tracker=None,  # Optional PositionTracker for truth-grounded personas
     ):
         self.env = environment
         self.agents = agents
@@ -136,6 +151,7 @@ class Arena:
         self.insight_store = insight_store
         self.recorder = recorder
         self.agent_weights = agent_weights or {}  # Reliability weights from capability probing
+        self.position_tracker = position_tracker  # Truth-grounded persona tracking
 
         # User participation tracking
         self.user_votes: list[dict] = []  # List of user vote events
@@ -509,6 +525,20 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 # Notify spectator of proposal
                 self._notify_spectator("propose", agent=agent.name, details=f"Initial proposal ({len(result_or_error)} chars)", metric=len(result_or_error))
 
+                # Record position for truth-grounded personas
+                if self.position_tracker:
+                    try:
+                        self.position_tracker.record_position(
+                            debate_id=result.id if hasattr(result, 'id') else self.env.task[:50],
+                            agent_name=agent.name,
+                            position_type="proposal",
+                            position_text=result_or_error[:1000],
+                            round_num=0,
+                            confidence=0.7,
+                        )
+                    except Exception:
+                        pass  # Position tracking failure shouldn't break debate
+
             msg = Message(
                 role="proposer",
                 agent=agent.name,
@@ -789,6 +819,20 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         except Exception:
                             pass
 
+                    # Record position for truth-grounded personas
+                    if self.position_tracker:
+                        try:
+                            self.position_tracker.record_position(
+                                debate_id=result.id if hasattr(result, 'id') else self.env.task[:50],
+                                agent_name=agent.name,
+                                position_type="vote",
+                                position_text=vote_result.choice,
+                                round_num=result.rounds_used,
+                                confidence=vote_result.confidence,
+                            )
+                        except Exception:
+                            pass
+
             # Group similar vote options before counting
             vote_groups = self._group_similar_votes(result.votes)
 
@@ -875,6 +919,18 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 if self.recorder:
                     try:
                         self.recorder.record_phase_change(f"consensus_reached: {winner}")
+                    except Exception:
+                        pass
+
+                # Finalize debate for truth-grounded personas
+                if self.position_tracker:
+                    try:
+                        self.position_tracker.finalize_debate(
+                            debate_id=result.id if hasattr(result, 'id') else self.env.task[:50],
+                            winning_agent=winner,
+                            winning_position=result.final_answer[:1000],
+                            consensus_confidence=result.confidence,
+                        )
                     except Exception:
                         pass
             else:
