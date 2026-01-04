@@ -34,6 +34,7 @@ class AuthConfig:
         self._token_request_counts: Dict[str, list] = {}  # token -> timestamps
         self._ip_request_counts: Dict[str, list] = {}  # IP -> timestamps
         self._rate_limit_lock = threading.Lock()  # Thread-safe rate limiting
+        self._max_tracked_entries = 10000  # Prevent memory exhaustion from rotating tokens/IPs
 
     def configure_from_env(self):
         """Configure from environment variables."""
@@ -102,6 +103,25 @@ class AuthConfig:
         except (ValueError, IndexError):
             return False
 
+    def _cleanup_stale_entries(self, entries_dict: Dict[str, list], window_start: float) -> None:
+        """Remove stale entries to prevent memory exhaustion.
+
+        Called within the rate limit lock.
+        """
+        # Remove entries with no recent requests
+        stale_keys = [k for k, v in entries_dict.items() if not v or max(v) < window_start]
+        for k in stale_keys:
+            del entries_dict[k]
+
+        # If still too large, evict oldest entries (LRU-style)
+        if len(entries_dict) > self._max_tracked_entries:
+            # Sort by most recent request time
+            sorted_keys = sorted(entries_dict.keys(), key=lambda k: max(entries_dict[k]) if entries_dict[k] else 0)
+            # Remove oldest 10%
+            to_remove = len(sorted_keys) // 10
+            for k in sorted_keys[:to_remove]:
+                del entries_dict[k]
+
     def check_rate_limit(self, token: str) -> tuple:
         """Check if token is within rate limit.
 
@@ -117,6 +137,10 @@ class AuthConfig:
         window_start = now - 60  # 1 minute window
 
         with self._rate_limit_lock:
+            # Periodic cleanup to prevent memory exhaustion
+            if len(self._token_request_counts) > self._max_tracked_entries * 0.9:
+                self._cleanup_stale_entries(self._token_request_counts, window_start)
+
             # Get or create request list for this token
             if token not in self._token_request_counts:
                 self._token_request_counts[token] = []
@@ -154,6 +178,10 @@ class AuthConfig:
         window_start = now - 60  # 1 minute window
 
         with self._rate_limit_lock:
+            # Periodic cleanup to prevent memory exhaustion
+            if len(self._ip_request_counts) > self._max_tracked_entries * 0.9:
+                self._cleanup_stale_entries(self._ip_request_counts, window_start)
+
             # Get or create request list for this IP
             if ip_address not in self._ip_request_counts:
                 self._ip_request_counts[ip_address] = []
