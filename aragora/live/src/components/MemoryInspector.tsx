@@ -1,0 +1,297 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+
+interface MemoryEntry {
+  id: string;
+  tier: 'fast' | 'medium' | 'slow' | 'glacial';
+  content: string;
+  importance: number;
+  surprise_score: number;
+  consolidation_score: number;
+  update_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TierStats {
+  count: number;
+  avg_importance: number;
+  avg_consolidation: number;
+  oldest_entry: string | null;
+  newest_entry: string | null;
+}
+
+interface MemoryInspectorProps {
+  apiBase?: string;
+}
+
+const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
+
+const TIER_CONFIG = {
+  fast: {
+    label: 'FAST',
+    description: 'Updates on every event (1h half-life)',
+    color: 'acid-cyan',
+    bgColor: 'bg-acid-cyan/20',
+    borderColor: 'border-acid-cyan/30',
+    textColor: 'text-acid-cyan',
+  },
+  medium: {
+    label: 'MEDIUM',
+    description: 'Updates per debate round (24h half-life)',
+    color: 'yellow-400',
+    bgColor: 'bg-yellow-400/20',
+    borderColor: 'border-yellow-400/30',
+    textColor: 'text-yellow-400',
+  },
+  slow: {
+    label: 'SLOW',
+    description: 'Updates per nomic cycle (7d half-life)',
+    color: 'purple-400',
+    bgColor: 'bg-purple-400/20',
+    borderColor: 'border-purple-400/30',
+    textColor: 'text-purple-400',
+  },
+  glacial: {
+    label: 'GLACIAL',
+    description: 'Updates monthly (30d half-life)',
+    color: 'blue-400',
+    bgColor: 'bg-blue-400/20',
+    borderColor: 'border-blue-400/30',
+    textColor: 'text-blue-400',
+  },
+};
+
+export function MemoryInspector({ apiBase = DEFAULT_API_BASE }: MemoryInspectorProps) {
+  const [query, setQuery] = useState('');
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [tierStats, setTierStats] = useState<Record<string, TierStats>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTiers, setSelectedTiers] = useState<string[]>(['fast', 'medium']);
+  const [expanded, setExpanded] = useState(false);
+
+  const fetchTierStats = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/memory/tier-stats`);
+      if (response.ok) {
+        const data = await response.json();
+        setTierStats(data.tiers || {});
+      }
+    } catch (err) {
+      console.error('Failed to fetch tier stats:', err);
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    fetchTierStats();
+  }, [fetchTierStats]);
+
+  const searchMemories = useCallback(async () => {
+    if (!query.trim()) {
+      setError('Enter a search query');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const tiersParam = selectedTiers.join(',');
+      const response = await fetch(
+        `${apiBase}/api/memory/continuum/retrieve?query=${encodeURIComponent(query)}&tiers=${tiersParam}&limit=10`
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      setMemories(data.memories || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to search memories');
+      setMemories([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase, query, selectedTiers]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    searchMemories();
+  };
+
+  const toggleTier = (tier: string) => {
+    setSelectedTiers((prev) =>
+      prev.includes(tier) ? prev.filter((t) => t !== tier) : [...prev, tier]
+    );
+  };
+
+  const getTotalMemories = () => {
+    return Object.values(tierStats).reduce((sum, stats) => sum + (stats.count || 0), 0);
+  };
+
+  return (
+    <div className="bg-surface border border-border rounded-lg p-4">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-text font-mono">Continuum Memory</h3>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="text-xs font-mono text-text-muted hover:text-text"
+        >
+          [{expanded ? '-' : '+'}]
+        </button>
+      </div>
+
+      {/* Tier Overview */}
+      <div className="grid grid-cols-4 gap-2 mb-4">
+        {(Object.keys(TIER_CONFIG) as Array<keyof typeof TIER_CONFIG>).map((tier) => {
+          const config = TIER_CONFIG[tier];
+          const stats = tierStats[tier];
+          const isSelected = selectedTiers.includes(tier);
+
+          return (
+            <button
+              key={tier}
+              onClick={() => toggleTier(tier)}
+              className={`p-2 rounded border text-xs font-mono transition-all ${
+                isSelected
+                  ? `${config.bgColor} ${config.borderColor} ${config.textColor}`
+                  : 'bg-bg border-border text-text-muted hover:border-text-muted'
+              }`}
+            >
+              <div className="font-bold">{config.label}</div>
+              <div className="text-[10px] opacity-70">
+                {stats?.count ?? 0} entries
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Summary Stats */}
+      <div className="flex items-center gap-4 text-xs font-mono text-text-muted mb-4 border-b border-border pb-3">
+        <span>Total: <span className="text-text">{getTotalMemories()}</span> memories</span>
+        <span>Selected: <span className="text-acid-green">{selectedTiers.length}</span> tiers</span>
+      </div>
+
+      {expanded && (
+        <>
+          {/* Search Form */}
+          <form onSubmit={handleSubmit} className="mb-4">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search memories..."
+                className="flex-1 px-3 py-2 bg-bg border border-border rounded text-sm font-mono text-text focus:border-acid-green focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-2 bg-acid-green text-bg font-mono text-sm font-bold hover:bg-acid-green/80 disabled:bg-text-muted transition-colors"
+              >
+                {loading ? '...' : 'SEARCH'}
+              </button>
+            </div>
+          </form>
+
+          {error && (
+            <div className="mb-4 p-2 bg-warning/10 border border-warning/30 rounded text-sm text-warning font-mono">
+              {error}
+            </div>
+          )}
+
+          {/* Memory Results */}
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {memories.length === 0 && !loading && !error && (
+              <div className="text-center text-text-muted py-4 font-mono text-sm">
+                Search the continuum memory system across selected tiers.
+              </div>
+            )}
+
+            {memories.map((memory) => {
+              const tierConfig = TIER_CONFIG[memory.tier];
+              return (
+                <div
+                  key={memory.id}
+                  className="p-3 bg-bg border border-border rounded-lg hover:border-text-muted/50 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <span
+                      className={`px-2 py-0.5 text-xs rounded border font-mono ${tierConfig.bgColor} ${tierConfig.borderColor} ${tierConfig.textColor}`}
+                    >
+                      {tierConfig.label}
+                    </span>
+                    <div className="flex gap-2 text-xs font-mono text-text-muted">
+                      <span title="Importance">
+                        IMP: {(memory.importance * 100).toFixed(0)}%
+                      </span>
+                      <span title="Consolidation">
+                        CON: {(memory.consolidation_score * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-sm text-text mb-2 line-clamp-3">
+                    {memory.content}
+                  </p>
+
+                  <div className="flex items-center justify-between text-xs font-mono text-text-muted">
+                    <span>Updates: {memory.update_count}</span>
+                    <span>
+                      {memory.updated_at
+                        ? new Date(memory.updated_at).toLocaleDateString()
+                        : 'N/A'}
+                    </span>
+                  </div>
+
+                  {/* Progress bars */}
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-text-muted w-12">IMP</span>
+                      <div className="flex-1 h-1 bg-bg rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-acid-green"
+                          style={{ width: `${memory.importance * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-text-muted w-12">CON</span>
+                      <div className="flex-1 h-1 bg-bg rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-acid-cyan"
+                          style={{ width: `${memory.consolidation_score * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Tier Legend */}
+      {!expanded && (
+        <div className="text-xs font-mono text-text-muted space-y-1">
+          {(Object.keys(TIER_CONFIG) as Array<keyof typeof TIER_CONFIG>).map((tier) => {
+            const config = TIER_CONFIG[tier];
+            return (
+              <div key={tier} className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${config.bgColor}`} />
+                <span className={config.textColor}>{config.label}:</span>
+                <span>{config.description}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
