@@ -359,43 +359,42 @@ class DebateTracer:
 
     def _save_trace(self):
         """Save trace to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO traces
-            (trace_id, debate_id, task, agents, random_seed, started_at, completed_at, checksum, trace_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            self.trace.trace_id,
-            self.debate_id,
-            self.task,
-            json.dumps(self.agents),
-            self.random_seed,
-            self.trace.started_at,
-            self.trace.completed_at,
-            self.trace.checksum,
-            self.trace.to_json(),
-        ))
-
-        # Save individual events for querying
-        for event in self.trace.events:
             cursor.execute("""
-                INSERT OR REPLACE INTO trace_events
-                (event_id, trace_id, event_type, timestamp, round_num, agent, content)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO traces
+                (trace_id, debate_id, task, agents, random_seed, started_at, completed_at, checksum, trace_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                event.event_id,
                 self.trace.trace_id,
-                event.event_type.value,
-                event.timestamp,
-                event.round_num,
-                event.agent,
-                json.dumps(event.content),
+                self.debate_id,
+                self.task,
+                json.dumps(self.agents),
+                self.random_seed,
+                self.trace.started_at,
+                self.trace.completed_at,
+                self.trace.checksum,
+                self.trace.to_json(),
             ))
 
-        conn.commit()
-        conn.close()
+            # Save individual events for querying
+            for event in self.trace.events:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO trace_events
+                    (event_id, trace_id, event_type, timestamp, round_num, agent, content)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    event.event_id,
+                    self.trace.trace_id,
+                    event.event_type.value,
+                    event.timestamp,
+                    event.round_num,
+                    event.agent,
+                    json.dumps(event.content),
+                ))
+
+            conn.commit()
 
     def get_state_at_event(self, event_id: str) -> dict:
         """Reconstruct debate state at a specific event."""
@@ -459,12 +458,10 @@ class DebateReplayer:
     @classmethod
     def from_database(cls, trace_id: str, db_path: str = "aragora_traces.db") -> "DebateReplayer":
         """Load replayer from database."""
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT trace_json FROM traces WHERE trace_id = ?", (trace_id,))
-        row = cursor.fetchone()
-        conn.close()
+        with sqlite3.connect(db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT trace_json FROM traces WHERE trace_id = ?", (trace_id,))
+            row = cursor.fetchone()
 
         if not row:
             raise ValueError(f"Trace not found: {trace_id}")
