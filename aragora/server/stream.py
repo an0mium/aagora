@@ -3,6 +3,8 @@ Real-time debate streaming via WebSocket.
 
 The SyncEventEmitter bridges synchronous Arena code with async WebSocket broadcasts.
 Events are queued synchronously and consumed by an async drain loop.
+
+This module also supports unified HTTP+WebSocket serving on a single port via aiohttp.
 """
 
 import asyncio
@@ -15,22 +17,15 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Callable, Optional, Any, Dict
+from urllib.parse import parse_qs, urlparse
 
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-# Allowed origins for WebSocket connections - configure via environment variable
-WS_ALLOWED_ORIGINS = os.getenv("ARAGORA_ALLOWED_ORIGINS", "").split(",")
-if not WS_ALLOWED_ORIGINS or WS_ALLOWED_ORIGINS == [""]:
-    # Default to common development and production origins
-    WS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "https://aragora.ai",
-        "https://live.aragora.ai",
-        "https://www.aragora.ai",
-    ]
+# Centralized CORS configuration
+from aragora.server.cors_config import WS_ALLOWED_ORIGINS
 
 # Maximum WebSocket message size (64KB) - prevents memory exhaustion attacks
 WS_MAX_MESSAGE_SIZE = int(os.getenv("ARAGORA_WS_MAX_SIZE", 65536))
@@ -856,3 +851,616 @@ def create_arena_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
         "on_consensus": on_consensus,
         "on_debate_end": on_debate_end,
     }
+
+
+# =============================================================================
+# Unified HTTP + WebSocket Server (aiohttp-based)
+# =============================================================================
+
+class AiohttpUnifiedServer:
+    """
+    Unified server using aiohttp to handle both HTTP API and WebSocket on a single port.
+
+    This is the recommended server for production as it avoids CORS issues with
+    separate ports for HTTP and WebSocket.
+
+    Usage:
+        server = AiohttpUnifiedServer(port=8080, nomic_dir=Path(".nomic"))
+        await server.start()
+    """
+
+    def __init__(
+        self,
+        port: int = 8080,
+        host: str = "0.0.0.0",
+        nomic_dir: Optional[Path] = None,
+    ):
+        self.port = port
+        self.host = host
+        self.nomic_dir = nomic_dir
+
+        # WebSocket clients and event emitter
+        self.clients: set = set()
+        self._emitter = SyncEventEmitter()
+        self._running = False
+
+        # Multi-loop tracking
+        self.active_loops: dict[str, LoopInstance] = {}
+        self._active_loops_lock = threading.Lock()
+
+        # Debate state caching
+        self.debate_states: dict[str, dict] = {}
+        self._debate_states_lock = threading.Lock()
+
+        # Audience participation
+        self.audience_inbox = AudienceInbox()
+        self._rate_limiters: dict[str, TokenBucket] = {}
+        self._rate_limiter_last_access: dict[str, float] = {}
+        self._rate_limiters_lock = threading.Lock()
+
+        # Secure client ID mapping
+        self._client_ids: Dict[int, str] = {}
+
+        # Optional stores (initialized from nomic_dir)
+        self.elo_system = None
+        self.insight_store = None
+        self.flip_detector = None
+        self.persona_manager = None
+        self.debate_embeddings = None
+
+        # Subscribe to emitter to maintain debate states
+        self._emitter.subscribe(self._update_debate_state)
+
+        # Initialize stores from nomic_dir
+        if nomic_dir:
+            self._init_stores(nomic_dir)
+
+    def _init_stores(self, nomic_dir: Path) -> None:
+        """Initialize optional stores from nomic directory."""
+        # EloSystem for leaderboard
+        try:
+            from aragora.ranking.elo import EloSystem
+            elo_path = nomic_dir / "agent_elo.db"
+            if elo_path.exists():
+                self.elo_system = EloSystem(str(elo_path))
+                logger.info("[server] EloSystem loaded")
+        except ImportError:
+            pass
+
+        # InsightStore for insights
+        try:
+            from aragora.insights.store import InsightStore
+            insights_path = nomic_dir / "aragora_insights.db"
+            if insights_path.exists():
+                self.insight_store = InsightStore(str(insights_path))
+                logger.info("[server] InsightStore loaded")
+        except ImportError:
+            pass
+
+        # FlipDetector for position reversals
+        try:
+            from aragora.insights.flip_detector import FlipDetector
+            positions_path = nomic_dir / "aragora_positions.db"
+            if positions_path.exists():
+                self.flip_detector = FlipDetector(str(positions_path))
+                logger.info("[server] FlipDetector loaded")
+        except ImportError:
+            pass
+
+        # PersonaManager for agent specialization
+        try:
+            from aragora.personas.manager import PersonaManager
+            personas_path = nomic_dir / "personas.db"
+            if personas_path.exists():
+                self.persona_manager = PersonaManager(str(personas_path))
+                logger.info("[server] PersonaManager loaded")
+        except ImportError:
+            pass
+
+        # DebateEmbeddingsDatabase for memory
+        try:
+            from aragora.debate.embeddings import DebateEmbeddingsDatabase
+            embeddings_path = nomic_dir / "debate_embeddings.db"
+            if embeddings_path.exists():
+                self.debate_embeddings = DebateEmbeddingsDatabase(str(embeddings_path))
+                logger.info("[server] DebateEmbeddings loaded")
+        except ImportError:
+            pass
+
+    @property
+    def emitter(self) -> SyncEventEmitter:
+        """Get the event emitter for nomic loop integration."""
+        return self._emitter
+
+    def _update_debate_state(self, event: StreamEvent) -> None:
+        """Update cached debate state based on emitted events."""
+        loop_id = event.loop_id
+        with self._debate_states_lock:
+            if event.type == StreamEventType.DEBATE_START:
+                self.debate_states[loop_id] = {
+                    "id": loop_id,
+                    "task": event.data.get("task"),
+                    "agents": event.data.get("agents"),
+                    "started_at": event.timestamp,
+                }
+
+    def register_loop(self, loop_id: str, name: str, path: str = "") -> None:
+        """Register a new nomic loop instance."""
+        with self._active_loops_lock:
+            self.active_loops[loop_id] = LoopInstance(
+                loop_id=loop_id,
+                name=name,
+                started_at=time.time(),
+                path=path,
+            )
+        # Broadcast loop registration
+        self._emitter.emit(StreamEvent(
+            type=StreamEventType.LOOP_REGISTER,
+            data={"loop_id": loop_id, "name": name, "started_at": time.time(), "path": path},
+            loop_id=loop_id,
+        ))
+
+    def unregister_loop(self, loop_id: str) -> None:
+        """Unregister a nomic loop instance."""
+        with self._active_loops_lock:
+            self.active_loops.pop(loop_id, None)
+        # Broadcast loop unregistration
+        self._emitter.emit(StreamEvent(
+            type=StreamEventType.LOOP_UNREGISTER,
+            data={"loop_id": loop_id},
+            loop_id=loop_id,
+        ))
+
+    def update_loop_state(self, loop_id: str, cycle: Optional[int] = None, phase: Optional[str] = None) -> None:
+        """Update loop state (cycle/phase)."""
+        with self._active_loops_lock:
+            if loop_id in self.active_loops:
+                if cycle is not None:
+                    self.active_loops[loop_id].cycle = cycle
+                if phase is not None:
+                    self.active_loops[loop_id].phase = phase
+
+    def _cors_headers(self, origin: Optional[str] = None) -> dict:
+        """Generate CORS headers."""
+        allowed_origin = origin if origin in WS_ALLOWED_ORIGINS else WS_ALLOWED_ORIGINS[0]
+        return {
+            "Access-Control-Allow-Origin": allowed_origin,
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "86400",
+        }
+
+    async def _handle_options(self, request) -> 'aiohttp.web.Response':
+        """Handle CORS preflight requests."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+        return web.Response(status=204, headers=self._cors_headers(origin))
+
+    async def _handle_leaderboard(self, request) -> 'aiohttp.web.Response':
+        """GET /api/leaderboard - Agent rankings."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.elo_system:
+            return web.json_response(
+                {"agents": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            limit = int(request.query.get("limit", 10))
+            agents = self.elo_system.get_leaderboard(limit=limit)
+            # Convert AgentRating objects to dicts
+            agent_data = [
+                {
+                    "name": a.agent_name,
+                    "elo": round(a.elo),
+                    "wins": a.wins,
+                    "losses": a.losses,
+                    "draws": a.draws,
+                    "win_rate": round(a.win_rate * 100, 1),
+                    "games": a.games_played,
+                }
+                for a in agents
+            ]
+            return web.json_response(
+                {"agents": agent_data, "count": len(agent_data)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Leaderboard error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch leaderboard"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_matches_recent(self, request) -> 'aiohttp.web.Response':
+        """GET /api/matches/recent - Recent ELO matches."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.elo_system:
+            return web.json_response(
+                {"matches": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            limit = int(request.query.get("limit", 10))
+            matches = self.elo_system.get_recent_matches(limit=limit)
+            return web.json_response(
+                {"matches": matches, "count": len(matches)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Matches error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch matches"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_insights_recent(self, request) -> 'aiohttp.web.Response':
+        """GET /api/insights/recent - Recent debate insights."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.insight_store:
+            return web.json_response(
+                {"insights": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            limit = int(request.query.get("limit", 10))
+            insights = self.insight_store.get_recent_insights(limit=limit)
+            return web.json_response(
+                {"insights": insights, "count": len(insights)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Insights error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch insights"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_flips_summary(self, request) -> 'aiohttp.web.Response':
+        """GET /api/flips/summary - Position flip summary."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.flip_detector:
+            return web.json_response(
+                {"summary": {}, "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            summary = self.flip_detector.get_summary()
+            return web.json_response(
+                {"summary": summary, "count": summary.get("total_flips", 0)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Flips summary error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch flip summary"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_flips_recent(self, request) -> 'aiohttp.web.Response':
+        """GET /api/flips/recent - Recent position flips."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.flip_detector:
+            return web.json_response(
+                {"flips": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            limit = int(request.query.get("limit", 10))
+            flips = self.flip_detector.get_recent_flips(limit=limit)
+            return web.json_response(
+                {"flips": flips, "count": len(flips)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Flips recent error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch recent flips"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_tournaments(self, request) -> 'aiohttp.web.Response':
+        """GET /api/tournaments - Tournament list."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+        # Tournaments not yet implemented
+        return web.json_response(
+            {"tournaments": [], "count": 0},
+            headers=self._cors_headers(origin)
+        )
+
+    async def _handle_memory_tier_stats(self, request) -> 'aiohttp.web.Response':
+        """GET /api/memory/tier-stats - Continuum memory statistics."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.debate_embeddings:
+            return web.json_response(
+                {"tiers": {"fast": 0, "medium": 0, "slow": 0, "glacial": 0}, "total": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            stats = self.debate_embeddings.get_tier_stats() if hasattr(self.debate_embeddings, 'get_tier_stats') else {}
+            return web.json_response(
+                {"tiers": stats, "total": sum(stats.values()) if stats else 0},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Memory tier stats error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch memory stats"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_laboratory_emergent_traits(self, request) -> 'aiohttp.web.Response':
+        """GET /api/laboratory/emergent-traits - Discovered agent traits."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.persona_manager:
+            return web.json_response(
+                {"traits": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            min_confidence = float(request.query.get("min_confidence", 0.3))
+            limit = int(request.query.get("limit", 10))
+            traits = self.persona_manager.get_emergent_traits(min_confidence=min_confidence, limit=limit) if hasattr(self.persona_manager, 'get_emergent_traits') else []
+            return web.json_response(
+                {"traits": traits, "count": len(traits)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Emergent traits error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch emergent traits"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_laboratory_cross_pollinations(self, request) -> 'aiohttp.web.Response':
+        """GET /api/laboratory/cross-pollinations/suggest - Trait transfer suggestions."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        if not self.persona_manager:
+            return web.json_response(
+                {"suggestions": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            suggestions = self.persona_manager.suggest_cross_pollinations() if hasattr(self.persona_manager, 'suggest_cross_pollinations') else []
+            return web.json_response(
+                {"suggestions": suggestions, "count": len(suggestions)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Cross-pollinations error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch cross-pollination suggestions"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_nomic_state(self, request) -> 'aiohttp.web.Response':
+        """GET /api/nomic/state - Current nomic loop state."""
+        import aiohttp.web as web
+        origin = request.headers.get("Origin")
+
+        with self._active_loops_lock:
+            if self.active_loops:
+                loop = list(self.active_loops.values())[0]
+                state = {
+                    "cycle": loop.cycle,
+                    "phase": loop.phase,
+                    "loop_id": loop.loop_id,
+                    "name": loop.name,
+                }
+            else:
+                state = {"cycle": 0, "phase": "idle"}
+
+        return web.json_response(state, headers=self._cors_headers(origin))
+
+    async def _websocket_handler(self, request) -> 'aiohttp.web.WebSocketResponse':
+        """Handle WebSocket connections."""
+        import aiohttp
+        import aiohttp.web as web
+
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        self.clients.add(ws)
+        ws_id = id(ws)
+        client_id = secrets.token_hex(16)
+        self._client_ids[ws_id] = client_id
+
+        logger.info(f"[ws] Client connected: {client_id[:8]}...")
+
+        # Send initial loop list
+        with self._active_loops_lock:
+            loops_data = [
+                {
+                    "loop_id": loop.loop_id,
+                    "name": loop.name,
+                    "started_at": loop.started_at,
+                    "cycle": loop.cycle,
+                    "phase": loop.phase,
+                    "path": loop.path,
+                }
+                for loop in self.active_loops.values()
+            ]
+
+        await ws.send_json({
+            "type": "loop_list",
+            "data": {"loops": loops_data, "count": len(loops_data)},
+        })
+
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                        msg_type = data.get("type")
+
+                        if msg_type == "get_loops":
+                            with self._active_loops_lock:
+                                loops_data = [
+                                    {
+                                        "loop_id": loop.loop_id,
+                                        "name": loop.name,
+                                        "started_at": loop.started_at,
+                                        "cycle": loop.cycle,
+                                        "phase": loop.phase,
+                                        "path": loop.path,
+                                    }
+                                    for loop in self.active_loops.values()
+                                ]
+                            await ws.send_json({
+                                "type": "loop_list",
+                                "data": {"loops": loops_data, "count": len(loops_data)},
+                            })
+
+                        elif msg_type in ("user_vote", "user_suggestion"):
+                            # Handle audience participation
+                            loop_id = data.get("loop_id")
+                            payload = data.get("payload", {})
+
+                            audience_msg = AudienceMessage(
+                                type="vote" if msg_type == "user_vote" else "suggestion",
+                                loop_id=loop_id,
+                                payload=payload,
+                                user_id=client_id,
+                            )
+                            self.audience_inbox.put(audience_msg)
+
+                            await ws.send_json({
+                                "type": "ack",
+                                "data": {"message": "Message received", "msg_type": msg_type}
+                            })
+
+                    except json.JSONDecodeError:
+                        logger.warning(f"[ws] Invalid JSON from client")
+
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error(f'[ws] Error: {ws.exception()}')
+
+        finally:
+            self.clients.discard(ws)
+            self._client_ids.pop(ws_id, None)
+            logger.info(f"[ws] Client disconnected: {client_id[:8]}...")
+
+        return ws
+
+    async def _drain_loop(self) -> None:
+        """Drain events from the sync emitter and broadcast to WebSocket clients."""
+        import aiohttp
+
+        while self._running:
+            try:
+                event = self._emitter._queue.get(timeout=0.1)
+
+                # Update loop state for cycle/phase events
+                if event.type == StreamEventType.CYCLE_START:
+                    self.update_loop_state(event.loop_id, cycle=event.data.get("cycle"))
+                elif event.type == StreamEventType.PHASE_START:
+                    self.update_loop_state(event.loop_id, phase=event.data.get("phase"))
+
+                # Serialize event
+                event_dict = {
+                    "type": event.type.value,
+                    "data": event.data,
+                    "timestamp": event.timestamp,
+                    "round": event.round,
+                    "agent": event.agent,
+                    "loop_id": event.loop_id,
+                }
+                message = json.dumps(event_dict)
+
+                # Broadcast to all clients
+                dead_clients = []
+                for client in list(self.clients):
+                    try:
+                        await client.send_str(message)
+                    except Exception:
+                        dead_clients.append(client)
+
+                for client in dead_clients:
+                    self.clients.discard(client)
+
+            except queue.Empty:
+                await asyncio.sleep(0.01)
+            except Exception as e:
+                logger.error(f"[ws] Drain loop error: {e}")
+                await asyncio.sleep(0.1)
+
+    async def start(self) -> None:
+        """Start the unified HTTP+WebSocket server."""
+        import aiohttp.web as web
+
+        self._running = True
+
+        # Create aiohttp app
+        app = web.Application()
+
+        # Add routes
+        app.router.add_route("OPTIONS", "/{path:.*}", self._handle_options)
+        app.router.add_get("/api/leaderboard", self._handle_leaderboard)
+        app.router.add_get("/api/matches/recent", self._handle_matches_recent)
+        app.router.add_get("/api/insights/recent", self._handle_insights_recent)
+        app.router.add_get("/api/flips/summary", self._handle_flips_summary)
+        app.router.add_get("/api/flips/recent", self._handle_flips_recent)
+        app.router.add_get("/api/tournaments", self._handle_tournaments)
+        app.router.add_get("/api/memory/tier-stats", self._handle_memory_tier_stats)
+        app.router.add_get("/api/laboratory/emergent-traits", self._handle_laboratory_emergent_traits)
+        app.router.add_get("/api/laboratory/cross-pollinations/suggest", self._handle_laboratory_cross_pollinations)
+        app.router.add_get("/api/nomic/state", self._handle_nomic_state)
+        app.router.add_get("/", self._websocket_handler)  # WebSocket at root
+        app.router.add_get("/ws", self._websocket_handler)  # Also at /ws
+
+        # Start drain loop
+        asyncio.create_task(self._drain_loop())
+
+        # Run server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, self.host, self.port)
+
+        print(f"Unified server (HTTP+WS) running on http://{self.host}:{self.port}")
+        print(f"  WebSocket: ws://{self.host}:{self.port}/")
+        print(f"  HTTP API:  http://{self.host}:{self.port}/api/*")
+
+        await site.start()
+
+        # Keep running
+        try:
+            await asyncio.Future()
+        finally:
+            self._running = False
+            await runner.cleanup()
+
+    def stop(self) -> None:
+        """Stop the server."""
+        self._running = False

@@ -19,6 +19,7 @@ from .stream import DebateStreamServer, SyncEventEmitter, StreamEvent, StreamEve
 from .storage import DebateStorage
 from .documents import DocumentStore, parse_document, get_supported_formats, SUPPORTED_EXTENSIONS
 from .auth import auth_config, check_auth
+from .cors_config import cors_config
 
 # For ad-hoc debates
 import threading
@@ -264,13 +265,14 @@ except ImportError:
     PROVENANCE_AVAILABLE = False
     ProvenanceTracker = None
 
-# Optional AgentSelector for routing recommendations
+# Optional AgentSelector for routing recommendations and auto team selection
 try:
-    from aragora.routing.selection import AgentSelector, TaskRequirements
+    from aragora.routing.selection import AgentSelector, AgentProfile, TaskRequirements
     ROUTING_AVAILABLE = True
 except ImportError:
     ROUTING_AVAILABLE = False
     AgentSelector = None
+    AgentProfile = None
     TaskRequirements = None
 
 # Optional TournamentManager for tournament standings
@@ -595,6 +597,71 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             UnifiedHandler._upload_counts[client_ip].append(now)
 
         return True
+
+    def _auto_select_agents(self, question: str, config: dict) -> str:
+        """Select optimal agents using AgentSelector.
+
+        Args:
+            question: The debate question/topic
+            config: Optional configuration with:
+                - primary_domain: Main domain (default: 'general')
+                - secondary_domains: Additional domains
+                - min_agents: Minimum team size (default: 2)
+                - max_agents: Maximum team size (default: 4)
+                - quality_priority: 0-1 scale (default: 0.7)
+                - diversity_preference: 0-1 scale (default: 0.5)
+
+        Returns:
+            Comma-separated string of agent types with optional roles
+        """
+        if not ROUTING_AVAILABLE:
+            return 'gemini,anthropic-api'  # Fallback
+
+        try:
+            # Build task requirements from question and config
+            requirements = TaskRequirements(
+                task_id=f"debate-{uuid.uuid4().hex[:8]}",
+                description=question[:500],  # Truncate for safety
+                primary_domain=config.get('primary_domain', 'general'),
+                secondary_domains=config.get('secondary_domains', []),
+                required_traits=config.get('required_traits', []),
+                min_agents=min(max(config.get('min_agents', 2), 2), 5),
+                max_agents=min(max(config.get('max_agents', 4), 2), 8),
+                quality_priority=min(max(config.get('quality_priority', 0.7), 0), 1),
+                diversity_preference=min(max(config.get('diversity_preference', 0.5), 0), 1),
+            )
+
+            # Create selector with ELO system and persona manager
+            selector = AgentSelector(
+                elo_system=self.elo_system,
+                persona_manager=self.persona_manager,
+            )
+
+            # Populate agent pool from allowed types
+            for agent_type in ALLOWED_AGENT_TYPES:
+                selector.register_agent(AgentProfile(
+                    name=agent_type,
+                    agent_type=agent_type,
+                ))
+
+            # Select optimal team
+            team = selector.select_team(requirements)
+
+            # Build agent string with roles if available
+            agent_specs = []
+            for agent in team.agents:
+                role = team.roles.get(agent.name, '')
+                if role:
+                    agent_specs.append(f"{agent.agent_type}:{role}")
+                else:
+                    agent_specs.append(agent.agent_type)
+
+            logger.info(f"[auto_select] Selected team: {agent_specs} (rationale: {team.rationale[:100]})")
+            return ','.join(agent_specs)
+
+        except Exception as e:
+            logger.warning(f"[auto_select] Failed: {e}, using fallback")
+            return 'gemini,anthropic-api'  # Fallback on error
 
     def do_GET(self) -> None:
         """Handle GET requests."""
@@ -1241,7 +1308,15 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         # Parse optional fields with validation
-        agents_str = data.get('agents', 'gemini,anthropic-api')
+        auto_select = data.get('auto_select', False)
+        auto_select_config = data.get('auto_select_config', {})
+
+        # Auto-select agents or use provided list
+        if auto_select and ROUTING_AVAILABLE:
+            agents_str = self._auto_select_agents(question, auto_select_config)
+        else:
+            agents_str = data.get('agents', 'gemini,anthropic-api')
+
         try:
             rounds = min(max(int(data.get('rounds', 3)), 1), 10)  # Clamp to 1-10
         except (ValueError, TypeError):
@@ -4042,20 +4117,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
     def _add_cors_headers(self) -> None:
         """Add CORS headers with origin validation."""
-        # Security: Validate origin against allowlist instead of wildcard
-        allowed_origins = {
-            'http://localhost:3000',
-            'http://localhost:8080',
-            'http://127.0.0.1:3000',
-            'http://127.0.0.1:8080',
-            'https://aragora.ai',
-            'https://www.aragora.ai',
-            'https://live.aragora.ai',
-            'https://api.aragora.ai',
-        }
+        # Security: Validate origin against centralized allowlist
         request_origin = self.headers.get('Origin', '')
 
-        if request_origin in allowed_origins:
+        if cors_config.is_origin_allowed(request_origin):
             self.send_header('Access-Control-Allow-Origin', request_origin)
         elif not request_origin:
             # Same-origin requests don't have Origin header

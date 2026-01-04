@@ -7,26 +7,22 @@ Provides REST endpoints for fetching debates and serves the viewer HTML.
 import json
 import logging
 import os
+import re
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
+# Safe ID pattern: alphanumeric, dash, underscore, dot (for slugs like "rate-limiter-2026-01-01")
+# Max 200 chars to prevent DoS via extremely long IDs
+SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$')
+
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-# Allowed origins for CORS - configure via environment variable
-ALLOWED_ORIGINS = os.getenv("ARAGORA_ALLOWED_ORIGINS", "").split(",")
-if not ALLOWED_ORIGINS or ALLOWED_ORIGINS == [""]:
-    # Default to common development origins
-    ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://localhost:8080",
-        "https://aragora.ai",
-        "https://live.aragora.ai",
-        "https://www.aragora.ai",
-    ]
+# Centralized CORS configuration
+from aragora.server.cors_config import ALLOWED_ORIGINS
 
 # Maximum request body size (50 MB) to prevent memory exhaustion
 MAX_REQUEST_SIZE = 50 * 1024 * 1024
@@ -52,6 +48,9 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
         # API routes
         if path.startswith('/api/debates/'):
             slug = path.split('/')[-1]
+            if not SAFE_ID_PATTERN.match(slug):
+                self.send_error(400, "Invalid debate slug format")
+                return
             self._get_debate(slug)
         elif path == '/api/debates':
             try:
@@ -61,6 +60,9 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             self._list_debates(limit)
         elif path.startswith('/api/replays/'):
             debate_id = path.split('/')[-1]
+            if not SAFE_ID_PATTERN.match(debate_id):
+                self.send_error(400, "Invalid replay ID format")
+                return
             self._get_replay(debate_id)
         elif path == '/api/replays':
             try:

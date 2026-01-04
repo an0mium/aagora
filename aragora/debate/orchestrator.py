@@ -329,6 +329,7 @@ class Arena:
 
         # Cache for continuum memory context (retrieved once per debate)
         self._continuum_context_cache: str = ""
+        self._continuum_retrieved_ids: list = []  # Track retrieved memory IDs for outcome updates
 
         # Citation extraction (Heavy3-inspired evidence grounding)
         self.citation_extractor = None
@@ -339,7 +340,8 @@ class Arena:
     def _get_continuum_context(self) -> str:
         """Retrieve relevant memories from ContinuumMemory for debate context.
 
-        Uses the debate task to query for related past learnings.
+        Uses the debate task and domain to query for related past learnings.
+        Enhanced with tier-aware retrieval and confidence markers.
         """
         if self._continuum_context_cache:
             return self._continuum_context_cache
@@ -348,9 +350,12 @@ class Arena:
             return ""
 
         try:
-            # Retrieve top memories related to debate topic
+            domain = self._extract_debate_domain()
+            query = f"{domain}: {self.env.task[:200]}"
+
+            # Retrieve memories, prioritizing fast/medium tiers (skip glacial for speed)
             memories = self.continuum_memory.retrieve(
-                query=self.env.task[:200],  # Use task as query
+                query=query,
                 limit=5,
                 min_importance=0.3,  # Only important memories
             )
@@ -358,19 +363,111 @@ class Arena:
             if not memories:
                 return ""
 
-            # Format memories as context
+            # Track retrieved memory IDs for outcome updates after debate
+            self._continuum_retrieved_ids = [
+                getattr(mem, 'id', None) for mem in memories if getattr(mem, 'id', None)
+            ]
+
+            # Format memories with confidence markers based on consolidation
             context_parts = ["[Previous learnings relevant to this debate:]"]
             for mem in memories[:3]:  # Top 3 most relevant
                 content = mem.content[:200] if hasattr(mem, 'content') else str(mem)[:200]
                 tier = mem.tier.value if hasattr(mem, 'tier') else "unknown"
-                context_parts.append(f"- [{tier}] {content}")
+                # Consolidation score indicates reliability
+                consolidation = getattr(mem, 'consolidation_score', 0.5)
+                confidence = "high" if consolidation > 0.7 else "medium" if consolidation > 0.4 else "low"
+                context_parts.append(f"- [{tier}|{confidence}] {content}")
 
             self._continuum_context_cache = "\n".join(context_parts)
-            print(f"  [continuum] Retrieved {len(memories)} relevant memories")
+            logger.info(f"  [continuum] Retrieved {len(memories)} relevant memories for domain '{domain}'")
             return self._continuum_context_cache
         except Exception as e:
-            print(f"  [continuum] Memory retrieval error: {e}")
+            logger.warning(f"  [continuum] Memory retrieval error: {e}")
             return ""
+
+    def _store_debate_outcome_as_memory(self, result: "DebateResult") -> None:
+        """Store debate outcome in ContinuumMemory for future retrieval.
+
+        Creates a memory entry from the winning approach to inform future debates.
+        """
+        if not self.continuum_memory or not result.final_answer:
+            return
+
+        try:
+            # Calculate importance based on confidence and consensus
+            importance = min(0.95, (result.confidence + 0.5) / 1.5)
+            if result.consensus_reached:
+                importance = min(1.0, importance + 0.1)
+
+            # Determine tier based on debate quality
+            # Multi-round debates with high confidence go to faster tiers
+            if result.rounds_used >= 2 and result.confidence > 0.7:
+                tier = "fast"
+            elif result.rounds_used >= 1 and result.confidence > 0.5:
+                tier = "medium"
+            else:
+                tier = "slow"
+
+            # Store the winning approach with domain context
+            domain = self._extract_debate_domain()
+            memory_content = (
+                f"[{domain}] Debate outcome: {result.final_answer[:300]}... "
+                f"(Confidence: {result.confidence:.0%}, Rounds: {result.rounds_used})"
+            )
+
+            self.continuum_memory.add(
+                id=f"debate_outcome_{result.id[:8]}",
+                content=memory_content,
+                tier=tier,
+                importance=importance,
+                metadata={
+                    "debate_id": result.id,
+                    "task": self.env.task[:100],
+                    "domain": domain,
+                    "winner": result.winner,
+                    "confidence": result.confidence,
+                    "consensus": result.consensus_reached,
+                }
+            )
+            logger.info(f"  [continuum] Stored outcome as {tier}-tier memory (importance: {importance:.2f})")
+
+        except Exception as e:
+            logger.warning(f"  [continuum] Failed to store outcome: {e}")
+
+    def _update_continuum_memory_outcomes(self, result: "DebateResult") -> None:
+        """Update retrieved memories based on debate outcome.
+
+        Implements surprise-based learning: memories that led to successful
+        debates get reinforced, those that didn't get demoted.
+        """
+        if not self.continuum_memory or not self._continuum_retrieved_ids:
+            return
+
+        try:
+            success = result.consensus_reached and result.confidence > 0.6
+            updated_count = 0
+
+            for mem_id in self._continuum_retrieved_ids:
+                try:
+                    # Update outcome with prediction error based on debate confidence
+                    prediction_error = 1.0 - result.confidence if success else result.confidence
+                    self.continuum_memory.update_outcome(
+                        id=mem_id,
+                        success=success,
+                        agent_prediction_error=prediction_error,
+                    )
+                    updated_count += 1
+                except Exception as e:
+                    logger.debug(f"  [continuum] Failed to update memory {mem_id}: {e}")
+
+            if updated_count > 0:
+                logger.info(f"  [continuum] Updated {updated_count} memories with outcome (success={success})")
+
+            # Clear tracked IDs after update
+            self._continuum_retrieved_ids = []
+
+        except Exception as e:
+            logger.warning(f"  [continuum] Failed to update memory outcomes: {e}")
 
     def _extract_citation_needs(self, proposals: dict[str, str]) -> dict[str, list[dict]]:
         """Extract claims that need citations from all proposals.
@@ -1907,6 +2004,10 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                                 ))
             except Exception as e:
                 logger.debug("Flip detection failed: %s", e)
+
+        # 6. Store debate outcome in ContinuumMemory for future learning
+        if self.continuum_memory and result.final_answer:
+            self._store_debate_outcome_as_memory(result)
 
         return result
 

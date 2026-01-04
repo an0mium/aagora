@@ -14,6 +14,8 @@ import time
 from typing import Optional, Dict, Any
 from urllib.parse import parse_qs
 
+from aragora.server.cors_config import cors_config
+
 
 class AuthConfig:
     """Configuration for authentication."""
@@ -22,12 +24,7 @@ class AuthConfig:
         self.enabled = False
         self.api_token: Optional[str] = None
         self.token_ttl = 3600  # 1 hour default
-        self.allowed_origins: list[str] = [
-            "http://localhost:3000",
-            "http://localhost:8080",
-            "https://aragora.ai",
-            "https://live.aragora.ai",
-        ]  # CORS origins (safe defaults)
+        self.allowed_origins: list[str] = cors_config.get_origins_list()  # Centralized CORS
         # Rate limiting
         self.rate_limit_per_minute = 60  # Default requests per minute per token
         self.ip_rate_limit_per_minute = 120  # Default requests per minute per IP (more lenient)
