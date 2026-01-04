@@ -1381,9 +1381,9 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             lines.append("These critique patterns have worked well before:\n")
 
             for p in patterns:
-                lines.append(f"- **{p.issue_type}**: {p.issue_text[:100]}")
+                lines.append(f"- **{p.issue_type}**: {p.issue_text}")
                 if p.suggestion_text:
-                    lines.append(f"  → Fix: {p.suggestion_text[:100]}")
+                    lines.append(f"  → Fix: {p.suggestion_text}")
                 lines.append(f"  ({p.success_count} successes)")
 
             return "\n".join(lines)
@@ -1428,7 +1428,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             for issue_type, issue_text, fail_count, success_count in failures:
                 success_rate = success_count / (success_count + fail_count) if (success_count + fail_count) > 0 else 0
                 if success_rate < 0.5:  # Only show patterns with <50% success
-                    lines.append(f"- **{issue_type}**: {issue_text[:80]}...")
+                    lines.append(f"- **{issue_type}**: {issue_text}")
                     lines.append(f"  ({fail_count} failures, {success_rate:.0%} success rate)")
 
             return "\n".join(lines) if len(lines) > 2 else ""
@@ -1461,7 +1461,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             lines.append("Successful patterns learned across cycles:\n")
 
             for m in successful:
-                content = m.get("content", "")[:150]
+                content = m.get("content", "")
                 cycle = m.get("metadata", {}).get("cycle", "?")
                 lines.append(f"- Cycle {cycle}: {content}")
 
@@ -1489,8 +1489,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
 
             for s in similar:
                 strength = s.consensus.strength.value if s.consensus.strength else "unknown"
-                lines.append(f"- **{s.consensus.topic[:300]}** ({strength}, {s.similarity_score:.0%} similar)")
-                lines.append(f"  Decision: {s.consensus.conclusion[:500]}...")
+                lines.append(f"- **{s.consensus.topic}** ({strength}, {s.similarity_score:.0%} similar)")
+                lines.append(f"  Decision: {s.consensus.conclusion}")
                 if s.dissents:
                     lines.append(f"  ⚠️ {len(s.dissents)} dissenting view(s) - consider addressing")
 
@@ -1500,7 +1500,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                 if context.get("unacknowledged_dissents"):
                     lines.append("\n### Unaddressed Historical Concerns")
                     for d in context["unacknowledged_dissents"][:3]:
-                        lines.append(f"- [{d['dissent_type']}] {d['content'][:500]}...")
+                        lines.append(f"- [{d['dissent_type']}] {d['content']}")
 
             return "\n".join(lines)
         except Exception as e:
@@ -1559,7 +1559,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                     debate_id=record.id,
                     agent_id=f"agent_{i}",
                     dissent_type=DissentType.ALTERNATIVE_APPROACH,
-                    content=view[:500],
+                    content=view,
                     reasoning="Minority view from debate",
                     confidence=0.5,
                 )
@@ -1580,7 +1580,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             # Extract insights from the debate result
             insights = await self.insight_extractor.extract(result)
 
-            self._log(f"  [insights] Extracted {insights.total_insights} insights: {insights.key_takeaway[:500]}")
+            self._log(f"  [insights] Extracted {insights.total_insights} insights: {insights.key_takeaway}")
 
             # Persist insights to InsightStore database (debate consensus feature)
             if self.insight_store and insights:
@@ -1619,7 +1619,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                 if pattern.confidence > 0.7 and self.continuum:
                     self.continuum.add(
                         id=f"pattern-{self.cycle_count}-{pattern.id[:8]}",
-                        content=f"Pattern: {pattern.title} - {pattern.description[:1000]}",
+                        content=f"Pattern: {pattern.title} - {pattern.description}",
                         tier=MemoryTier.SLOW,
                         importance=pattern.confidence,
                         metadata={
@@ -1658,7 +1658,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                 return ""
             lines = [f"## Your memories ({agent_name}):"]
             for m in memories:
-                content = m.memory.content[:500] if hasattr(m, 'memory') else str(m)[:500]
+                content = m.memory.content if hasattr(m, 'memory') else str(m)
                 lines.append(f"- {content}...")
             return "\n".join(lines)
         except Exception as e:
@@ -1684,10 +1684,10 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                     agent = msg.get('agent')
                 if agent:
                     importance = 0.7 if agent in winning_agents else 0.5
-                    content = getattr(msg, 'content', str(msg))[:200]
+                    content = getattr(msg, 'content', str(msg))
                     self.memory_stream.observe(
                         agent_name=agent,
-                        content=f"Debated '{task[:50]}...': {content}",
+                        content=f"Debated '{task}': {content}",
                         debate_id=f"cycle-{self.cycle_count}",
                         importance=importance
                     )
@@ -1706,8 +1706,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             lines = ["## Relevant Codebase Evidence:"]
             for e in evidence:
                 source = getattr(e, 'source', 'unknown')
-                content = getattr(e, 'content', str(e))[:200]
-                lines.append(f"- [{source}]: {content}...")
+                content = getattr(e, 'content', str(e))
+                lines.append(f"- [{source}]: {content}")
             return "\n".join(lines)
         except Exception as e:
             self._log(f"  [evidence] Error gathering: {e}")
@@ -1728,7 +1728,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             if not pivot or not pivot.should_branch:
                 return result
 
-            self._log(f"  [counterfactual] Forking on: {pivot.statement[:80]}...")
+            self._log(f"  [counterfactual] Forking on: {pivot.statement}")
 
             # Fork into branches
             branches = await self.counterfactual.fork_on_claim(
@@ -1739,7 +1739,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
 
             # Synthesize conditional consensus
             conditional = await self.counterfactual.synthesize_branches(branches)
-            self._log(f"  [counterfactual] Conditional consensus: {conditional.summary[:100]}")
+            self._log(f"  [counterfactual] Conditional consensus: {conditional.summary}")
 
             # Update result with conditional consensus
             result.final_answer = conditional.summary
@@ -1777,7 +1777,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                     if self.critique_store:
                         for vuln in report.vulnerabilities:
                             severity_value = vuln.severity.value if hasattr(vuln.severity, 'value') else str(vuln.severity)
-                            self._log(f"    [prober] {vuln.vulnerability_description[:300]} (severity: {severity_value})")
+                            self._log(f"    [prober] {vuln.vulnerability_description} (severity: {severity_value})")
         except Exception as e:
             self._log(f"  [prober] Error: {e}")
 
@@ -1995,7 +1995,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                 if issues:
                     self._log(f"  [meta] Issues found: {len(issues)}")
             if critique.recommendations:
-                self._log(f"  [meta] Top recommendation: {critique.recommendations[0][:80]}")
+                self._log(f"  [meta] Top recommendation: {critique.recommendations[0]}")
             return critique
         except Exception as e:
             self._log(f"  [meta] Error: {e}")
@@ -2128,7 +2128,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             risk_level = "high" if not result.consensus_reached else "medium"
             risk_entry = {
                 "cycle": self.cycle_count,
-                "task": task[:100],
+                "task": task,
                 "confidence": result.confidence,
                 "consensus": result.consensus_reached,
                 "level": risk_level
@@ -2189,7 +2189,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             return {
                 "unsupported_count": len(unsupported),
                 "contradiction_count": len(contradictions),
-                "strongest_claims": [(c.statement[:100], s) for c, s in strongest],
+                "strongest_claims": [(c.statement, s) for c, s in strongest],
                 "evidence_coverage": coverage
             }
         except Exception as e:
@@ -2249,7 +2249,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             analyzer = BeliefPropagationAnalyzer(self.belief_network)
             cruxes = analyzer.identify_debate_cruxes(top_k=3)
             if cruxes:
-                self._log(f"  [belief] Top crux: {cruxes[0]['statement'][:80]}...")
+                self._log(f"  [belief] Top crux: {cruxes[0]['statement']}")
             return cruxes
         except Exception as e:
             self._log(f"  [belief] Crux analysis error: {e}")
@@ -2440,15 +2440,15 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
         if not CHECKPOINT_AVAILABLE or not self.checkpoint_manager:
             return {}
         try:
-            checkpoint = self.checkpoint_manager.resume_from_checkpoint(checkpoint_id)
-            if checkpoint:
-                self._log(f"  [checkpoint] Resumed: {checkpoint.debate_id} at round {checkpoint.round_number}")
+            resumed = self.checkpoint_manager.resume_from_checkpoint(checkpoint_id)
+            if resumed:
+                self._log(f"  [checkpoint] Resumed: {resumed.original_debate_id} at round {resumed.checkpoint.current_round}")
                 return {
-                    "debate_id": checkpoint.debate_id,
-                    "task": checkpoint.task,
-                    "round": checkpoint.round_number,
-                    "messages": checkpoint.messages,
-                    "consensus": checkpoint.consensus_state
+                    "debate_id": resumed.original_debate_id,
+                    "task": resumed.checkpoint.task,
+                    "round": resumed.checkpoint.current_round,
+                    "messages": resumed.messages,  # Already deserialized Message objects
+                    "consensus": resumed.checkpoint.current_consensus
                 }
             return {}
         except Exception as e:
@@ -2535,9 +2535,12 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             # Convert list[TypedClaim] to dict[str, str] for reliability scorer
             claims_dict = {c.claim_id: c.statement for c in claims}
             report = self.reliability_scorer.generate_reliability_report(claims_dict)
-            high_reliability = sum(1 for c in report.get("claims", [])
+            # report["claims"] is a dict of {claim_id: result_dict}, iterate .values()
+            claims_results = report.get("claims", {})
+            claims_list = list(claims_results.values()) if isinstance(claims_results, dict) else claims_results
+            high_reliability = sum(1 for c in claims_list
                                    if c.get("level") in ("VERY_HIGH", "HIGH"))
-            low_reliability = sum(1 for c in report.get("claims", [])
+            low_reliability = sum(1 for c in claims_list
                                   if c.get("level") in ("VERY_LOW", "SPECULATIVE"))
 
             self._log(f"  [reliability] Report: {high_reliability} high, {low_reliability} low reliability")
@@ -2733,7 +2736,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
 
             context_parts = ["=== SIMILAR PAST CRITIQUES ==="]
             for id_, text, sim in similar:
-                context_parts.append(f"[Similarity: {sim:.2f}] {text[:300]}...")
+                context_parts.append(f"[Similarity: {sim:.2f}] {text}")
 
             return "\n".join(context_parts)
         except Exception as e:
@@ -2747,7 +2750,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
         try:
             result = await self.formal_verifier.verify_claim(claim_text, claim_type)
             if result and result.is_verified:
-                self._log(f"  [formal] Claim verified: {claim_text[:50]}...")
+                self._log(f"  [formal] Claim verified: {claim_text}")
             return result.to_dict() if result else {}
         except Exception as e:
             self._log(f"  [formal] Verification error: {e}")
@@ -2856,8 +2859,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             forker = DebateForker()
             result = await forker.run_branches(fork_decision, base_context)
             if result:
-                winning = getattr(result, 'winning_hypothesis', '')[:50]
-                self._log(f"  [forking] Merged: {winning}...")
+                winning = getattr(result, 'winning_hypothesis', '')
+                self._log(f"  [forking] Merged: {winning}")
             return result
         except Exception as e:
             self._log(f"  [forking] Run error: {e}")
@@ -3016,11 +3019,11 @@ Be concise (1-2 sentences). Focus on correctness and safety issues only.
             try:
                 self._log(f"    {name}: reviewing implementation...", agent=name)
                 result = await agent.generate(review_prompt, context=[])
-                self._log(f"    {name}: {result[:1000] if result else 'No response'}...", agent=name)
+                self._log(f"    {name}: {result if result else 'No response'}", agent=name)
                 # Emit full review
                 if result:
                     self._stream_emit("on_log_message", result, level="info", phase="review", agent=name)
-                return (name, result[:2000] if result else "No response")
+                return (name, result if result else "No response")
             except Exception as e:
                 self._log(f"    {name}: review error - {e}", agent=name)
                 return (name, f"Error: {e}")
@@ -3197,7 +3200,7 @@ Synthesize these suggestions into a coherent, working implementation.
                 "stage": "arena_complete",
                 "consensus_reached": result.consensus_reached,
                 "confidence": result.confidence,
-                "final_answer_preview": result.final_answer[:2000] if result.final_answer else None,
+                "final_answer_preview": result.final_answer if result.final_answer else None,
             })
 
             return result
@@ -3444,7 +3447,7 @@ You may adopt it, critique it, improve upon it, or propose something entirely di
 {self.initial_proposal}
 ====================================
 """
-            self._log(f"  Including human proposal: {self.initial_proposal[:100]}...")
+            self._log(f"  Including human proposal: {self.initial_proposal}")
 
         # Build context section with clear attribution
         if codebase_context and len(codebase_context) > 500:
@@ -3559,7 +3562,7 @@ Recent changes:
 
         # Update agent reputation based on debate outcome
         if self.critique_store and result.consensus_reached:
-            winning_proposal = result.final_answer[:1000] if result.final_answer else ""
+            winning_proposal = result.final_answer if result.final_answer else ""
             for agent in debate_team:
                 # Check if this agent's proposal was selected
                 proposal_accepted = agent.name.lower() in winning_proposal.lower()
@@ -3980,32 +3983,32 @@ Learn from past patterns shown above - repeat successes and avoid failures.""",
         # Pattern 1: AssertionError messages
         assert_matches = re.findall(r"AssertionError: (.+?)(?:\n|$)", test_output)
         for match in assert_matches[:3]:  # Limit to 3
-            failure_patterns.append(("assertion", match[:100]))
+            failure_patterns.append(("assertion", match))
 
         # Pattern 2: Import errors
         import_matches = re.findall(r"(?:ImportError|ModuleNotFoundError): (.+?)(?:\n|$)", test_output)
         for match in import_matches[:3]:
-            failure_patterns.append(("import", match[:100]))
+            failure_patterns.append(("import", match))
 
         # Pattern 3: Type errors
         type_matches = re.findall(r"TypeError: (.+?)(?:\n|$)", test_output)
         for match in type_matches[:3]:
-            failure_patterns.append(("type", match[:100]))
+            failure_patterns.append(("type", match))
 
         # Pattern 4: Attribute errors
         attr_matches = re.findall(r"AttributeError: (.+?)(?:\n|$)", test_output)
         for match in attr_matches[:3]:
-            failure_patterns.append(("attribute", match[:100]))
+            failure_patterns.append(("attribute", match))
 
         # Pattern 5: Syntax errors
         syntax_matches = re.findall(r"SyntaxError: (.+?)(?:\n|$)", test_output)
         for match in syntax_matches[:3]:
-            failure_patterns.append(("syntax", match[:100]))
+            failure_patterns.append(("syntax", match))
 
         # Record each failure pattern
         for issue_type, issue_text in failure_patterns:
             self.critique_store.fail_pattern(issue_text, issue_type=issue_type)
-            self._log(f"  Recorded failure pattern: [{issue_type}] {issue_text[:50]}...")
+            self._log(f"  Recorded failure pattern: [{issue_type}] {issue_text}")
 
         if failure_patterns:
             self._log(f"  Recorded {len(failure_patterns)} failure patterns for future learning")
@@ -4413,7 +4416,7 @@ CRITICAL SAFETY RULES:
                 "output": result.stderr,
             })
             self._log(f"    {'passed' if passed else 'FAILED'} syntax")
-            self._stream_emit("on_verification_result", "syntax", passed, result.stderr[:200] if result.stderr else "")
+            self._stream_emit("on_verification_result", "syntax", passed, result.stderr if result.stderr else "")
         except Exception as e:
             checks.append({"check": "syntax", "passed": False, "error": str(e)})
             self._log(f"    FAILED syntax: {e}")
@@ -4436,7 +4439,7 @@ CRITICAL SAFETY RULES:
                 "output": result.stderr if result.returncode != 0 else "",
             })
             self._log(f"    {'passed' if passed else 'FAILED'} import")
-            self._stream_emit("on_verification_result", "import", passed, result.stderr[:200] if result.stderr else "")
+            self._stream_emit("on_verification_result", "import", passed, result.stderr if result.stderr else "")
         except Exception as e:
             checks.append({"check": "import", "passed": False, "error": str(e)})
             self._log(f"    FAILED import: {e}")
@@ -4549,7 +4552,7 @@ CRITICAL SAFETY RULES:
                 )
                 return {"phase": "commit", "committed": False, "reason": "Human declined"}
 
-        summary = improvement[:500].replace('\n', ' ')
+        summary = improvement.replace('\n', ' ')
 
         try:
             subprocess.run(
@@ -4568,7 +4571,7 @@ CRITICAL SAFETY RULES:
             committed = result.returncode == 0
 
             if committed:
-                self._log(f"  Committed: {summary[:300]}...")
+                self._log(f"  Committed: {summary}")
                 # Get commit hash
                 hash_result = subprocess.run(
                     ["git", "rev-parse", "--short", "HEAD"],
@@ -4936,8 +4939,8 @@ Reply with: LOOKS_GOOD or ISSUES: <brief description>
 """
                 # Use retry wrapper for resilience
                 gemini_result = await self._call_agent_with_retry(self.gemini, gemini_review_prompt, max_retries=2)
-                iteration_result["gemini_review"] = gemini_result[:1000] if gemini_result else "No response"
-                self._log(f"    Gemini: {gemini_result[:500] if gemini_result else 'No response'}...", agent="gemini")
+                iteration_result["gemini_review"] = gemini_result if gemini_result else "No response"
+                self._log(f"    Gemini: {gemini_result if gemini_result else 'No response'}", agent="gemini")
                 # Emit Gemini's full review
                 if gemini_result and not ("[Agent" in gemini_result and "failed" in gemini_result):
                     self._stream_emit("on_log_message", gemini_result, level="info", phase="fix", agent="gemini")
@@ -4976,12 +4979,12 @@ Working directory: {self.aragora_path}
 """
                     # Use retry wrapper for resilience
                     grok_result = await self._call_agent_with_retry(self.grok, grok_fix_prompt, max_retries=2)
-                    iteration_result["grok_fix"] = grok_result[:1000] if grok_result else "No response"
+                    iteration_result["grok_fix"] = grok_result if grok_result else "No response"
                     if grok_result and not ("[Agent" in grok_result and "failed" in grok_result):
                         self._log(f"    Grok fix applied", agent="grok")
                         self._stream_emit("on_log_message", grok_result, level="info", phase="fix", agent="grok")
                     else:
-                        self._log(f"    Grok fix failed: {grok_result[:500] if grok_result else 'No response'}", agent="grok")
+                        self._log(f"    Grok fix failed: {grok_result if grok_result else 'No response'}", agent="grok")
                 except Exception as e:
                     self._log(f"    Grok fix skipped: {e}", agent="grok")
             else:
@@ -5095,7 +5098,7 @@ Working directory: {self.aragora_path}
         if self.continuum and CONTINUUM_AVAILABLE:
             try:
                 outcome = cycle_result.get("outcome", "unknown")
-                improvement = cycle_result.get("phases", {}).get("debate", {}).get("final_answer", "")[:2000]
+                improvement = cycle_result.get("phases", {}).get("debate", {}).get("final_answer", "")
                 is_success = outcome == "success"
 
                 # Store in SLOW tier (strategic learning across cycles)
@@ -5156,7 +5159,7 @@ Working directory: {self.aragora_path}
         self._log(f"Human approval required: {self.require_human_approval}")
         self._log(f"Auto-commit: {self.auto_commit}")
         if self.initial_proposal:
-            self._log(f"Initial proposal: {self.initial_proposal[:100]}...")
+            self._log(f"Initial proposal: {self.initial_proposal}")
         self._log("=" * 70)
         self._log(f"Log file: {self.log_file}")
         self._log(f"State file: {self.state_file}")
