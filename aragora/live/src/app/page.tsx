@@ -17,6 +17,7 @@ import { CitationsPanel } from '@/components/CitationsPanel';
 import { VerdictCard } from '@/components/VerdictCard';
 import { CompareView, CompareButton } from '@/components/CompareView';
 import { DeepAuditView, DeepAuditToggle } from '@/components/DeepAuditView';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import type { NomicState } from '@/types/events';
 
 // WebSocket URL - can be overridden via environment variable
@@ -183,6 +184,9 @@ export default function Home() {
 
             {/* Compare Button */}
             <CompareButton onClick={() => setShowCompare(true)} />
+
+            {/* Theme Toggle */}
+            <ThemeToggle />
 
             {/* Loop Selector - Only show if multiple loops */}
             {activeLoops.length > 1 && (
