@@ -171,6 +171,17 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             doc_id = path.split('/')[-1]
             self._get_document(doc_id)
 
+        # Replay API
+        elif path == '/api/replays':
+            self._list_replays()
+        elif path.startswith('/api/replays/') and not path.endswith('/fork'):
+            replay_id = path.split('/')[3]
+            self._get_replay(replay_id)
+
+        # Learning Evolution API
+        elif path == '/api/learning/evolution':
+            self._get_learning_evolution()
+
         # Flip Detection API
         elif path == '/api/flips/recent':
             limit = int(query.get('limit', [20])[0])
@@ -703,6 +714,98 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": str(e), "history": []})
+
+    def _list_replays(self) -> None:
+        """List available replay directories."""
+        if not self.nomic_state_file:
+            self._send_json([])
+            return
+
+        try:
+            replays_dir = self.nomic_state_file.parent / "replays"
+            if not replays_dir.exists():
+                self._send_json([])
+                return
+
+            replays = []
+            for replay_path in replays_dir.iterdir():
+                if replay_path.is_dir():
+                    meta_file = replay_path / "meta.json"
+                    if meta_file.exists():
+                        meta = json.loads(meta_file.read_text())
+                        replays.append({
+                            "id": replay_path.name,
+                            "topic": meta.get("topic", replay_path.name),
+                            "agents": [a.get("name") for a in meta.get("agents", [])],
+                            "schema_version": meta.get("schema_version", "1.0"),
+                        })
+            self._send_json(sorted(replays, key=lambda x: x["id"], reverse=True))
+        except Exception as e:
+            self._send_json({"error": str(e)})
+
+    def _get_replay(self, replay_id: str) -> None:
+        """Get a specific replay with events."""
+        if not self.nomic_state_file:
+            self._send_json({"error": "Replays not configured"})
+            return
+
+        try:
+            replay_dir = self.nomic_state_file.parent / "replays" / replay_id
+            if not replay_dir.exists():
+                self._send_json({"error": f"Replay not found: {replay_id}"})
+                return
+
+            # Load meta
+            meta_file = replay_dir / "meta.json"
+            meta = json.loads(meta_file.read_text()) if meta_file.exists() else {}
+
+            # Load events
+            events_file = replay_dir / "events.jsonl"
+            events = []
+            if events_file.exists():
+                for line in events_file.read_text().strip().split("\n"):
+                    if line:
+                        events.append(json.loads(line))
+
+            self._send_json({
+                "id": replay_id,
+                "meta": meta,
+                "events": events,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)})
+
+    def _get_learning_evolution(self) -> None:
+        """Get learning/evolution data from meta_learning.db."""
+        if not self.nomic_state_file:
+            self._send_json({"error": "Learning data not configured", "patterns": []})
+            return
+
+        try:
+            import sqlite3
+            db_path = self.nomic_state_file.parent / "meta_learning.db"
+            if not db_path.exists():
+                self._send_json({"patterns": [], "count": 0})
+                return
+
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+
+            # Get recent patterns
+            cursor = conn.execute("""
+                SELECT * FROM meta_patterns
+                ORDER BY created_at DESC
+                LIMIT 20
+            """)
+            patterns = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+
+            self._send_json({
+                "patterns": patterns,
+                "count": len(patterns),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "patterns": []})
 
     def _get_recent_flips(self, limit: int) -> None:
         """Get recent position flips across all agents."""
