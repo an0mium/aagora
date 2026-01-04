@@ -438,6 +438,17 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             self._get_agent_full_profile(agent)
 
+        # Debate Analytics API
+        elif path == '/api/analytics/disagreements':
+            limit = self._safe_int(query, 'limit', 20, 100)
+            self._get_disagreement_report(limit)
+        elif path == '/api/analytics/role-rotation':
+            limit = self._safe_int(query, 'limit', 50, 200)
+            self._get_role_rotation_report(limit)
+        elif path == '/api/analytics/early-stops':
+            limit = self._safe_int(query, 'limit', 20, 100)
+            self._get_early_stop_signals(limit)
+
         # Static file serving
         elif path in ('/', '/index.html'):
             self._serve_file('index.html')
@@ -1511,6 +1522,95 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             profile["calibration"] = None
 
         self._send_json(profile)
+
+    def _get_disagreement_report(self, limit: int) -> None:
+        """Get report of debates with significant disagreements."""
+        if not self.storage:
+            self._send_json({"error": "Storage not configured", "disagreements": []})
+            return
+
+        try:
+            debates = self.storage.list_debates(limit=limit * 2)  # Fetch extra to filter
+            disagreements = []
+            for debate in debates:
+                # Check for low consensus or explicit dissent
+                if not debate.get("consensus_reached", True) or debate.get("dissent_count", 0) > 0:
+                    disagreements.append({
+                        "debate_id": debate.get("id", debate.get("slug", "")),
+                        "topic": debate.get("task", debate.get("topic", "")),
+                        "agents": debate.get("agents", []),
+                        "dissent_count": debate.get("dissent_count", 0),
+                        "consensus_reached": debate.get("consensus_reached", False),
+                        "confidence": debate.get("confidence", 0.0),
+                        "timestamp": debate.get("created_at", ""),
+                    })
+                if len(disagreements) >= limit:
+                    break
+            self._send_json({"disagreements": disagreements, "count": len(disagreements)})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "disagreement_report"), "disagreements": []})
+
+    def _get_role_rotation_report(self, limit: int) -> None:
+        """Get report of agent role assignments across debates."""
+        if not self.storage:
+            self._send_json({"error": "Storage not configured", "rotations": []})
+            return
+
+        try:
+            debates = self.storage.list_debates(limit=limit)
+            role_counts: dict = {}  # agent -> role -> count
+            rotations = []
+            for debate in debates:
+                agents = debate.get("agents", [])
+                roles = debate.get("roles", {})  # {agent: role} if available
+                for agent in agents:
+                    role = roles.get(agent, "participant")
+                    if agent not in role_counts:
+                        role_counts[agent] = {}
+                    role_counts[agent][role] = role_counts[agent].get(role, 0) + 1
+                    rotations.append({
+                        "debate_id": debate.get("id", debate.get("slug", "")),
+                        "agent": agent,
+                        "role": role,
+                        "timestamp": debate.get("created_at", ""),
+                    })
+            self._send_json({
+                "rotations": rotations[:limit],
+                "summary": role_counts,
+                "count": len(rotations),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "role_rotation"), "rotations": []})
+
+    def _get_early_stop_signals(self, limit: int) -> None:
+        """Get debates that were terminated early (before all rounds completed)."""
+        if not self.storage:
+            self._send_json({"error": "Storage not configured", "early_stops": []})
+            return
+
+        try:
+            debates = self.storage.list_debates(limit=limit * 2)
+            early_stops = []
+            for debate in debates:
+                rounds_completed = debate.get("rounds_completed", 0)
+                rounds_planned = debate.get("rounds_planned", debate.get("rounds", 3))
+                early_stopped = debate.get("early_stopped", False)
+                # Detect early termination
+                if early_stopped or (rounds_planned > 0 and rounds_completed < rounds_planned):
+                    early_stops.append({
+                        "debate_id": debate.get("id", debate.get("slug", "")),
+                        "topic": debate.get("task", debate.get("topic", "")),
+                        "rounds_completed": rounds_completed,
+                        "rounds_planned": rounds_planned,
+                        "reason": debate.get("stop_reason", "unknown"),
+                        "consensus_early": debate.get("consensus_reached", False),
+                        "timestamp": debate.get("created_at", ""),
+                    })
+                if len(early_stops) >= limit:
+                    break
+            self._send_json({"early_stops": early_stops, "count": len(early_stops)})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "early_stops"), "early_stops": []})
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""
