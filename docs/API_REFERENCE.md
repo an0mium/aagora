@@ -367,6 +367,33 @@ Get consensus history for a domain.
 
 ---
 
+### Pulse (Trending Topics)
+
+Real-time trending topic ingestion for dynamic debate generation.
+
+#### GET /api/pulse/trending
+Get trending topics from social media platforms.
+
+**Parameters:**
+- `limit` (int, default=10, max=50): Maximum topics to return per platform
+
+**Response:**
+```json
+{
+  "topics": [
+    {
+      "topic": "AI regulation debate",
+      "platform": "twitter",
+      "volume": 15000,
+      "category": "tech"
+    }
+  ],
+  "count": 5
+}
+```
+
+---
+
 ### Agent Profile (Combined)
 
 #### GET /api/agent/:name/profile

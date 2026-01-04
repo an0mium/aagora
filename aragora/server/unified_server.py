@@ -146,6 +146,15 @@ except ImportError:
     CALIBRATION_AVAILABLE = False
     CalibrationTracker = None
 
+# Optional PulseManager for trending topics
+try:
+    from aragora.pulse.ingestor import PulseManager, TrendingTopic, TwitterIngestor
+    PULSE_AVAILABLE = True
+except ImportError:
+    PULSE_AVAILABLE = False
+    PulseManager = None
+    TrendingTopic = None
+
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 _active_debates_lock = threading.Lock()  # Thread-safe access to _active_debates
@@ -342,6 +351,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             domain = query.get('domain', [None])[0]
             self._get_agent_calibration(agent, domain)
+
+        # Pulse API (trending topics)
+        elif path == '/api/pulse/trending':
+            limit = self._safe_int(query, 'limit', 10, 50)
+            self._get_trending_topics(limit)
 
         # Document API
         elif path == '/api/documents':
@@ -1084,6 +1098,35 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": str(e)})
+
+    def _get_trending_topics(self, limit: int) -> None:
+        """Get trending topics from pulse ingestors."""
+        if not PULSE_AVAILABLE:
+            self._send_json({"error": "Pulse ingestor not available", "topics": []}, status=503)
+            return
+
+        try:
+            # Create manager with default ingestors
+            manager = PulseManager()
+            manager.add_ingestor("twitter", TwitterIngestor())
+
+            # Fetch trending topics asynchronously
+            topics = _run_async(manager.get_trending_topics(limit_per_platform=limit))
+
+            self._send_json({
+                "topics": [
+                    {
+                        "topic": t.topic,
+                        "platform": t.platform,
+                        "volume": t.volume,
+                        "category": t.category,
+                    }
+                    for t in topics
+                ],
+                "count": len(topics),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "topics": []})
 
     def _list_replays(self) -> None:
         """List available replay directories."""

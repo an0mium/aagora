@@ -8,10 +8,11 @@ URL slugs for sharing (e.g., rate-limiter-2026-01-01).
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Generator
 
 if TYPE_CHECKING:
     from aragora.export.artifact import DebateArtifact
@@ -84,26 +85,37 @@ class DebateStorage:
         self.db_path = Path(db_path)
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection as a context manager.
+
+        Ensures connections are properly closed even if exceptions occur.
+        """
+        conn = _get_connection(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Initialize database schema."""
-        conn = _get_connection(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS debates (
-                id TEXT PRIMARY KEY,
-                slug TEXT UNIQUE NOT NULL,
-                task TEXT NOT NULL,
-                agents TEXT NOT NULL,
-                artifact_json TEXT NOT NULL,
-                consensus_reached BOOLEAN,
-                confidence REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                view_count INTEGER DEFAULT 0
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_slug ON debates(slug)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON debates(created_at)")
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS debates (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT UNIQUE NOT NULL,
+                    task TEXT NOT NULL,
+                    agents TEXT NOT NULL,
+                    artifact_json TEXT NOT NULL,
+                    consensus_reached BOOLEAN,
+                    confidence REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    view_count INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_slug ON debates(slug)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON debates(created_at)")
+            conn.commit()
 
     def generate_slug(self, task: str) -> str:
         """
@@ -129,13 +141,12 @@ class DebateStorage:
 
         # Handle collisions (escape LIKE pattern to prevent wildcard injection)
         escaped_slug = _escape_like_pattern(slug)
-        conn = _get_connection(self.db_path)
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM debates WHERE slug LIKE ? ESCAPE '\\'",
-            (f"{escaped_slug}%",)
-        )
-        count = cursor.fetchone()[0]
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM debates WHERE slug LIKE ? ESCAPE '\\'",
+                (f"{escaped_slug}%",)
+            )
+            count = cursor.fetchone()[0]
 
         return f"{slug}-{count + 1}" if count > 0 else slug
 
@@ -151,24 +162,23 @@ class DebateStorage:
         """
         slug = self.generate_slug(artifact.task)
 
-        conn = _get_connection(self.db_path)
-        conn.execute("""
-            INSERT INTO debates (
-                id, slug, task, agents, artifact_json,
-                consensus_reached, confidence
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            artifact.artifact_id,
-            slug,
-            artifact.task,
-            json.dumps(artifact.agents),
-            artifact.to_json(),
-            artifact.consensus_proof.reached if artifact.consensus_proof else False,
-            artifact.consensus_proof.confidence if artifact.consensus_proof else 0,
-        ))
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO debates (
+                    id, slug, task, agents, artifact_json,
+                    consensus_reached, confidence
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                artifact.artifact_id,
+                slug,
+                artifact.task,
+                json.dumps(artifact.agents),
+                artifact.to_json(),
+                artifact.consensus_proof.reached if artifact.consensus_proof else False,
+                artifact.consensus_proof.confidence if artifact.consensus_proof else 0,
+            ))
+            conn.commit()
 
         return slug
 
@@ -181,24 +191,23 @@ class DebateStorage:
         slug = self.generate_slug(debate_data.get("task", "debate"))
         debate_id = debate_data.get("id", slug)
 
-        conn = _get_connection(self.db_path)
-        conn.execute("""
-            INSERT INTO debates (
-                id, slug, task, agents, artifact_json,
-                consensus_reached, confidence
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            debate_id,
-            slug,
-            debate_data.get("task", ""),
-            json.dumps(debate_data.get("agents", [])),
-            json.dumps(debate_data),
-            debate_data.get("consensus_reached", False),
-            debate_data.get("confidence", 0),
-        ))
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO debates (
+                    id, slug, task, agents, artifact_json,
+                    consensus_reached, confidence
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                debate_id,
+                slug,
+                debate_data.get("task", ""),
+                json.dumps(debate_data.get("agents", [])),
+                json.dumps(debate_data),
+                debate_data.get("consensus_reached", False),
+                debate_data.get("confidence", 0),
+            ))
+            conn.commit()
 
         return slug
 
@@ -209,32 +218,30 @@ class DebateStorage:
         Returns:
             Debate artifact dict or None if not found
         """
-        conn = _get_connection(self.db_path)
-        cursor = conn.execute(
-            "SELECT artifact_json FROM debates WHERE slug = ?",
-            (slug,)
-        )
-        row = cursor.fetchone()
-
-        if row:
-            conn.execute(
-                "UPDATE debates SET view_count = view_count + 1 WHERE slug = ?",
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT artifact_json FROM debates WHERE slug = ?",
                 (slug,)
             )
-            conn.commit()
+            row = cursor.fetchone()
 
-        conn.close()
+            if row:
+                conn.execute(
+                    "UPDATE debates SET view_count = view_count + 1 WHERE slug = ?",
+                    (slug,)
+                )
+                conn.commit()
+
         return json.loads(row[0]) if row else None
 
     def get_by_id(self, debate_id: str) -> Optional[dict]:
         """Get debate by ID."""
-        conn = _get_connection(self.db_path)
-        cursor = conn.execute(
-            "SELECT artifact_json FROM debates WHERE id = ?",
-            (debate_id,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT artifact_json FROM debates WHERE id = ?",
+                (debate_id,)
+            )
+            row = cursor.fetchone()
         return json.loads(row[0]) if row else None
 
     def list_recent(self, limit: int = 20) -> list[DebateMetadata]:
@@ -244,44 +251,42 @@ class DebateStorage:
         Returns:
             List of DebateMetadata ordered by creation date (newest first)
         """
-        conn = _get_connection(self.db_path)
-        cursor = conn.execute("""
-            SELECT slug, id, task, agents, consensus_reached,
-                   confidence, created_at, view_count
-            FROM debates
-            ORDER BY created_at DESC
-            LIMIT ?
-        """, (limit,))
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT slug, id, task, agents, consensus_reached,
+                       confidence, created_at, view_count
+                FROM debates
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (limit,))
 
-        results = []
-        for row in cursor.fetchall():
-            try:
-                created = datetime.fromisoformat(row[6])
-            except (ValueError, TypeError):
-                created = datetime.now()
+            results = []
+            for row in cursor.fetchall():
+                try:
+                    created = datetime.fromisoformat(row[6])
+                except (ValueError, TypeError):
+                    created = datetime.now()
 
-            results.append(DebateMetadata(
-                slug=row[0],
-                debate_id=row[1],
-                task=row[2],
-                agents=json.loads(row[3]) if row[3] else [],
-                consensus_reached=bool(row[4]),
-                confidence=row[5] or 0,
-                created_at=created,
-                view_count=row[7] or 0,
-            ))
+                results.append(DebateMetadata(
+                    slug=row[0],
+                    debate_id=row[1],
+                    task=row[2],
+                    agents=json.loads(row[3]) if row[3] else [],
+                    consensus_reached=bool(row[4]),
+                    confidence=row[5] or 0,
+                    created_at=created,
+                    view_count=row[7] or 0,
+                ))
 
-        conn.close()
         return results
 
     def delete(self, slug: str) -> bool:
         """Delete a debate by slug."""
-        conn = _get_connection(self.db_path)
-        cursor = conn.execute(
-            "DELETE FROM debates WHERE slug = ?",
-            (slug,)
-        )
-        deleted = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM debates WHERE slug = ?",
+                (slug,)
+            )
+            deleted = cursor.rowcount > 0
+            conn.commit()
         return deleted

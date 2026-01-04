@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useNomicStream } from '@/hooks/useNomicStream';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { MetricsCards } from '@/components/MetricsCards';
@@ -35,6 +36,7 @@ type ViewMode = 'tabs' | 'stream' | 'deep-audit';
 type SiteMode = 'landing' | 'dashboard' | 'loading';
 
 export default function Home() {
+  const router = useRouter();
   const { events, connected, activeLoops, selectedLoopId, selectLoop, sendMessage, onAck, onError } = useNomicStream(WS_URL);
 
   // Domain detection - show landing page on aragora.ai, dashboard on live.aragora.ai
@@ -50,13 +52,11 @@ export default function Home() {
     }
   }, []);
 
-  // Handle debate started from landing page - switch to dashboard view
+  // Handle debate started from landing page - navigate to debate viewer
   const handleDebateStarted = useCallback((debateId: string) => {
-    // Select this debate in the stream
-    selectLoop(debateId);
-    // Switch to dashboard view to see the debate
-    setSiteMode('dashboard');
-  }, [selectLoop]);
+    // Navigate to the dedicated debate viewer page
+    router.push(`/debate/${debateId}`);
+  }, [router]);
   const [nomicState, setNomicState] = useState<NomicState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('tabs');
