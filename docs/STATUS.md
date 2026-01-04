@@ -1,12 +1,12 @@
 # Aragora Project Status
 
-*Last updated: January 4, 2026*
+*Last updated: January 4, 2026 (17:50 UTC)*
 
 ## Current State
 
 ### Nomic Loop
 - **Cycle**: 1
-- **Phase**: debate (arena_starting - was blocked, now fixed)
+- **Phase**: context (gathering - running with Python 3.10 fix)
 - **Last Proposal**: Claude's "Persona Laboratory v2" (won 2/3 consensus)
 - **Implementation**: Failed on verification (timeout issues)
 - **Blocking Issues FIXED**:
@@ -73,6 +73,11 @@
 - **NEW**: Connected ContinuumMemory.update_outcome() after debates (surprise-based learning)
 - **NEW**: Added CritiqueStore.fail_pattern() tracking for failed debates (balanced learning)
 - **NEW**: Added belief network persistence across nomic cycles (cross-cycle learning)
+- **NEW**: Fixed Python 3.10 compatibility (asyncio.timeout → asyncio.wait_for)
+- **NEW**: Fixed aiohttp WebSocket security (origin validation, payload validation, rate limiting)
+- **NEW**: Fixed CORS header fallback behavior (don't send Allow-Origin for unauthorized origins)
+- **NEW**: Added agent introspection API endpoints (/api/introspection/*)
+- **NEW**: Added formal verification integration for decidable claims (Z3 backend)
 
 ## Feature Integration Status
 
