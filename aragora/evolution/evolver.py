@@ -354,13 +354,78 @@ class PromptEvolver:
 
     def _evolve_refine(self, current_prompt: str, patterns: list[dict]) -> str:
         """
-        Use LLM to refine the prompt (placeholder for future implementation).
+        Use LLM to refine the prompt by synthesizing patterns into a coherent evolution.
 
-        This would call an LLM to synthesize the prompt and patterns
-        into a more coherent, refined prompt.
+        Falls back to append strategy if LLM is unavailable.
         """
-        # For now, fall back to append
-        # TODO: Implement LLM-based refinement
+        import os
+        import requests
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key or not patterns:
+            return self._evolve_append(current_prompt, patterns)
+
+        # Format patterns for the refinement prompt
+        patterns_text = "\n".join([
+            f"- {p.get('pattern', 'unknown')}: {p.get('description', 'No description')}"
+            for p in patterns[:5]  # Limit to top 5 patterns
+        ])
+
+        refinement_prompt = f"""You are refining an AI agent's system prompt based on learned patterns.
+
+Current prompt:
+{current_prompt[:2000]}
+
+Patterns to incorporate:
+{patterns_text}
+
+Task: Create a refined version of the prompt that:
+1. Preserves the core identity and purpose
+2. Naturally integrates the successful patterns
+3. Removes redundancy and improves clarity
+4. Maintains coherent flow and structure
+
+Return ONLY the refined prompt, no explanations."""
+
+        try:
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 2048,
+                        "messages": [{"role": "user", "content": refinement_prompt}],
+                    },
+                    timeout=30,
+                )
+                if response.status_code == 200:
+                    return response.json()["content"][0]["text"].strip()
+            else:
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-4o",
+                        "max_tokens": 2048,
+                        "messages": [{"role": "user", "content": refinement_prompt}],
+                    },
+                    timeout=30,
+                )
+                if response.status_code == 200:
+                    return response.json()["choices"][0]["message"]["content"].strip()
+
+        except Exception:
+            pass
+
+        # Fall back to append if LLM call fails
         return self._evolve_append(current_prompt, patterns)
 
     def apply_evolution(self, agent: Agent, patterns: list[dict] = None) -> str:

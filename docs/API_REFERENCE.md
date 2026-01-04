@@ -1905,6 +1905,274 @@ Extract detailed insights from debate content.
 
 ---
 
+### Formal Verification
+
+Attempt formal verification of claims using SMT solvers.
+
+#### GET /api/verification/status
+Get status of formal verification backends.
+
+**Response:**
+```json
+{
+  "available": true,
+  "backends": [
+    {"language": "z3_smt", "available": true},
+    {"language": "lean4", "available": false}
+  ]
+}
+```
+
+#### POST /api/verification/formal-verify
+Attempt formal verification of a claim.
+
+**Request Body:**
+```json
+{
+  "claim": "If X > Y and Y > Z, then X > Z",
+  "claim_type": "logical",
+  "context": "Transitivity check",
+  "timeout": 30
+}
+```
+
+**Response:**
+```json
+{
+  "status": "proof_found",
+  "is_verified": true,
+  "language": "z3_smt",
+  "formal_statement": "(assert (not (=> (and (> x y) (> y z)) (> x z))))",
+  "proof_hash": "a1b2c3d4e5f6",
+  "proof_search_time_ms": 15.4
+}
+```
+
+---
+
+### Analytics & Patterns
+
+Analyze debate patterns and agent behavior.
+
+#### GET /api/analytics/disagreements
+Get analysis of agent disagreement patterns.
+
+**Parameters:**
+- `limit` (int, default=20, max=100): Maximum entries
+
+**Response:**
+```json
+{
+  "patterns": [
+    {
+      "topic": "Error handling strategies",
+      "agents": ["claude", "gemini"],
+      "disagreement_rate": 0.73,
+      "debates_count": 8
+    }
+  ]
+}
+```
+
+#### GET /api/analytics/role-rotation
+Get role rotation analysis across debates.
+
+**Parameters:**
+- `limit` (int, default=50, max=200): Maximum entries
+
+#### GET /api/analytics/early-stops
+Get early termination signals and patterns.
+
+**Parameters:**
+- `limit` (int, default=20, max=100): Maximum entries
+
+---
+
+### Agent Network & Relationships
+
+Analyze agent relationships based on debate history.
+
+#### GET /api/agent/:name/network
+Get agent's relationship network with other agents.
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "connections": [
+    {"agent": "gemini", "relationship": "rival", "strength": 0.8},
+    {"agent": "deepseek", "relationship": "ally", "strength": 0.65}
+  ]
+}
+```
+
+#### GET /api/agent/:name/rivals
+Get agent's top rivals (agents they often disagree with).
+
+**Parameters:**
+- `limit` (int, default=5, max=20): Maximum rivals
+
+#### GET /api/agent/:name/allies
+Get agent's top allies (agents they often agree with).
+
+**Parameters:**
+- `limit` (int, default=5, max=20): Maximum allies
+
+#### GET /api/agent/:name/positions
+Get agent's historical positions on topics.
+
+**Parameters:**
+- `limit` (int, default=50, max=200): Maximum positions
+
+---
+
+### Laboratory & Emergent Traits
+
+Track emergent agent behaviors and traits.
+
+#### GET /api/laboratory/emergent-traits
+Get emergent traits discovered across agents.
+
+**Parameters:**
+- `min_confidence` (float, default=0.5): Minimum confidence threshold
+- `limit` (int, default=10, max=50): Maximum traits
+
+**Response:**
+```json
+{
+  "traits": [
+    {
+      "trait": "contrarian_stance",
+      "agents": ["grok"],
+      "confidence": 0.82,
+      "evidence_count": 15
+    }
+  ]
+}
+```
+
+#### POST /api/laboratory/cross-pollinations/suggest
+Suggest trait cross-pollination between agents.
+
+---
+
+### Belief Network
+
+Analyze claim dependencies and belief propagation.
+
+#### GET /api/belief-network/:debate_id/cruxes
+Get debate cruxes (key disagreement points).
+
+**Parameters:**
+- `top_k` (int, default=3, max=10): Number of cruxes to return
+
+**Response:**
+```json
+{
+  "debate_id": "debate-123",
+  "cruxes": [
+    {
+      "claim": "Performance matters more than readability",
+      "centrality": 0.85,
+      "agents_for": ["gemini"],
+      "agents_against": ["claude"]
+    }
+  ]
+}
+```
+
+#### GET /api/belief-network/:debate_id/load-bearing-claims
+Get claims that most influence the debate outcome.
+
+**Parameters:**
+- `limit` (int, default=5, max=20): Maximum claims
+
+---
+
+### Tournaments
+
+Agent tournament management.
+
+#### GET /api/tournaments
+List tournaments.
+
+**Response:**
+```json
+{
+  "tournaments": [
+    {
+      "id": "t-001",
+      "name": "Weekly Championship",
+      "status": "in_progress",
+      "participants": 8
+    }
+  ]
+}
+```
+
+#### GET /api/tournaments/:id/standings
+Get tournament standings and bracket.
+
+---
+
+### Modes
+
+Available debate and interaction modes.
+
+#### GET /api/modes
+List available modes.
+
+**Response:**
+```json
+{
+  "modes": [
+    {"name": "standard", "description": "Standard multi-agent debate"},
+    {"name": "adversarial", "description": "Red-team adversarial mode"},
+    {"name": "consensus", "description": "Consensus-building mode"}
+  ]
+}
+```
+
+---
+
+### Routing & Team Selection
+
+Agent selection and team composition.
+
+#### GET /api/routing/best-teams
+Get best performing agent team combinations.
+
+**Parameters:**
+- `min_debates` (int, default=3, max=20): Minimum debates together
+- `limit` (int, default=10, max=50): Maximum teams
+
+**Response:**
+```json
+{
+  "teams": [
+    {
+      "agents": ["claude", "gemini", "deepseek"],
+      "win_rate": 0.85,
+      "debates": 12,
+      "avg_confidence": 0.82
+    }
+  ]
+}
+```
+
+#### POST /api/routing/recommendations
+Get agent routing recommendations for a topic.
+
+**Request Body:**
+```json
+{
+  "topic": "API security design",
+  "required_count": 3
+}
+```
+
+---
+
 ## Error Responses
 
 All endpoints return errors in this format:

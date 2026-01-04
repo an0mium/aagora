@@ -237,7 +237,14 @@ class DocumentStore:
                     "word_count": data.get("word_count", 0),
                     "preview": data.get("preview", "")[:100],
                 })
-            except Exception:
+            except json.JSONDecodeError as e:
+                print(f"  [Warning] Corrupted document file {doc_path}: {e}")
+                continue
+            except KeyError as e:
+                print(f"  [Warning] Missing required field in {doc_path}: {e}")
+                continue
+            except (IOError, OSError) as e:
+                print(f"  [Warning] Failed to read document {doc_path}: {e}")
                 continue
         return docs
 

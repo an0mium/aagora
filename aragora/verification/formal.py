@@ -196,9 +196,77 @@ class LeanBackend:
         return False
 
     async def translate(self, claim: str, context: str = "") -> Optional[str]:
-        # TODO: Use LLM to translate claim to Lean theorem
-        # Example output: "theorem claim_123 : ∀ n : ℕ, n + 0 = n := by simp"
-        return None
+        """
+        Use LLM to translate a natural language claim to a Lean 4 theorem.
+
+        Returns None if translation fails or no LLM is available.
+        Example output: "theorem claim_123 : ∀ n : ℕ, n + 0 = n := by simp"
+        """
+        import os
+        import aiohttp
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return None
+
+        # Create translation prompt
+        prompt = f"""Translate the following natural language claim into a Lean 4 theorem statement.
+If the claim cannot be expressed as a formal theorem, return "UNTRANSLATABLE".
+
+Claim: {claim}
+{f'Context: {context}' if context else ''}
+
+Guidelines:
+- Use valid Lean 4 syntax
+- Include necessary imports if needed
+- Use "sorry" as a placeholder proof
+- Keep the theorem name simple (e.g., claim_1, main_theorem)
+
+Return ONLY the Lean 4 code, no explanations. Example:
+theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
+
+        try:
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                url = "https://api.anthropic.com/v1/messages"
+                headers = {
+                    "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                }
+                payload = {
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+            else:
+                url = "https://api.openai.com/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "model": "gpt-4o",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status != 200:
+                        return None
+                    data = await response.json()
+
+                    if os.environ.get("ANTHROPIC_API_KEY"):
+                        result = data["content"][0]["text"].strip()
+                    else:
+                        result = data["choices"][0]["message"]["content"].strip()
+
+                    if "UNTRANSLATABLE" in result:
+                        return None
+                    return result
+
+        except Exception:
+            return None
 
     async def prove(self, formal_statement: str, timeout_seconds: float = 60.0) -> FormalProofResult:
         return FormalProofResult(

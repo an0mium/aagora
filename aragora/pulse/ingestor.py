@@ -76,9 +76,38 @@ class PulseIngestor(ABC):
         return filtered
 
     def _is_toxic(self, text: str) -> bool:
-        """Simple toxicity check (placeholder - integrate with proper sentiment analysis)."""
-        toxic_keywords = ["hate", "violence", "nsfw", "explicit"]
-        return any(keyword in text.lower() for keyword in toxic_keywords)
+        """Enhanced toxicity check with categorized patterns.
+
+        Uses weighted keyword matching across categories:
+        - High severity: explicit hate speech, violence threats
+        - Medium severity: harassment, discrimination
+        - Low severity: profanity, adult content markers
+        """
+        text_lower = text.lower()
+
+        # High severity - immediate reject
+        high_severity = [
+            "kill", "murder", "attack", "bomb", "terrorist",
+            "hate crime", "genocide", "ethnic cleansing",
+        ]
+        if any(term in text_lower for term in high_severity):
+            return True
+
+        # Medium severity - context-dependent
+        medium_severity = [
+            "hate", "violence", "racist", "sexist", "homophobic",
+            "slur", "harass", "threat", "abuse", "bully",
+        ]
+        medium_count = sum(1 for term in medium_severity if term in text_lower)
+        if medium_count >= 2:
+            return True
+
+        # Low severity - adult content markers
+        low_severity = ["nsfw", "explicit", "18+", "adult only", "xxx"]
+        if any(term in text_lower for term in low_severity):
+            return True
+
+        return False
 
 
 class TwitterIngestor(PulseIngestor):

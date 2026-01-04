@@ -418,6 +418,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     debate_embeddings: Optional["DebateEmbeddingsDatabase"] = None  # Historical memory
     position_tracker: Optional["PositionTracker"] = None  # PositionTracker for truth-grounded personas
     position_ledger: Optional["PositionLedger"] = None  # PositionLedger for grounded positions
+    consensus_memory: Optional["ConsensusMemory"] = None  # ConsensusMemory for historical positions
+    dissent_retriever: Optional["DissentRetriever"] = None  # DissentRetriever for minority views
 
     # Thread pool for debate execution (prevents unbounded thread creation)
     _debate_executor: Optional["ThreadPoolExecutor"] = None
@@ -772,7 +774,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._get_memory_stats()
         elif path == '/api/critiques/patterns':
             limit = self._safe_int(query, 'limit', 10, 50)
-            min_success = float(query.get('min_success', ['0.5'])[0])
+            min_success = self._safe_float(query, 'min_success', 0.5, 0.0, 1.0)
             self._get_critique_patterns(limit, min_success)
         elif path == '/api/critiques/archive':
             self._get_archive_stats()
@@ -1047,8 +1049,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
 
         else:
-            # Raw file upload - get filename from header
-            filename = self.headers.get('X-Filename', 'document.txt')
+            # Raw file upload - get filename from header with path traversal protection
+            import os
+            raw_filename = self.headers.get('X-Filename', 'document.txt')
+            filename = os.path.basename(raw_filename)
+            # Reject null bytes, control chars, and suspicious patterns
+            if not filename or '\x00' in filename or '..' in filename:
+                self._send_json({"error": "Invalid filename"}, status=400)
+                return
             file_content = self.rfile.read(content_length)
 
         # Validate file extension
@@ -1227,6 +1235,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                     position_tracker=self.position_tracker,
                     position_ledger=self.position_ledger,
                     flip_detector=self.flip_detector,
+                    dissent_retriever=self.dissent_retriever,
                     loop_id=debate_id,
                 )
 
@@ -4031,6 +4040,15 @@ class UnifiedServer:
                     print("[server] DebateEmbeddings loaded for historical memory")
                 except Exception as e:
                     print(f"[server] DebateEmbeddings initialization failed: {e}")
+
+            # Initialize ConsensusMemory and DissentRetriever for historical minority views
+            if CONSENSUS_MEMORY_AVAILABLE and DissentRetriever is not None:
+                try:
+                    UnifiedHandler.consensus_memory = ConsensusMemory()
+                    UnifiedHandler.dissent_retriever = DissentRetriever(UnifiedHandler.consensus_memory)
+                    print("[server] DissentRetriever loaded for historical minority views")
+                except Exception as e:
+                    print(f"[server] DissentRetriever initialization failed: {e}")
 
     @property
     def emitter(self) -> SyncEventEmitter:
