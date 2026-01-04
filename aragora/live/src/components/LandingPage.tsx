@@ -41,6 +41,12 @@ export function LandingPage({ apiBase, wsUrl, onDebateStarted }: LandingPageProp
             <AsciiBannerCompact connected={true} />
             <div className="flex items-center gap-4">
               <a
+                href="/about"
+                className="text-xs font-mono text-text-muted hover:text-acid-green transition-colors"
+              >
+                [ABOUT]
+              </a>
+              <a
                 href="https://live.aragora.ai"
                 className="text-xs font-mono text-acid-cyan hover:text-acid-green transition-colors"
               >

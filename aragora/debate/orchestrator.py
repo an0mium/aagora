@@ -206,6 +206,7 @@ class Arena:
         position_tracker=None,  # Optional PositionTracker for truth-grounded personas
         position_ledger=None,  # Optional PositionLedger for grounded personas
         elo_system=None,  # Optional EloSystem for relationship tracking
+        loop_id: str = "",  # Loop ID for multi-loop scoping
     ):
         self.env = environment
         self.agents = agents
@@ -221,6 +222,7 @@ class Arena:
         self.position_tracker = position_tracker  # Truth-grounded persona tracking
         self.position_ledger = position_ledger  # Grounded persona position ledger
         self.elo_system = elo_system  # For relationship tracking
+        self.loop_id = loop_id  # Loop ID for scoping events
 
         # User participation tracking
         self.user_votes: list[dict] = []  # List of user vote events
@@ -358,6 +360,10 @@ class Arena:
     def _handle_user_event(self, event) -> None:
         """Handle incoming user participation events."""
         from aragora.server.stream import StreamEventType
+
+        # Ignore events from other loops to prevent cross-contamination
+        if hasattr(event, 'loop_id') and event.loop_id and event.loop_id != self.loop_id:
+            return
 
         if event.type == StreamEventType.USER_VOTE:
             self.user_votes.append(event.data)
@@ -578,11 +584,16 @@ class Arena:
                 )
             # Also emit to WebSocket stream for live dashboard (full content, no truncation)
             if self.event_emitter:
-                self.event_emitter.emit("memory_recall", {
-                    "query": task,
-                    "hits": [{"topic": excerpt, "similarity": round(sim, 2)} for _, excerpt, sim in results[:3]],
-                    "count": len(results)
-                })
+                from aragora.server.stream import StreamEvent, StreamEventType
+                self.event_emitter.emit(StreamEvent(
+                    type=StreamEventType.MEMORY_RECALL,
+                    loop_id=getattr(self, 'loop_id', ''),
+                    data={
+                        "query": task,
+                        "hits": [{"topic": excerpt, "similarity": round(sim, 2)} for _, excerpt, sim in results[:3]],
+                        "count": len(results)
+                    }
+                ))
 
             lines = ["## HISTORICAL CONTEXT (Similar Past Debates)"]
             lines.append("Learn from these previous debates on similar topics:\n")

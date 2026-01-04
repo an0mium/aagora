@@ -427,7 +427,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
                 # Create arena with hooks
                 hooks = create_arena_hooks(self.stream_emitter)
-                arena = Arena(env, agents, protocol, event_hooks=hooks)
+                arena = Arena(env, agents, protocol, event_hooks=hooks, event_emitter=self.stream_emitter, loop_id=debate_id)
 
                 # Run debate
                 _active_debates[debate_id]["status"] = "running"

@@ -40,9 +40,12 @@ interface FlipSummary {
 
 interface InsightsPanelProps {
   wsMessages?: any[];
+  apiBase?: string;
 }
 
-export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
+const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
+
+export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: InsightsPanelProps) {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [memoryRecalls, setMemoryRecalls] = useState<MemoryRecall[]>([]);
   const [flips, setFlips] = useState<FlipEvent[]>([]);
@@ -54,7 +57,7 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
   const fetchInsights = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/insights/recent?limit=10');
+      const response = await fetch(`${apiBase}/api/insights/recent?limit=10`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -66,13 +69,13 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiBase]);
 
   const fetchFlips = useCallback(async () => {
     try {
       const [flipsRes, summaryRes] = await Promise.all([
-        fetch('/api/flips/recent?limit=15'),
-        fetch('/api/flips/summary'),
+        fetch(`${apiBase}/api/flips/recent?limit=15`),
+        fetch(`${apiBase}/api/flips/summary`),
       ]);
 
       if (flipsRes.ok) {
@@ -87,7 +90,7 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
     } catch (err) {
       console.error('Failed to fetch flips:', err);
     }
-  }, []);
+  }, [apiBase]);
 
   useEffect(() => {
     fetchInsights();
