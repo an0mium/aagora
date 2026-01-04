@@ -2400,16 +2400,23 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
         if not CHECKPOINT_AVAILABLE or not self.checkpoint_manager:
             return ""
         try:
+            import uuid
+            checkpoint_id = f"ckpt_{uuid.uuid4().hex[:8]}"
             checkpoint = DebateCheckpoint(
+                checkpoint_id=checkpoint_id,
                 debate_id=debate_id,
                 task=task,
-                round_number=round_num,
+                current_round=round_num,
+                total_rounds=5,  # Default max rounds
+                phase="debate",
                 messages=[m.__dict__ if hasattr(m, '__dict__') else m for m in messages],
-                agent_states={a.name: {"model": a.model, "role": a.role} for a in agents if hasattr(a, 'name')},
-                consensus_state=consensus or {},
-                timestamp=datetime.now().isoformat()
+                critiques=[],
+                votes=[],
+                agent_states=[],  # AgentState list not available in this context
+                current_consensus=consensus.get("consensus") if consensus else None,
+                consensus_confidence=consensus.get("confidence", 0.0) if consensus else 0.0,
             )
-            checkpoint_id = self.checkpoint_manager.create_checkpoint(checkpoint)
+            self.checkpoint_manager.create_checkpoint(checkpoint)
             self._log(f"  [checkpoint] Created: {checkpoint_id[:8]}")
             return checkpoint_id
         except Exception as e:
@@ -2513,7 +2520,9 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             if not claims:
                 return {}
 
-            report = self.reliability_scorer.generate_reliability_report(claims)
+            # Convert list[TypedClaim] to dict[str, str] for reliability scorer
+            claims_dict = {c.claim_id: c.statement for c in claims}
+            report = self.reliability_scorer.generate_reliability_report(claims_dict)
             high_reliability = sum(1 for c in report.get("claims", [])
                                    if c.get("level") in ("VERY_HIGH", "HIGH"))
             low_reliability = sum(1 for c in report.get("claims", [])
@@ -2663,7 +2672,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             emergent = self._detect_emergent_traits()
 
             # Check experiments for significant results
-            experiments = self.persona_lab.get_active_experiments()
+            experiments = self.persona_lab.get_running_experiments()
             completed = 0
             for exp in experiments:
                 if exp.is_significant:
