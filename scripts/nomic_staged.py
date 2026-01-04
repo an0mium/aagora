@@ -109,7 +109,7 @@ Recent changes:
     # Heterogeneous agents: 3 competing visionaries from different AI providers
     gemini_visionary = GeminiCLIAgent(
         name="gemini-visionary",
-        model="gemini-2.5-pro",
+        model="gemini-3-pro-preview",
         role="proposer",
         timeout=360,  # Doubled from 180
     )

@@ -69,7 +69,7 @@ def create_agent(
         from aragora.agents.cli_agents import GeminiCLIAgent
         return GeminiCLIAgent(
             name=name or "gemini",
-            model=model or "gemini-2.5-pro",
+            model=model or "gemini-3-pro-preview",
             role=role,
         )
     elif model_type == "grok-cli":
@@ -99,7 +99,7 @@ def create_agent(
         from aragora.agents.api_agents import GeminiAgent
         return GeminiAgent(
             name=name or "gemini",
-            model=model or "gemini-2.0-flash-exp",
+            model=model or "gemini-3-pro-preview",
             role=role,
             api_key=api_key,
         )

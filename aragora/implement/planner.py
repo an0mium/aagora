@@ -140,7 +140,7 @@ async def generate_implement_plan(
     design: str,
     repo_path: Path,
     timeout: int = 180,
-    gemini_model: str = "gemini-2.5-flash",
+    gemini_model: str = "gemini-3-pro-preview",
 ) -> ImplementPlan:
     """
     Use Gemini to decompose a design into implementation tasks.

@@ -3809,21 +3809,60 @@ Synthesize these suggestions into a coherent, working implementation.
 
     def _handle_disagreement_influence(
         self, report: "DisagreementReport", phase_name: str, result: "DebateResult"
-    ) -> None:
+    ) -> dict:
         """Handle disagreement patterns to influence decisions.
 
         Heavy3-inspired: Make disagreement data actionable.
+
+        Returns:
+            dict with action recommendations:
+            - should_reject: bool - proposal should be rejected
+            - should_fork: bool - debate should be forked to explore disagreement
+            - rejection_reasons: list[str] - reasons if rejected
+            - fork_topic: str - topic to fork on if forking
         """
+        actions = {
+            "should_reject": False,
+            "should_fork": False,
+            "rejection_reasons": [],
+            "fork_topic": None,
+            "escalate_to": None,
+        }
+
         # Track critical disagreement patterns
         critical_warning = False
 
-        # If many unanimous issues, flag for extra scrutiny
+        # ACTION 1: Auto-reject on unanimous critiques (>= 3 unanimous issues)
         if len(report.unanimous_critiques) >= 3:
-            self._log(f"    [disagreement] WARNING: {len(report.unanimous_critiques)} unanimous issues - extra scrutiny needed")
+            self._log(f"    [disagreement] REJECT: {len(report.unanimous_critiques)} unanimous issues - proposal blocked")
+            actions["should_reject"] = True
+            actions["rejection_reasons"] = report.unanimous_critiques[:5]
             critical_warning = True
 
-        # If very low agreement, the proposal may need rework
-        if report.agreement_score < 0.4:
+        # ACTION 2: Fork trigger for low agreement (< 0.4)
+        if report.agreement_score < 0.4 and not actions["should_reject"]:
+            self._log(f"    [disagreement] FORK: Low agreement ({report.agreement_score:.0%}) - exploring alternatives")
+            actions["should_fork"] = True
+            # Create fork topic from the main disagreement
+            if report.split_opinions:
+                first_split = report.split_opinions[0] if isinstance(report.split_opinions, list) else str(report.split_opinions)
+                actions["fork_topic"] = f"Resolve disagreement: {first_split[:200]}"
+            critical_warning = True
+
+        # ACTION 3: Escalate split opinions for persistent patterns
+        if len(report.split_opinions) >= 3:
+            self._log(f"    [disagreement] ESCALATE: {len(report.split_opinions)} split opinions detected")
+            # Track which agents consistently disagree
+            if not hasattr(self, '_agent_disagreement_patterns'):
+                self._agent_disagreement_patterns = {}
+
+            # Store for pattern analysis
+            actions["escalate_to"] = "cross_examination"
+            for opinion in report.split_opinions[:3]:
+                self._log(f"      Split: {str(opinion)[:100]}")
+
+        # If very low agreement but not rejecting, warn
+        if report.agreement_score < 0.4 and not actions["should_reject"]:
             self._log(f"    [disagreement] WARNING: Low agreement ({report.agreement_score:.0%}) - consider revising proposal")
             critical_warning = True
 
@@ -3840,6 +3879,7 @@ Synthesize these suggestions into a coherent, working implementation.
                 "cycle": self.cycle_count,
                 "unanimous_critiques": report.unanimous_critiques,
                 "agreement_score": report.agreement_score,
+                "actions_taken": actions,
                 "timestamp": datetime.now().isoformat(),
             })
 
@@ -3847,16 +3887,23 @@ Synthesize these suggestions into a coherent, working implementation.
         if len(report.risk_areas) >= 2:
             self._log(f"    [disagreement] {len(report.risk_areas)} RISK AREAS to monitor:")
             for risk in report.risk_areas[:3]:
-                self._log(f"      ⚠ {risk[:100]}")
+                self._log(f"      - {risk[:100]}")
 
         # Stream critical warnings for dashboard visibility
         if critical_warning:
+            action_str = ""
+            if actions["should_reject"]:
+                action_str = " [REJECTED]"
+            elif actions["should_fork"]:
+                action_str = " [FORKING]"
             self._stream_emit(
                 "on_log_message",
-                f"Disagreement alert in {phase_name}: {len(report.unanimous_critiques)} unanimous issues, {report.agreement_score:.0%} agreement",
+                f"Disagreement alert in {phase_name}: {len(report.unanimous_critiques)} unanimous issues, {report.agreement_score:.0%} agreement{action_str}",
                 level="warning",
                 phase=phase_name,
             )
+
+        return actions
 
     async def _run_arena_with_logging(self, arena: Arena, phase_name: str) -> "DebateResult":
         """Run an Arena debate with real-time logging via event hooks."""
@@ -4090,7 +4137,7 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
             gemini_explorer = KiloCodeAgent(
                 name="gemini-explorer",
                 provider_id="gemini-explorer",
-                model="gemini-3-pro",
+                model="gemini-3-pro-preview",
                 role="explorer",
                 timeout=600,  # 10 min for agentic codebase exploration (reduced from 30 min)
                 mode="architect",

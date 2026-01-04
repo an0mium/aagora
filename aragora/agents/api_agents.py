@@ -111,7 +111,7 @@ class GeminiAgent(APIAgent):
     def __init__(
         self,
         name: str = "gemini",
-        model: str = "gemini-2.5-flash",  # Fast, capable, good for debates
+        model: str = "gemini-3-pro-preview",  # Gemini 3 Pro Preview - advanced reasoning
         role: str = "proposer",
         timeout: int = 120,
         api_key: str = None,
