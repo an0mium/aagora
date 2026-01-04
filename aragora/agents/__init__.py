@@ -65,6 +65,7 @@ __all__ = [
     "OpenRouterAgent",
     "DeepSeekAgent",
     "DeepSeekReasonerAgent",
+    "DeepSeekV3Agent",
     "LlamaAgent",
     "MistralAgent",
     # Factory
