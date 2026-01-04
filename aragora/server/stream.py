@@ -535,8 +535,18 @@ class DebateStreamServer:
 
     async def handler(self, websocket) -> None:
         """Handle a WebSocket connection with origin validation."""
-        # Validate origin for security
-        origin = websocket.request_headers.get("Origin", "")
+        # Validate origin for security (handle different websockets library versions)
+        try:
+            # Try newer websockets API first
+            if hasattr(websocket, 'request') and hasattr(websocket.request, 'headers'):
+                origin = websocket.request.headers.get("Origin", "")
+            elif hasattr(websocket, 'request_headers'):
+                origin = websocket.request_headers.get("Origin", "")
+            else:
+                origin = ""
+        except Exception:
+            origin = ""
+
         if origin and origin not in WS_ALLOWED_ORIGINS:
             # Reject connection from unauthorized origin
             await websocket.close(4003, "Origin not allowed")

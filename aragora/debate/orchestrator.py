@@ -6,9 +6,12 @@ debate protocols and consensus mechanisms.
 """
 
 import asyncio
+import logging
 import queue
 import random
 import time
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 from collections import Counter
@@ -2022,19 +2025,66 @@ and building on others' ideas."""
             agent_type = agent.name.split("_")[0].lower()
             from aragora.agents.personas import DEFAULT_PERSONAS
             if agent_type in DEFAULT_PERSONAS:
-                default_persona_data = DEFAULT_PERSONAS[agent_type]
-                # Create a temporary Persona object from the default
-                from aragora.agents.personas import Persona
-                persona = Persona(
-                    agent_name=agent.name,
-                    description=default_persona_data.get("description", ""),
-                    traits=default_persona_data.get("traits", []),
-                    expertise=default_persona_data.get("expertise", {}),
-                )
+                # DEFAULT_PERSONAS contains Persona objects directly
+                persona = DEFAULT_PERSONAS[agent_type]
             else:
                 return ""
 
         return persona.to_prompt_context()
+
+    def _get_flip_context(self, agent: Agent) -> str:
+        """Get flip/consistency context for agent self-awareness.
+
+        This helps agents be aware of their position history and avoid
+        unnecessary flip-flopping while still allowing genuine position changes.
+        """
+        if not self.flip_detector:
+            return ""
+
+        try:
+            consistency = self.flip_detector.get_agent_consistency(agent.name)
+
+            # Skip if no position history yet
+            if consistency.total_positions == 0:
+                return ""
+
+            # Only inject context if there are notable flips
+            if consistency.total_flips == 0:
+                return ""
+
+            # Build context based on flip patterns
+            lines = ["## Position Consistency Note"]
+
+            # Warn about contradictions specifically
+            if consistency.contradictions > 0:
+                lines.append(
+                    f"You have {consistency.contradictions} prior position contradiction(s) on record. "
+                    "Consider your stance carefully before arguing against positions you previously held."
+                )
+
+            # Note retractions
+            if consistency.retractions > 0:
+                lines.append(
+                    f"You have retracted {consistency.retractions} previous position(s). "
+                    "If changing positions again, clearly explain your reasoning."
+                )
+
+            # Add overall consistency score
+            score = consistency.consistency_score
+            if score < 0.7:
+                lines.append(
+                    f"Your consistency score is {score:.0%}. Prioritize coherent positions."
+                )
+
+            # Note domains with instability
+            if consistency.domains_with_flips:
+                domains = ", ".join(consistency.domains_with_flips[:3])
+                lines.append(f"Domains with position changes: {domains}")
+
+            return "\n".join(lines) if len(lines) > 1 else ""
+
+        except Exception:
+            return ""  # Non-critical, continue without flip context
 
     def _build_proposal_prompt(self, agent: Agent) -> str:
         """Build the initial proposal prompt."""
@@ -2055,6 +2105,12 @@ and building on others' ideas."""
         persona_context = self._get_persona_context(agent)
         if persona_context:
             persona_section = f"\n\n{persona_context}"
+
+        # Include flip/consistency context for self-awareness
+        flip_section = ""
+        flip_context = self._get_flip_context(agent)
+        if flip_context:
+            flip_section = f"\n\n{flip_context}"
 
         # Include historical context if available (capped at 800 chars to prevent bloat)
         historical_section = ""
@@ -2099,7 +2155,7 @@ and building on others' ideas."""
                     metric=len(clusters),
                 )
 
-        return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}
+        return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}{flip_section}
 {historical_section}{dissent_section}{patterns_section}{audience_section}
 Task: {self.env.task}{context_str}
 
@@ -2129,6 +2185,12 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
         if persona_context:
             persona_section = f"\n\n{persona_context}"
 
+        # Include flip/consistency context (especially relevant during revisions)
+        flip_section = ""
+        flip_context = self._get_flip_context(agent)
+        if flip_context:
+            flip_section = f"\n\n{flip_context}"
+
         # Include successful patterns that may help address critiques
         patterns_section = ""
         patterns = self._format_successful_patterns(limit=2)
@@ -2146,7 +2208,7 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
             if audience_section:
                 audience_section = f"\n\n{audience_section}"
 
-        return f"""You are revising your proposal based on critiques from other agents.{role_section}{persona_section}
+        return f"""You are revising your proposal based on critiques from other agents.{role_section}{persona_section}{flip_section}
 
 {intensity_guidance}{stance_section}{patterns_section}{audience_section}
 

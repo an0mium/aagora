@@ -206,60 +206,59 @@ class ConsensusMemory:
 
     def _init_db(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS consensus (
-                id TEXT PRIMARY KEY,
-                topic TEXT NOT NULL,
-                topic_hash TEXT NOT NULL,
-                conclusion TEXT NOT NULL,
-                strength TEXT NOT NULL,
-                confidence REAL,
-                domain TEXT,
-                tags TEXT,
-                timestamp TEXT,
-                data TEXT NOT NULL
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS consensus (
+                    id TEXT PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    topic_hash TEXT NOT NULL,
+                    conclusion TEXT NOT NULL,
+                    strength TEXT NOT NULL,
+                    confidence REAL,
+                    domain TEXT,
+                    tags TEXT,
+                    timestamp TEXT,
+                    data TEXT NOT NULL
+                )
+            """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS dissent (
-                id TEXT PRIMARY KEY,
-                debate_id TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                dissent_type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                confidence REAL,
-                timestamp TEXT,
-                data TEXT NOT NULL,
-                FOREIGN KEY (debate_id) REFERENCES consensus(id)
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS dissent (
+                    id TEXT PRIMARY KEY,
+                    debate_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    dissent_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    confidence REAL,
+                    timestamp TEXT,
+                    data TEXT NOT NULL,
+                    FOREIGN KEY (debate_id) REFERENCES consensus(id)
+                )
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_consensus_topic_hash
-            ON consensus(topic_hash)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_consensus_topic_hash
+                ON consensus(topic_hash)
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_consensus_domain
-            ON consensus(domain)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_consensus_domain
+                ON consensus(domain)
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_dissent_debate
-            ON dissent(debate_id)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dissent_debate
+                ON dissent(debate_id)
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_dissent_type
-            ON dissent(dissent_type)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dissent_type
+                ON dissent(dissent_type)
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def _hash_topic(self, topic: str) -> str:
         """Create a hash for topic similarity matching."""
@@ -304,31 +303,28 @@ class ConsensusMemory:
             metadata=metadata or {},
         )
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO consensus (id, topic, topic_hash, conclusion, strength,
-                                   confidence, domain, tags, timestamp, data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.id,
-                record.topic,
-                record.topic_hash,
-                record.conclusion,
-                record.strength.value,
-                record.confidence,
-                record.domain,
-                json.dumps(record.tags),
-                record.timestamp.isoformat(),
-                json.dumps(record.to_dict()),
-            ),
-        )
-
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO consensus (id, topic, topic_hash, conclusion, strength,
+                                       confidence, domain, tags, timestamp, data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.topic,
+                    record.topic_hash,
+                    record.conclusion,
+                    record.strength.value,
+                    record.confidence,
+                    record.domain,
+                    json.dumps(record.tags),
+                    record.timestamp.isoformat(),
+                    json.dumps(record.to_dict()),
+                ),
+            )
+            conn.commit()
 
         return record
 
@@ -359,54 +355,51 @@ class ConsensusMemory:
             metadata=metadata or {},
         )
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO dissent (id, debate_id, agent_id, dissent_type,
-                                content, confidence, timestamp, data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.id,
-                record.debate_id,
-                record.agent_id,
-                record.dissent_type.value,
-                record.content,
-                record.confidence,
-                record.timestamp.isoformat(),
-                json.dumps(record.to_dict()),
-            ),
-        )
-
-        # Update consensus record with dissent ID
-        cursor.execute(
-            "SELECT data FROM consensus WHERE id = ?",
-            (debate_id,),
-        )
-        row = cursor.fetchone()
-        if row:
-            consensus_data = json.loads(row[0])
-            consensus_data["dissent_ids"] = consensus_data.get("dissent_ids", []) + [record.id]
             cursor.execute(
-                "UPDATE consensus SET data = ? WHERE id = ?",
-                (json.dumps(consensus_data), debate_id),
+                """
+                INSERT INTO dissent (id, debate_id, agent_id, dissent_type,
+                                    content, confidence, timestamp, data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.debate_id,
+                    record.agent_id,
+                    record.dissent_type.value,
+                    record.content,
+                    record.confidence,
+                    record.timestamp.isoformat(),
+                    json.dumps(record.to_dict()),
+                ),
             )
 
-        conn.commit()
-        conn.close()
+            # Update consensus record with dissent ID
+            cursor.execute(
+                "SELECT data FROM consensus WHERE id = ?",
+                (debate_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                consensus_data = json.loads(row[0])
+                consensus_data["dissent_ids"] = consensus_data.get("dissent_ids", []) + [record.id]
+                cursor.execute(
+                    "UPDATE consensus SET data = ? WHERE id = ?",
+                    (json.dumps(consensus_data), debate_id),
+                )
+
+            conn.commit()
 
         return record
 
     def get_consensus(self, consensus_id: str) -> Optional[ConsensusRecord]:
         """Get a consensus record by ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT data FROM consensus WHERE id = ?", (consensus_id,))
-        row = cursor.fetchone()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT data FROM consensus WHERE id = ?", (consensus_id,))
+            row = cursor.fetchone()
 
         if row:
             return ConsensusRecord.from_dict(json.loads(row[0]))
@@ -414,15 +407,13 @@ class ConsensusMemory:
 
     def get_dissents(self, debate_id: str) -> list[DissentRecord]:
         """Get all dissenting views for a debate."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT data FROM dissent WHERE debate_id = ?",
-            (debate_id,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT data FROM dissent WHERE debate_id = ?",
+                (debate_id,),
+            )
+            rows = cursor.fetchall()
 
         return [DissentRecord.from_dict(json.loads(row[0])) for row in rows]
 
@@ -438,9 +429,6 @@ class ConsensusMemory:
         topic_hash = self._hash_topic(topic)
         topic_words = set(topic.lower().split())
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         query = """
             SELECT data FROM consensus
             WHERE confidence >= ?
@@ -454,9 +442,10 @@ class ConsensusMemory:
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit * 3)  # Get more for filtering
 
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
 
         # Score similarity
         candidates = []
@@ -520,20 +509,18 @@ class ConsensusMemory:
     ) -> list[ConsensusRecord]:
         """Get consensus history for a domain."""
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT data FROM consensus
-            WHERE domain = ?
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-            (domain, limit),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT data FROM consensus
+                WHERE domain = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (domain, limit),
+            )
+            rows = cursor.fetchall()
 
         return [ConsensusRecord.from_dict(json.loads(row[0])) for row in rows]
 
@@ -555,66 +542,64 @@ class ConsensusMemory:
         )
 
         # Update old record
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT data FROM consensus WHERE id = ?",
-            (old_consensus_id,),
-        )
-        row = cursor.fetchone()
-
-        if row:
-            old_data = json.loads(row[0])
-            old_data["superseded_by"] = new_record.id
             cursor.execute(
-                "UPDATE consensus SET data = ? WHERE id = ?",
-                (json.dumps(old_data), old_consensus_id),
+                "SELECT data FROM consensus WHERE id = ?",
+                (old_consensus_id,),
             )
+            row = cursor.fetchone()
 
-        conn.commit()
-        conn.close()
+            if row:
+                old_data = json.loads(row[0])
+                old_data["superseded_by"] = new_record.id
+                cursor.execute(
+                    "UPDATE consensus SET data = ? WHERE id = ?",
+                    (json.dumps(old_data), old_consensus_id),
+                )
+
+            conn.commit()
 
         return new_record
 
     def get_statistics(self) -> dict[str, Any]:
         """Get statistics about stored consensus."""
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        stats = {}
+            stats = {}
 
-        # Total counts
-        cursor.execute("SELECT COUNT(*) FROM consensus")
-        stats["total_consensus"] = cursor.fetchone()[0]
+            # Total counts
+            cursor.execute("SELECT COUNT(*) FROM consensus")
+            stats["total_consensus"] = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM dissent")
-        stats["total_dissents"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM dissent")
+            stats["total_dissents"] = cursor.fetchone()[0]
 
-        # By strength
-        cursor.execute(
-            "SELECT strength, COUNT(*) FROM consensus GROUP BY strength"
-        )
-        stats["by_strength"] = dict(cursor.fetchall())
+            # By strength
+            cursor.execute(
+                "SELECT strength, COUNT(*) FROM consensus GROUP BY strength"
+            )
+            stats["by_strength"] = dict(cursor.fetchall())
 
-        # By domain
-        cursor.execute(
-            "SELECT domain, COUNT(*) FROM consensus GROUP BY domain ORDER BY COUNT(*) DESC LIMIT 10"
-        )
-        stats["by_domain"] = dict(cursor.fetchall())
+            # By domain
+            cursor.execute(
+                "SELECT domain, COUNT(*) FROM consensus GROUP BY domain ORDER BY COUNT(*) DESC LIMIT 10"
+            )
+            stats["by_domain"] = dict(cursor.fetchall())
 
-        # By dissent type
-        cursor.execute(
-            "SELECT dissent_type, COUNT(*) FROM dissent GROUP BY dissent_type"
-        )
-        stats["by_dissent_type"] = dict(cursor.fetchall())
+            # By dissent type
+            cursor.execute(
+                "SELECT dissent_type, COUNT(*) FROM dissent GROUP BY dissent_type"
+            )
+            stats["by_dissent_type"] = dict(cursor.fetchall())
 
-        # Average confidence
-        cursor.execute("SELECT AVG(confidence) FROM consensus")
-        stats["avg_confidence"] = cursor.fetchone()[0] or 0.0
+            # Average confidence
+            cursor.execute("SELECT AVG(confidence) FROM consensus")
+            stats["avg_confidence"] = cursor.fetchone()[0] or 0.0
 
-        conn.close()
         return stats
 
 
