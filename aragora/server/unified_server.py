@@ -104,7 +104,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._get_leaderboard(limit, domain)
         elif path == '/api/matches/recent':
             limit = int(query.get('limit', [10])[0])
-            self._get_recent_matches(limit)
+            loop_id = query.get('loop_id', [None])[0]
+            self._get_recent_matches(limit, loop_id)
         elif path.startswith('/api/agent/') and path.endswith('/history'):
             agent = path.split('/')[3]
             limit = int(query.get('limit', [30])[0])
@@ -326,8 +327,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e), "agents": []})
 
-    def _get_recent_matches(self, limit: int) -> None:
-        """Get recent match results (debate consensus feature)."""
+    def _get_recent_matches(self, limit: int, loop_id: Optional[str] = None) -> None:
+        """Get recent match results (debate consensus feature).
+
+        Args:
+            limit: Maximum number of matches to return
+            loop_id: Optional loop ID to filter matches by (multi-loop support)
+        """
         if not self.elo_system:
             self._send_json({"error": "Rankings not configured", "matches": []})
             return
@@ -335,6 +341,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         try:
             # Use EloSystem's encapsulated method instead of raw SQL
             matches = self.elo_system.get_recent_matches(limit=limit)
+            # Filter by loop_id if provided (multi-loop support)
+            if loop_id:
+                matches = [m for m in matches if m.get('loop_id') == loop_id]
             self._send_json({"matches": matches, "count": len(matches)})
         except Exception as e:
             self._send_json({"error": str(e), "matches": []})

@@ -22,6 +22,9 @@ export default function Home() {
   const [nomicState, setNomicState] = useState<NomicState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Compute effective loop ID - auto-select if only one loop active (fixes race condition)
+  const effectiveLoopId = selectedLoopId || (activeLoops.length === 1 ? activeLoops[0].loop_id : null);
+
   // Fetch initial nomic state on mount
   useEffect(() => {
     const fetchState = async () => {
@@ -91,27 +94,27 @@ export default function Home() {
     return `${Math.floor(seconds / 3600)}h ago`;
   };
 
-  // User participation handlers
+  // User participation handlers (use effectiveLoopId to auto-select single active loop)
   const handleUserVote = (choice: string) => {
-    if (!selectedLoopId) {
+    if (!effectiveLoopId) {
       setError('No active debate loop selected. Please wait for a debate to start.');
       return;
     }
     sendMessage({
       type: 'user_vote',
-      loop_id: selectedLoopId,
+      loop_id: effectiveLoopId,
       payload: { choice }
     });
   };
 
   const handleUserSuggestion = (suggestion: string) => {
-    if (!selectedLoopId) {
+    if (!effectiveLoopId) {
       setError('No active debate loop selected. Please wait for a debate to start.');
       return;
     }
     sendMessage({
       type: 'user_suggestion',
-      loop_id: selectedLoopId,
+      loop_id: effectiveLoopId,
       payload: { suggestion }
     });
   };
@@ -197,7 +200,7 @@ export default function Home() {
               onError={onError}
             />
             <HistoryPanel />
-            <LeaderboardPanel wsMessages={events} />
+            <LeaderboardPanel wsMessages={events} loopId={effectiveLoopId} apiBase={API_URL} />
             <InsightsPanel wsMessages={events} />
             <ReplayBrowser />
           </div>
