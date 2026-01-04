@@ -79,6 +79,22 @@ except ImportError:
     create_agent = None
     Environment = None
 
+# Optional PersonaManager for agent specialization
+try:
+    from aragora.agents.personas import PersonaManager
+    PERSONAS_AVAILABLE = True
+except ImportError:
+    PERSONAS_AVAILABLE = False
+    PersonaManager = None
+
+# Optional DebateEmbeddingsDatabase for historical memory
+try:
+    from aragora.debate.embeddings import DebateEmbeddingsDatabase
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
+    DebateEmbeddingsDatabase = None
+
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 
@@ -111,6 +127,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     elo_system: Optional["EloSystem"] = None  # EloSystem for agent rankings
     document_store: Optional[DocumentStore] = None  # Document store for uploads
     flip_detector: Optional["FlipDetector"] = None  # FlipDetector for position reversals
+    persona_manager: Optional["PersonaManager"] = None  # PersonaManager for agent specialization
+    debate_embeddings: Optional["DebateEmbeddingsDatabase"] = None  # Historical memory
 
     def _safe_int(self, query: dict, key: str, default: int, max_val: int = 100) -> int:
         """Safely parse integer query param with bounds checking."""
@@ -447,9 +465,16 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 env = Environment(task=question, context="", max_rounds=rounds)
                 protocol = DebateProtocol(rounds=rounds, consensus=consensus)
 
-                # Create arena with hooks
+                # Create arena with hooks and optional context systems
                 hooks = create_arena_hooks(self.stream_emitter)
-                arena = Arena(env, agents, protocol, event_hooks=hooks, event_emitter=self.stream_emitter, loop_id=debate_id)
+                arena = Arena(
+                    env, agents, protocol,
+                    event_hooks=hooks,
+                    event_emitter=self.stream_emitter,
+                    persona_manager=self.persona_manager,
+                    debate_embeddings=self.debate_embeddings,
+                    loop_id=debate_id,
+                )
 
                 # Run debate
                 _active_debates[debate_id]["status"] = "running"
@@ -1074,6 +1099,21 @@ class UnifiedServer:
             doc_dir = nomic_dir / "documents"
             UnifiedHandler.document_store = DocumentStore(doc_dir)
             print(f"[server] DocumentStore initialized at {doc_dir}")
+
+            # Initialize PersonaManager for agent specialization
+            if PERSONAS_AVAILABLE:
+                personas_path = nomic_dir / "personas.db"
+                UnifiedHandler.persona_manager = PersonaManager(str(personas_path))
+                print("[server] PersonaManager loaded for agent specialization")
+
+            # Initialize DebateEmbeddingsDatabase for historical memory
+            if EMBEDDINGS_AVAILABLE:
+                embeddings_path = nomic_dir / "debate_embeddings.db"
+                try:
+                    UnifiedHandler.debate_embeddings = DebateEmbeddingsDatabase(str(embeddings_path))
+                    print("[server] DebateEmbeddings loaded for historical memory")
+                except Exception as e:
+                    print(f"[server] DebateEmbeddings initialization failed: {e}")
 
     @property
     def emitter(self) -> SyncEventEmitter:
