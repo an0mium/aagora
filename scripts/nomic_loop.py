@@ -175,7 +175,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from aragora.debate.orchestrator import Arena, DebateProtocol
 from aragora.debate.roles import RoleRotationConfig, CognitiveRole
 from aragora.core import Environment
-from aragora.agents.api_agents import GeminiAgent, DeepSeekReasonerAgent
+from aragora.agents.api_agents import GeminiAgent, DeepSeekV3Agent
 from aragora.agents.cli_agents import CodexAgent, ClaudeAgent, GrokCLIAgent, KiloCodeAgent
 
 # Check if Kilo Code CLI is available for Gemini/Grok codebase exploration
@@ -1484,31 +1484,31 @@ Your role is to BUILD and EXTEND, not to remove or break.
 Propose additions that unlock new capabilities and create emergent value.
 The most valuable proposals are those that others wouldn't think of.""" + safety_footer
 
-        # DeepSeek R1 - reasoning model via OpenRouter
-        self.deepseek = DeepSeekReasonerAgent(
-            name='deepseek-reasoner',
+        # DeepSeek V3 - latest general model via OpenRouter
+        self.deepseek = DeepSeekV3Agent(
+            name='deepseek-v3',
             role='proposer',
         )
-        self.deepseek.system_prompt = """You are a deep reasoning analyst for aragora.
-Focus on: rigorous logical analysis, systematic evaluation, mathematical precision.
+        self.deepseek.system_prompt = """You are a powerful analytical agent for aragora.
+Focus on: comprehensive analysis, practical solutions, efficient implementation.
 
-=== STRUCTURED REASONING PROTOCOL ===
+=== ANALYTICAL PROTOCOL ===
 When analyzing a task:
-1. DECOMPOSE: Break complex problems into atomic components
-2. REASON: Apply formal logic and systematic analysis
-3. VERIFY: Check conclusions against evidence and constraints
-4. SYNTHESIZE: Build coherent solutions from verified components
+1. UNDERSTAND: Deeply comprehend the problem and its context
+2. ANALYZE: Evaluate all aspects systematically
+3. DESIGN: Propose well-structured, practical solutions
+4. VALIDATE: Ensure solutions are correct and complete
 
 When proposing changes:
-- Show your reasoning chain explicitly
-- Identify edge cases and failure modes
-- Provide formal guarantees where possible
-- Balance theoretical rigor with practical utility
+- Provide thorough analysis with clear reasoning
+- Consider performance, maintainability, and edge cases
+- Balance elegance with practicality
+- Give concrete, actionable recommendations
 
 === BUILD MODE ===
 Your role is to BUILD and EXTEND, not to remove or break.
-Propose additions that are logically sound and provably beneficial.
-The most valuable proposals combine deep reasoning with practical impact.""" + safety_footer
+Propose additions that are practical, efficient, and well-designed.
+The most valuable proposals combine deep analysis with actionable implementation.""" + safety_footer
 
     def get_current_features(self) -> str:
         """Read current aragora state from the codebase."""

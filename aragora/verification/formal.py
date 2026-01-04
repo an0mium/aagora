@@ -187,8 +187,9 @@ class LeanBackend:
 
     @property
     def is_available(self) -> bool:
-        # TODO: Check if `lean` and `lake` are in PATH
-        return False
+        """Check if Lean 4 toolchain (lean and lake) is available."""
+        import shutil
+        return shutil.which("lean") is not None and shutil.which("lake") is not None
 
     def can_verify(self, claim: str, claim_type: Optional[str] = None) -> bool:
         # Stub: Not yet implemented

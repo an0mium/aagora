@@ -12,8 +12,10 @@ Enables agents to analyze the debate process itself, identifying:
 from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime
+import asyncio
 
 from aragora.core import Message, Critique, DebateResult
+from aragora.memory.embeddings import EmbeddingProvider, cosine_similarity
 
 
 @dataclass
@@ -67,6 +69,17 @@ class MetaCritiqueAnalyzer:
     # Patterns that indicate unproductive exchanges
     REPETITION_THRESHOLD = 0.6  # Similarity threshold for detecting repetition
     MIN_PROGRESS_THRESHOLD = 0.2  # Minimum expected progress per round
+
+    def __init__(self, embedding_provider: Optional[EmbeddingProvider] = None):
+        """
+        Initialize the analyzer.
+
+        Args:
+            embedding_provider: Optional embedding provider for semantic similarity.
+                               Falls back to word-overlap if not provided.
+        """
+        self._embedding_provider = embedding_provider
+        self._embedding_cache: dict[str, list[float]] = {}
 
     def analyze(self, result: DebateResult) -> MetaCritique:
         """
@@ -363,10 +376,18 @@ class MetaCritiqueAnalyzer:
 
     def _text_similarity(self, text1: str, text2: str) -> float:
         """
-        Calculate simple text similarity.
+        Calculate text similarity using embeddings if available, else word overlap.
 
-        TODO: Replace with embedding-based similarity for better results.
+        Uses semantic similarity via embeddings when an embedding provider is
+        configured, falling back to Jaccard word overlap otherwise.
         """
+        if self._embedding_provider:
+            try:
+                return self._semantic_similarity(text1, text2)
+            except Exception:
+                pass  # Fall back to word-based
+
+        # Word-based Jaccard similarity (fallback)
         words1 = set(text1.lower().split())
         words2 = set(text2.lower().split())
 
@@ -377,6 +398,27 @@ class MetaCritiqueAnalyzer:
         union = len(words1 | words2)
 
         return intersection / union if union > 0 else 0.0
+
+    def _semantic_similarity(self, text1: str, text2: str) -> float:
+        """Calculate semantic similarity using embeddings."""
+        def get_embedding(text: str) -> list[float]:
+            # Use cache to avoid redundant API calls
+            cache_key = text[:500]  # Truncate for cache key
+            if cache_key not in self._embedding_cache:
+                # Run async embed in sync context
+                loop = asyncio.new_event_loop()
+                try:
+                    embedding = loop.run_until_complete(
+                        self._embedding_provider.embed(text[:2000])
+                    )
+                    self._embedding_cache[cache_key] = embedding
+                finally:
+                    loop.close()
+            return self._embedding_cache[cache_key]
+
+        emb1 = get_embedding(text1)
+        emb2 = get_embedding(text2)
+        return cosine_similarity(emb1, emb2)
 
     def generate_meta_prompt(self, result: DebateResult) -> str:
         """

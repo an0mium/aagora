@@ -1097,13 +1097,25 @@ class DeepSeekAgent(OpenRouterAgent):
 
 
 class DeepSeekReasonerAgent(OpenRouterAgent):
-    """DeepSeek V3.2 via OpenRouter - latest reasoning model with integrated thinking and tool-use."""
+    """DeepSeek R1 via OpenRouter - reasoning model with chain-of-thought."""
 
     def __init__(self, name: str = "deepseek-r1", role: str = "analyst", system_prompt: str = None):
         super().__init__(
             name=name,
             role=role,
-            model="deepseek/deepseek-v3.2",  # Latest V3.2 with reasoning + tool-use
+            model="deepseek/deepseek-reasoner",  # R1 reasoning model
+            system_prompt=system_prompt,
+        )
+
+
+class DeepSeekV3Agent(OpenRouterAgent):
+    """DeepSeek V3 (latest) via OpenRouter - powerful general model, cost-effective."""
+
+    def __init__(self, name: str = "deepseek-v3", role: str = "analyst", system_prompt: str = None):
+        super().__init__(
+            name=name,
+            role=role,
+            model="deepseek/deepseek-chat",  # V3 latest (continuously updated)
             system_prompt=system_prompt,
         )
 

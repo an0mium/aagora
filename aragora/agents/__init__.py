@@ -27,6 +27,7 @@ from aragora.agents.api_agents import (
     OpenRouterAgent,
     DeepSeekAgent,
     DeepSeekReasonerAgent,
+    DeepSeekV3Agent,
     LlamaAgent,
     MistralAgent,
 )

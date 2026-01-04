@@ -903,6 +903,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path == '/api/memory/continuum/consolidate':
             self._get_continuum_consolidation()
 
+        # Formal Verification Status API
+        elif path == '/api/verification/status':
+            self._formal_verification_status()
+
         # Static file serving
         elif path in ('/', '/index.html'):
             self._serve_file('index.html')
@@ -938,6 +942,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._get_routing_recommendations()
         elif path == '/api/verification/formal-verify':
             self._formal_verify_claim()
+        elif path == '/api/verification/status':
+            self._formal_verification_status()
         elif path == '/api/insights/extract-detailed':
             self._extract_detailed_insights()
         elif path == '/api/probes/run':
@@ -3206,6 +3212,29 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid JSON body"}, status=400)
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "formal_verification")}, status=500)
+
+    def _formal_verification_status(self) -> None:
+        """Get status of formal verification backends.
+
+        Returns availability of Z3 and Lean backends.
+        """
+        if not FORMAL_VERIFICATION_AVAILABLE:
+            self._send_json({
+                "available": False,
+                "hint": "Install z3-solver: pip install z3-solver",
+                "backends": [],
+            })
+            return
+
+        try:
+            manager = get_formal_verification_manager()
+            status = manager.status_report()
+            self._send_json({
+                "available": status.get("any_available", False),
+                "backends": status.get("backends", []),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "formal_status")}, status=500)
 
     def _extract_detailed_insights(self) -> None:
         """Extract detailed insights from debate content.
