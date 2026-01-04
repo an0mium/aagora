@@ -179,6 +179,8 @@ class Agent(ABC):
         self.model = model
         self.role = role
         self.system_prompt: str = ""
+        # Agent type identifier for routing and role assignment
+        self.agent_type: str = "unknown"
         # Stance for asymmetric debate: "affirmative", "negative", or "neutral"
         # - Affirmative: Defend/support proposals
         # - Negative: Challenge/critique proposals

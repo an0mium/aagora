@@ -63,6 +63,7 @@ class APIAgent(Agent):
         self.timeout = timeout
         self.api_key = api_key
         self.base_url = base_url
+        self.agent_type = "api"  # Default for API agents
 
     def _build_context_prompt(self, context: list[Message] = None) -> str:
         """Build context from previous messages."""
@@ -156,6 +157,7 @@ class GeminiAgent(APIAgent):
             api_key=api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
             base_url="https://generativelanguage.googleapis.com/v1beta",
         )
+        self.agent_type = "gemini"
 
     async def generate(self, prompt: str, context: list[Message] = None) -> str:
         """Generate a response using Gemini API."""
@@ -361,6 +363,7 @@ class OllamaAgent(APIAgent):
             timeout=timeout,
             base_url=base_url or os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
         )
+        self.agent_type = "ollama"
 
     async def generate(self, prompt: str, context: list[Message] = None) -> str:
         """Generate a response using Ollama API."""
@@ -444,6 +447,7 @@ class AnthropicAPIAgent(APIAgent):
             api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"),
             base_url="https://api.anthropic.com/v1",
         )
+        self.agent_type = "anthropic"
 
     async def generate(self, prompt: str, context: list[Message] = None) -> str:
         """Generate a response using Anthropic API."""
@@ -603,6 +607,7 @@ class OpenAIAPIAgent(APIAgent):
             api_key=api_key or os.environ.get("OPENAI_API_KEY"),
             base_url="https://api.openai.com/v1",
         )
+        self.agent_type = "openai"
 
     async def generate(self, prompt: str, context: list[Message] = None) -> str:
         """Generate a response using OpenAI API."""
@@ -766,6 +771,7 @@ class GrokAgent(APIAgent):
             api_key=api_key or os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY"),
             base_url="https://api.x.ai/v1",
         )
+        self.agent_type = "grok"
 
     async def generate(self, prompt: str, context: list[Message] = None) -> str:
         """Generate a response using Grok API."""
@@ -926,11 +932,17 @@ class OpenRouterAgent(APIAgent):
         system_prompt: str = None,
         timeout: int = 300,
     ):
-        super().__init__(name, role, system_prompt)
-        self.model = model
-        self.timeout = timeout
-        self.api_key = os.environ.get("OPENROUTER_API_KEY")
-        self.base_url = "https://openrouter.ai/api/v1"
+        super().__init__(
+            name=name,
+            model=model,
+            role=role,
+            timeout=timeout,
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+            base_url="https://openrouter.ai/api/v1",
+        )
+        self.agent_type = "openrouter"
+        if system_prompt:
+            self.system_prompt = system_prompt
 
     def _build_context_prompt(self, context: list[Message]) -> str:
         """Build context prompt from message history."""
@@ -1094,6 +1106,7 @@ class DeepSeekAgent(OpenRouterAgent):
             model="deepseek/deepseek-v3.2",  # V3.2 latest
             system_prompt=system_prompt,
         )
+        self.agent_type = "deepseek"
 
 
 class DeepSeekReasonerAgent(OpenRouterAgent):
@@ -1106,6 +1119,7 @@ class DeepSeekReasonerAgent(OpenRouterAgent):
             model="deepseek/deepseek-reasoner",  # R1 reasoning model
             system_prompt=system_prompt,
         )
+        self.agent_type = "deepseek-r1"
 
 
 class DeepSeekV3Agent(OpenRouterAgent):
@@ -1118,6 +1132,7 @@ class DeepSeekV3Agent(OpenRouterAgent):
             model="deepseek/deepseek-v3.2",  # V3.2 with integrated thinking + tool-use
             system_prompt=system_prompt,
         )
+        self.agent_type = "deepseek-v3"
 
 
 class LlamaAgent(OpenRouterAgent):
@@ -1130,6 +1145,7 @@ class LlamaAgent(OpenRouterAgent):
             model="meta-llama/llama-3.3-70b-instruct",
             system_prompt=system_prompt,
         )
+        self.agent_type = "llama"
 
 
 class MistralAgent(OpenRouterAgent):
@@ -1142,3 +1158,4 @@ class MistralAgent(OpenRouterAgent):
             model="mistralai/mistral-large-2411",
             system_prompt=system_prompt,
         )
+        self.agent_type = "mistral"

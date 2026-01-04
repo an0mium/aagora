@@ -460,6 +460,12 @@ class DebateStreamServer:
             elif event.type == StreamEventType.LOOP_UNREGISTER:
                 self.debate_states.pop(loop_id, None)
 
+        # Update loop state for cycle/phase events (outside debate_states_lock)
+        if event.type == StreamEventType.CYCLE_START:
+            self.update_loop_state(loop_id, cycle=event.data.get("cycle"))
+        elif event.type == StreamEventType.PHASE_START:
+            self.update_loop_state(loop_id, phase=event.data.get("phase"))
+
     async def broadcast(self, event: StreamEvent) -> None:
         """Send event to all connected clients."""
         if not self.clients:
