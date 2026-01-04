@@ -33,6 +33,10 @@
 - **NEW**: Added TournamentPanel UI component to dashboard
 - **NEW**: Added agent routing hints to DebateInput (domain detection + recommendations)
 - **NEW**: Added `/api/tournaments` endpoint to list tournaments
+- **NEW**: Added CruxPanel for Belief Network visualization
+- **NEW**: Added MemoryInspector for Continuum Memory browsing
+- **NEW**: Fixed asyncio.gather timeout in debate orchestrator (prevents 50% timeout failures)
+- **NEW**: Fixed BeliefPropagationAnalyzer import in server
 
 ## Feature Integration Status
 
@@ -48,19 +52,19 @@
 | Convergence Detection | Active | `aragora/debate/convergence.py` |
 | Role Rotation | Active | `aragora/debate/roles.py` |
 
-### Implemented but Underutilized (4)
+### Implemented but Underutilized (2)
 | Feature | Issue | Location |
 |---------|-------|----------|
-| Continuum Memory | Endpoints exist, not used | `aragora/memory/continuum.py` |
-| Belief Network | Endpoints exist, not used | `aragora/reasoning/belief.py` |
 | Persona Laboratory | Endpoints exist, not used | `aragora/agents/laboratory.py` |
 | Prompt Evolution | 3 TODO items | `aragora/evolution/evolver.py` |
 
-### Recently Surfaced (2)
+### Recently Surfaced (4)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Tournament System | TournamentPanel added | `aragora/live/src/components/TournamentPanel.tsx` |
 | Agent Routing | Integrated in DebateInput | `aragora/live/src/components/DebateInput.tsx` |
+| Belief Network | CruxPanel added | `aragora/live/src/components/CruxPanel.tsx` |
+| Continuum Memory | MemoryInspector added | `aragora/live/src/components/MemoryInspector.tsx` |
 
 ### Server Endpoints (54 total)
 - **Used by Frontend**: ~10%
