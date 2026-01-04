@@ -645,3 +645,111 @@ Install optional dependencies:
 ```bash
 pip install sentence-transformers z3-solver numpy scikit-learn
 ```
+
+---
+
+## Phase 9: Truth Grounding (Recent)
+
+### FlipDetector
+**File:** `aragora/insights/flip_detector.py`
+
+Semantic position reversal detection that tracks when agents change their positions on claims.
+
+```python
+from aragora.insights.flip_detector import FlipDetector
+
+detector = FlipDetector(db_path="positions.db")
+flips = detector.detect_flips_for_agent("claude", lookback_positions=50)
+consistency = detector.get_agent_consistency("claude")
+print(f"Consistency score: {consistency.consistency_score:.2%}")
+```
+
+**Flip Types:**
+- `contradiction` - Direct opposite position
+- `refinement` - Minor adjustment
+- `retraction` - Complete withdrawal
+- `qualification` - Adding nuance
+
+### GroundedPersonaManager
+**File:** `aragora/agents/grounded.py`
+
+Truth-grounded persona tracking that links agent identities to verifiable performance history.
+
+```python
+from aragora.agents.grounded import GroundedPersonaManager
+
+manager = GroundedPersonaManager(db_path="personas.db")
+identity = manager.get_grounded_identity("claude")
+print(f"Win rate: {identity.win_rate:.2%}")
+print(f"Calibration: {identity.calibration_score:.2f}")
+```
+
+**Key Metrics:**
+- Position history with debate outcomes
+- Calibration scoring (prediction accuracy)
+- Domain expertise tracking
+- Inter-agent relationship metrics
+
+### TruthGroundingSystem
+**File:** `aragora/agents/truth_grounding.py`
+
+Central system for maintaining epistemic accountability across debates.
+
+```python
+from aragora.agents.truth_grounding import TruthGroundingSystem
+
+system = TruthGroundingSystem(db_path="grounding.db")
+system.record_position("claude", "claim-123", 0.85, "debate-456")
+accuracy = system.compute_calibration("claude")
+```
+
+### DissentRetriever (Enhanced)
+**File:** `aragora/memory/consensus.py`
+
+Enhanced dissent retrieval with contrarian views and risk warnings.
+
+```python
+from aragora.memory.consensus import DissentRetriever
+
+retriever = DissentRetriever(memory)
+contrarian = retriever.find_contrarian_views("The approach should use caching")
+risks = retriever.find_risk_warnings("Database migration")
+context = retriever.get_debate_preparation_context("New feature design")
+```
+
+### DebateForker
+**File:** `aragora/debate/forking.py`
+
+Parallel branch exploration for deadlock resolution.
+
+```python
+from aragora.debate.forking import ForkDetector, DebateForker
+
+detector = ForkDetector(disagreement_threshold=0.7)
+decision = detector.should_fork(messages, round_num, agents)
+
+if decision:
+    forker = DebateForker(agents, protocol)
+    merge_result = await forker.run_branches(decision.branches, base_context)
+    print(f"Winner: {merge_result.winning_branch}")
+```
+
+### EnhancedProvenanceManager
+**File:** `aragora/reasoning/provenance_enhanced.py`
+
+Staleness detection and evidence validation for claims.
+
+```python
+from aragora.reasoning.provenance_enhanced import EnhancedProvenanceManager
+
+manager = EnhancedProvenanceManager()
+staleness = await manager.check_staleness(claims, changed_files)
+if staleness.needs_redebate:
+    print(f"Stale claims: {staleness.stale_claims}")
+```
+
+---
+
+## API Reference
+
+See [API_REFERENCE.md](./API_REFERENCE.md) for complete HTTP and WebSocket API documentation.
