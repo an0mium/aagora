@@ -366,18 +366,17 @@ class FlipDetector:
 
     def get_recent_flips(self, limit: int = 20) -> list[FlipEvent]:
         """Get recent flips across all agents."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            """
-            SELECT * FROM detected_flips
-            ORDER BY detected_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM detected_flips
+                ORDER BY detected_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
 
         return [
             FlipEvent(
@@ -401,34 +400,31 @@ class FlipDetector:
 
     def get_flip_summary(self) -> dict:
         """Get summary of all flips for dashboard display."""
-        conn = sqlite3.connect(self.db_path)
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            # Total flips
+            cursor = conn.execute("SELECT COUNT(*) FROM detected_flips")
+            total_flips = cursor.fetchone()[0]
 
-        # Total flips
-        cursor = conn.execute("SELECT COUNT(*) FROM detected_flips")
-        total_flips = cursor.fetchone()[0]
+            # Flips by type
+            cursor = conn.execute(
+                "SELECT flip_type, COUNT(*) FROM detected_flips GROUP BY flip_type"
+            )
+            by_type = dict(cursor.fetchall())
 
-        # Flips by type
-        cursor = conn.execute(
-            "SELECT flip_type, COUNT(*) FROM detected_flips GROUP BY flip_type"
-        )
-        by_type = dict(cursor.fetchall())
+            # Flips by agent
+            cursor = conn.execute(
+                "SELECT agent_name, COUNT(*) FROM detected_flips GROUP BY agent_name ORDER BY COUNT(*) DESC"
+            )
+            by_agent = dict(cursor.fetchall())
 
-        # Flips by agent
-        cursor = conn.execute(
-            "SELECT agent_name, COUNT(*) FROM detected_flips GROUP BY agent_name ORDER BY COUNT(*) DESC"
-        )
-        by_agent = dict(cursor.fetchall())
-
-        # Recent 24h flips
-        cursor = conn.execute(
-            """
-            SELECT COUNT(*) FROM detected_flips
-            WHERE detected_at > datetime('now', '-1 day')
-            """
-        )
-        recent_24h = cursor.fetchone()[0]
-
-        conn.close()
+            # Recent 24h flips
+            cursor = conn.execute(
+                """
+                SELECT COUNT(*) FROM detected_flips
+                WHERE detected_at > datetime('now', '-1 day')
+                """
+            )
+            recent_24h = cursor.fetchone()[0]
 
         return {
             "total_flips": total_flips,

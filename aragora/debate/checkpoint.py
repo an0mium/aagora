@@ -20,6 +20,7 @@ import gzip
 import hashlib
 import logging
 import os
+import re
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -249,13 +250,28 @@ class FileCheckpointStore(CheckpointStore):
         base_dir: str = ".checkpoints",
         compress: bool = True,
     ):
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.compress = compress
 
+    def _sanitize_checkpoint_id(self, checkpoint_id: str) -> str:
+        """Sanitize checkpoint ID to prevent path traversal attacks."""
+        # Remove any path separators and parent directory references
+        sanitized = checkpoint_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+        # Only allow alphanumeric characters, hyphens, and underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', sanitized)
+        if not sanitized:
+            raise ValueError("Invalid checkpoint ID")
+        return sanitized
+
     def _get_path(self, checkpoint_id: str) -> Path:
         ext = ".json.gz" if self.compress else ".json"
-        return self.base_dir / f"{checkpoint_id}{ext}"
+        sanitized_id = self._sanitize_checkpoint_id(checkpoint_id)
+        path = self.base_dir / f"{sanitized_id}{ext}"
+        # Ensure the resolved path is within base_dir (defense in depth)
+        if not path.resolve().is_relative_to(self.base_dir):
+            raise ValueError("Invalid checkpoint path")
+        return path
 
     async def save(self, checkpoint: DebateCheckpoint) -> str:
         path = self._get_path(checkpoint.checkpoint_id)

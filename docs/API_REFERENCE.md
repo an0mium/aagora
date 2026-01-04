@@ -806,6 +806,62 @@ Get successful critique patterns for learning.
 }
 ```
 
+#### GET /api/critiques/archive
+Get archive statistics for resolved patterns.
+
+**Response:**
+```json
+{
+  "archived": 42,
+  "by_type": {
+    "security": 15,
+    "performance": 12,
+    "edge_case": 15
+  }
+}
+```
+
+---
+
+### Agent Reputation
+
+Track agent reliability and voting weights.
+
+#### GET /api/reputation/all
+Get all agent reputations ranked by score.
+
+**Response:**
+```json
+{
+  "reputations": [
+    {
+      "agent": "claude",
+      "score": 0.85,
+      "vote_weight": 1.35,
+      "proposal_acceptance_rate": 0.78,
+      "critique_value": 0.82,
+      "debates_participated": 45
+    }
+  ],
+  "count": 4
+}
+```
+
+#### GET /api/agent/:name/reputation
+Get reputation for a specific agent.
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "score": 0.85,
+  "vote_weight": 1.35,
+  "proposal_acceptance_rate": 0.78,
+  "critique_value": 0.82,
+  "debates_participated": 45
+}
+```
+
 ---
 
 ### Agent Comparison

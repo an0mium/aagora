@@ -65,53 +65,52 @@ class PromptEvolver:
 
     def _init_db(self):
         """Initialize evolution database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Prompt versions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prompt_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_name TEXT NOT NULL,
-                version INTEGER NOT NULL,
-                prompt TEXT NOT NULL,
-                performance_score REAL DEFAULT 0.0,
-                debates_count INTEGER DEFAULT 0,
-                consensus_rate REAL DEFAULT 0.0,
-                metadata TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(agent_name, version)
-            )
-        """)
+            # Prompt versions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prompt_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_name TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    prompt TEXT NOT NULL,
+                    performance_score REAL DEFAULT 0.0,
+                    debates_count INTEGER DEFAULT 0,
+                    consensus_rate REAL DEFAULT 0.0,
+                    metadata TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(agent_name, version)
+                )
+            """)
 
-        # Extracted patterns table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS extracted_patterns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pattern_type TEXT NOT NULL,
-                pattern_text TEXT NOT NULL,
-                source_debate_id TEXT,
-                effectiveness_score REAL DEFAULT 0.5,
-                usage_count INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Extracted patterns table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS extracted_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pattern_type TEXT NOT NULL,
+                    pattern_text TEXT NOT NULL,
+                    source_debate_id TEXT,
+                    effectiveness_score REAL DEFAULT 0.5,
+                    usage_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Evolution history
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS evolution_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_name TEXT NOT NULL,
-                from_version INTEGER,
-                to_version INTEGER,
-                strategy TEXT,
-                patterns_applied TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Evolution history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS evolution_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_name TEXT NOT NULL,
+                    from_version INTEGER,
+                    to_version INTEGER,
+                    strategy TEXT,
+                    patterns_applied TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def extract_winning_patterns(
         self,
@@ -167,20 +166,19 @@ class PromptEvolver:
 
     def store_patterns(self, patterns: list[dict]):
         """Store extracted patterns in database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        for pattern in patterns:
-            cursor.execute(
-                """
-                INSERT INTO extracted_patterns (pattern_type, pattern_text, source_debate_id)
-                VALUES (?, ?, ?)
-            """,
-                (pattern["type"], pattern["text"], pattern.get("source_debate")),
-            )
+            for pattern in patterns:
+                cursor.execute(
+                    """
+                    INSERT INTO extracted_patterns (pattern_type, pattern_text, source_debate_id)
+                    VALUES (?, ?, ?)
+                """,
+                    (pattern["type"], pattern["text"], pattern.get("source_debate")),
+                )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_top_patterns(
         self,
@@ -188,72 +186,70 @@ class PromptEvolver:
         limit: int = 10,
     ) -> list[dict]:
         """Get most effective patterns."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        if pattern_type:
-            cursor.execute(
-                """
-                SELECT pattern_type, pattern_text, effectiveness_score, usage_count
-                FROM extracted_patterns
-                WHERE pattern_type = ?
-                ORDER BY effectiveness_score DESC, usage_count DESC
-                LIMIT ?
-            """,
-                (pattern_type, limit),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT pattern_type, pattern_text, effectiveness_score, usage_count
-                FROM extracted_patterns
-                ORDER BY effectiveness_score DESC, usage_count DESC
-                LIMIT ?
-            """,
-                (limit,),
-            )
+            if pattern_type:
+                cursor.execute(
+                    """
+                    SELECT pattern_type, pattern_text, effectiveness_score, usage_count
+                    FROM extracted_patterns
+                    WHERE pattern_type = ?
+                    ORDER BY effectiveness_score DESC, usage_count DESC
+                    LIMIT ?
+                """,
+                    (pattern_type, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT pattern_type, pattern_text, effectiveness_score, usage_count
+                    FROM extracted_patterns
+                    ORDER BY effectiveness_score DESC, usage_count DESC
+                    LIMIT ?
+                """,
+                    (limit,),
+                )
 
-        patterns = [
-            {
-                "type": row[0],
-                "text": row[1],
-                "effectiveness": row[2],
-                "usage_count": row[3],
-            }
-            for row in cursor.fetchall()
-        ]
+            patterns = [
+                {
+                    "type": row[0],
+                    "text": row[1],
+                    "effectiveness": row[2],
+                    "usage_count": row[3],
+                }
+                for row in cursor.fetchall()
+            ]
 
-        conn.close()
         return patterns
 
     def get_prompt_version(self, agent_name: str, version: int = None) -> Optional[PromptVersion]:
         """Get a specific prompt version or the latest."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        if version is not None:
-            cursor.execute(
-                """
-                SELECT version, prompt, performance_score, debates_count, consensus_rate, metadata, created_at
-                FROM prompt_versions
-                WHERE agent_name = ? AND version = ?
-            """,
-                (agent_name, version),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT version, prompt, performance_score, debates_count, consensus_rate, metadata, created_at
-                FROM prompt_versions
-                WHERE agent_name = ?
-                ORDER BY version DESC
-                LIMIT 1
-            """,
-                (agent_name,),
-            )
+            if version is not None:
+                cursor.execute(
+                    """
+                    SELECT version, prompt, performance_score, debates_count, consensus_rate, metadata, created_at
+                    FROM prompt_versions
+                    WHERE agent_name = ? AND version = ?
+                """,
+                    (agent_name, version),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT version, prompt, performance_score, debates_count, consensus_rate, metadata, created_at
+                    FROM prompt_versions
+                    WHERE agent_name = ?
+                    ORDER BY version DESC
+                    LIMIT 1
+                """,
+                    (agent_name,),
+                )
 
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -270,27 +266,26 @@ class PromptEvolver:
 
     def save_prompt_version(self, agent_name: str, prompt: str, metadata: dict = None) -> int:
         """Save a new prompt version."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Get next version number
-        cursor.execute(
-            "SELECT MAX(version) FROM prompt_versions WHERE agent_name = ?",
-            (agent_name,),
-        )
-        row = cursor.fetchone()
-        next_version = (row[0] or 0) + 1
+            # Get next version number
+            cursor.execute(
+                "SELECT MAX(version) FROM prompt_versions WHERE agent_name = ?",
+                (agent_name,),
+            )
+            row = cursor.fetchone()
+            next_version = (row[0] or 0) + 1
 
-        cursor.execute(
-            """
-            INSERT INTO prompt_versions (agent_name, version, prompt, metadata)
-            VALUES (?, ?, ?, ?)
-        """,
-            (agent_name, next_version, prompt, json.dumps(metadata or {})),
-        )
+            cursor.execute(
+                """
+                INSERT INTO prompt_versions (agent_name, version, prompt, metadata)
+                VALUES (?, ?, ?, ?)
+            """,
+                (agent_name, next_version, prompt, json.dumps(metadata or {})),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return next_version
 
@@ -392,54 +387,52 @@ class PromptEvolver:
         agent.set_system_prompt(new_prompt)
 
         # Record evolution history
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO evolution_history (agent_name, from_version, to_version, strategy, patterns_applied)
-            VALUES (?, ?, ?, ?, ?)
-        """,
-            (
-                agent.name,
-                version - 1 if version > 1 else None,
-                version,
-                self.strategy.value,
-                json.dumps([p["text"] for p in (patterns or [])[:5]]),
-            ),
-        )
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO evolution_history (agent_name, from_version, to_version, strategy, patterns_applied)
+                VALUES (?, ?, ?, ?, ?)
+            """,
+                (
+                    agent.name,
+                    version - 1 if version > 1 else None,
+                    version,
+                    self.strategy.value,
+                    json.dumps([p["text"] for p in (patterns or [])[:5]]),
+                ),
+            )
+            conn.commit()
 
         return new_prompt
 
     def get_evolution_history(self, agent_name: str, limit: int = 10) -> list[dict]:
         """Get evolution history for an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT from_version, to_version, strategy, patterns_applied, created_at
-            FROM evolution_history
-            WHERE agent_name = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-        """,
-            (agent_name, limit),
-        )
+            cursor.execute(
+                """
+                SELECT from_version, to_version, strategy, patterns_applied, created_at
+                FROM evolution_history
+                WHERE agent_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """,
+                (agent_name, limit),
+            )
 
-        history = [
-            {
-                "from_version": row[0],
-                "to_version": row[1],
-                "strategy": row[2],
-                "patterns": json.loads(row[3]) if row[3] else [],
-                "created_at": row[4],
-            }
-            for row in cursor.fetchall()
-        ]
+            history = [
+                {
+                    "from_version": row[0],
+                    "to_version": row[1],
+                    "strategy": row[2],
+                    "patterns": json.loads(row[3]) if row[3] else [],
+                    "created_at": row[4],
+                }
+                for row in cursor.fetchall()
+            ]
 
-        conn.close()
         return history
 
     def update_performance(
@@ -449,38 +442,36 @@ class PromptEvolver:
         debate_result: DebateResult,
     ):
         """Update performance metrics for a prompt version."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Get current stats
-        cursor.execute(
-            """
-            SELECT debates_count, consensus_rate
-            FROM prompt_versions
-            WHERE agent_name = ? AND version = ?
-        """,
-            (agent_name, version),
-        )
-        row = cursor.fetchone()
-
-        if row:
-            current_count = row[0]
-            current_rate = row[1]
-
-            new_count = current_count + 1
-            # Running average of consensus rate
-            new_rate = (current_rate * current_count + (1 if debate_result.consensus_reached else 0)) / new_count
-            new_score = debate_result.confidence if debate_result.consensus_reached else 0
-
+            # Get current stats
             cursor.execute(
                 """
-                UPDATE prompt_versions
-                SET debates_count = ?, consensus_rate = ?, performance_score = ?
+                SELECT debates_count, consensus_rate
+                FROM prompt_versions
                 WHERE agent_name = ? AND version = ?
             """,
-                (new_count, new_rate, new_score, agent_name, version),
+                (agent_name, version),
             )
+            row = cursor.fetchone()
 
-            conn.commit()
+            if row:
+                current_count = row[0]
+                current_rate = row[1]
 
-        conn.close()
+                new_count = current_count + 1
+                # Running average of consensus rate
+                new_rate = (current_rate * current_count + (1 if debate_result.consensus_reached else 0)) / new_count
+                new_score = debate_result.confidence if debate_result.consensus_reached else 0
+
+                cursor.execute(
+                    """
+                    UPDATE prompt_versions
+                    SET debates_count = ?, consensus_rate = ?, performance_score = ?
+                    WHERE agent_name = ? AND version = ?
+                """,
+                    (new_count, new_rate, new_score, agent_name, version),
+                )
+
+                conn.commit()

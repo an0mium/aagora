@@ -517,6 +517,23 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             if agent is None:
                 return
             self._get_agent_performance(agent)
+        elif path.startswith('/api/agent/') and path.endswith('/domains'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            limit = self._safe_int(query, 'limit', 5, 20)
+            self._get_agent_domains(agent, limit)
+        elif path.startswith('/api/agent/') and path.endswith('/grounded-persona'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            self._get_grounded_persona(agent)
+        elif path.startswith('/api/agent/') and path.endswith('/identity-prompt'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            sections = query.get('sections', [None])[0]
+            self._get_identity_prompt(agent, sections)
 
         # Consensus Memory API (expose underutilized databases)
         elif path == '/api/consensus/similar':
@@ -541,6 +558,22 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             domain = query.get('domain', [None])[0]
             self._get_dissents_for_topic(topic.strip()[:500], domain)
+        elif path == '/api/consensus/contrarian-views':
+            topic = query.get('topic', [''])[0]
+            if not topic or len(topic) > 500:
+                self._send_json({"error": "Topic required (max 500 chars)"}, status=400)
+                return
+            domain = query.get('domain', [None])[0]
+            limit = self._safe_int(query, 'limit', 5, 20)
+            self._get_contrarian_views(topic.strip()[:500], domain, limit)
+        elif path == '/api/consensus/risk-warnings':
+            topic = query.get('topic', [''])[0]
+            if not topic or len(topic) > 500:
+                self._send_json({"error": "Topic required (max 500 chars)"}, status=400)
+                return
+            domain = query.get('domain', [None])[0]
+            limit = self._safe_int(query, 'limit', 5, 20)
+            self._get_risk_warnings(topic.strip()[:500], domain, limit)
         elif path.startswith('/api/consensus/domain/'):
             domain = self._extract_path_segment(path, 4, "domain")
             if domain is None:
@@ -1613,6 +1646,89 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "agent_performance")})
 
+    def _get_agent_domains(self, agent: str, limit: int) -> None:
+        """Get agent's best expertise domains by calibration."""
+        if not self._check_rate_limit():
+            return
+
+        if not RANKING_AVAILABLE or not self.elo_system:
+            self._send_json({"error": "Ranking system not available"}, status=503)
+            return
+
+        try:
+            domains = self.elo_system.get_best_domains(agent, limit=limit)
+            self._send_json({
+                "agent": agent,
+                "domains": [
+                    {"domain": d[0], "calibration_score": d[1]}
+                    for d in domains
+                ],
+                "count": len(domains),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "agent_domains")}, status=500)
+
+    def _get_grounded_persona(self, agent: str) -> None:
+        """Get truth-grounded persona synthesized from performance data."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.agents.grounded import PersonaSynthesizer
+
+            db_path = self.nomic_dir / "aragora_personas.db" if self.nomic_dir else None
+            synthesizer = PersonaSynthesizer(
+                persona_manager=self.persona_manager,
+                elo_system=self.elo_system,
+                position_ledger=getattr(self, 'position_ledger', None),
+                relationship_tracker=None,
+            )
+            persona = synthesizer.get_grounded_persona(agent)
+            if persona:
+                self._send_json({
+                    "agent": agent,
+                    "elo": persona.elo,
+                    "domain_elos": persona.domain_elos,
+                    "games_played": persona.games_played,
+                    "win_rate": persona.win_rate,
+                    "calibration_score": persona.calibration_score,
+                    "position_accuracy": persona.position_accuracy,
+                    "positions_taken": persona.positions_taken,
+                    "reversals": persona.reversals,
+                })
+            else:
+                self._send_json({"agent": agent, "message": "No grounded persona data"})
+        except ImportError:
+            self._send_json({"error": "Grounded personas module not available"}, status=503)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "grounded_persona")}, status=500)
+
+    def _get_identity_prompt(self, agent: str, sections: str = None) -> None:
+        """Get evidence-grounded identity prompt for agent initialization."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.agents.grounded import PersonaSynthesizer
+
+            synthesizer = PersonaSynthesizer(
+                persona_manager=self.persona_manager,
+                elo_system=self.elo_system,
+                position_ledger=getattr(self, 'position_ledger', None),
+                relationship_tracker=None,
+            )
+            include_sections = sections.split(',') if sections else None
+            prompt = synthesizer.synthesize_identity_prompt(agent, include_sections=include_sections)
+            self._send_json({
+                "agent": agent,
+                "identity_prompt": prompt,
+                "sections": include_sections,
+            })
+        except ImportError:
+            self._send_json({"error": "Grounded personas module not available"}, status=503)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "identity_prompt")}, status=500)
+
     # === Consensus Memory API ===
 
     def _get_similar_debates(self, topic: str, limit: int) -> None:
@@ -1719,6 +1835,61 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "dissent_retrieval")}, status=500)
+
+    def _get_contrarian_views(self, topic: str, domain: str, limit: int) -> None:
+        """Get historical contrarian/dissenting views on a topic."""
+        if not CONSENSUS_MEMORY_AVAILABLE or DissentRetriever is None:
+            self._send_json({"error": "Dissent retriever not available"}, status=503)
+            return
+
+        try:
+            memory = ConsensusMemory()
+            retriever = DissentRetriever(memory)
+            views = retriever.find_contrarian_views(topic, domain=domain, limit=limit)
+            self._send_json({
+                "topic": topic,
+                "domain": domain,
+                "contrarian_views": [
+                    {
+                        "agent": v.agent_name,
+                        "position": v.position,
+                        "reasoning": v.reasoning,
+                        "confidence": v.confidence,
+                        "timestamp": v.timestamp.isoformat() if hasattr(v, 'timestamp') else None,
+                    }
+                    for v in views
+                ],
+                "count": len(views),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "contrarian_views")}, status=500)
+
+    def _get_risk_warnings(self, topic: str, domain: str, limit: int) -> None:
+        """Get risk warnings and edge case concerns from past debates."""
+        if not CONSENSUS_MEMORY_AVAILABLE or DissentRetriever is None:
+            self._send_json({"error": "Dissent retriever not available"}, status=503)
+            return
+
+        try:
+            memory = ConsensusMemory()
+            retriever = DissentRetriever(memory)
+            warnings = retriever.find_risk_warnings(topic, domain=domain, limit=limit)
+            self._send_json({
+                "topic": topic,
+                "domain": domain,
+                "risk_warnings": [
+                    {
+                        "agent": w.agent_name,
+                        "warning": w.position,
+                        "severity": getattr(w, 'severity', 'medium'),
+                        "timestamp": w.timestamp.isoformat() if hasattr(w, 'timestamp') else None,
+                    }
+                    for w in warnings
+                ],
+                "count": len(warnings),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "risk_warnings")}, status=500)
 
     def _get_domain_history(self, domain: str, limit: int) -> None:
         """Get consensus history for a domain."""
