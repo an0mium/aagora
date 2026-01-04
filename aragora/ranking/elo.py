@@ -119,117 +119,115 @@ class EloSystem:
 
             # Agent ratings
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ratings (
-                agent_name TEXT PRIMARY KEY,
-                elo REAL DEFAULT 1500,
-                domain_elos TEXT,
-                wins INTEGER DEFAULT 0,
-                losses INTEGER DEFAULT 0,
-                draws INTEGER DEFAULT 0,
-                debates_count INTEGER DEFAULT 0,
-                critiques_accepted INTEGER DEFAULT 0,
-                critiques_total INTEGER DEFAULT 0,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+                CREATE TABLE IF NOT EXISTS ratings (
+                    agent_name TEXT PRIMARY KEY,
+                    elo REAL DEFAULT 1500,
+                    domain_elos TEXT,
+                    wins INTEGER DEFAULT 0,
+                    losses INTEGER DEFAULT 0,
+                    draws INTEGER DEFAULT 0,
+                    debates_count INTEGER DEFAULT 0,
+                    critiques_accepted INTEGER DEFAULT 0,
+                    critiques_total INTEGER DEFAULT 0,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Match history
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS matches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                debate_id TEXT UNIQUE,
-                winner TEXT,
-                participants TEXT,
-                domain TEXT,
-                scores TEXT,
-                elo_changes TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Match history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS matches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debate_id TEXT UNIQUE,
+                    winner TEXT,
+                    participants TEXT,
+                    domain TEXT,
+                    scores TEXT,
+                    elo_changes TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # ELO history for tracking progression
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS elo_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_name TEXT NOT NULL,
-                elo REAL NOT NULL,
-                debate_id TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # ELO history for tracking progression
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS elo_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_name TEXT NOT NULL,
+                    elo REAL NOT NULL,
+                    debate_id TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Calibration predictions table (for tracking pre-tournament predictions)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS calibration_predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tournament_id TEXT NOT NULL,
-                predictor_agent TEXT NOT NULL,
-                predicted_winner TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(tournament_id, predictor_agent)
-            )
-        """)
+            # Calibration predictions table (for tracking pre-tournament predictions)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calibration_predictions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tournament_id TEXT NOT NULL,
+                    predictor_agent TEXT NOT NULL,
+                    predicted_winner TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(tournament_id, predictor_agent)
+                )
+            """)
 
-        # Safe schema migration: add calibration columns if missing
-        cursor.execute("PRAGMA table_info(ratings)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "calibration_correct" not in columns:
-            cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_correct INTEGER DEFAULT 0")
-        if "calibration_total" not in columns:
-            cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_total INTEGER DEFAULT 0")
-        if "calibration_brier_sum" not in columns:
-            cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_brier_sum REAL DEFAULT 0.0")
+            # Safe schema migration: add calibration columns if missing
+            cursor.execute("PRAGMA table_info(ratings)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "calibration_correct" not in columns:
+                cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_correct INTEGER DEFAULT 0")
+            if "calibration_total" not in columns:
+                cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_total INTEGER DEFAULT 0")
+            if "calibration_brier_sum" not in columns:
+                cursor.execute("ALTER TABLE ratings ADD COLUMN calibration_brier_sum REAL DEFAULT 0.0")
 
-        # Domain-specific calibration tracking (for grounded personas)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS domain_calibration (
-                agent_name TEXT NOT NULL,
-                domain TEXT NOT NULL,
-                total_predictions INTEGER DEFAULT 0,
-                total_correct INTEGER DEFAULT 0,
-                brier_sum REAL DEFAULT 0.0,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (agent_name, domain)
-            )
-        """)
+            # Domain-specific calibration tracking (for grounded personas)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS domain_calibration (
+                    agent_name TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    total_predictions INTEGER DEFAULT 0,
+                    total_correct INTEGER DEFAULT 0,
+                    brier_sum REAL DEFAULT 0.0,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (agent_name, domain)
+                )
+            """)
 
-        # Calibration by confidence bucket (for calibration curves)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS calibration_buckets (
-                agent_name TEXT NOT NULL,
-                domain TEXT NOT NULL,
-                bucket_key TEXT NOT NULL,
-                predictions INTEGER DEFAULT 0,
-                correct INTEGER DEFAULT 0,
-                brier_sum REAL DEFAULT 0.0,
-                PRIMARY KEY (agent_name, domain, bucket_key)
-            )
-        """)
+            # Calibration by confidence bucket (for calibration curves)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calibration_buckets (
+                    agent_name TEXT NOT NULL,
+                    domain TEXT NOT NULL,
+                    bucket_key TEXT NOT NULL,
+                    predictions INTEGER DEFAULT 0,
+                    correct INTEGER DEFAULT 0,
+                    brier_sum REAL DEFAULT 0.0,
+                    PRIMARY KEY (agent_name, domain, bucket_key)
+                )
+            """)
 
-        # Agent relationships tracking (for grounded personas)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS agent_relationships (
-                agent_a TEXT NOT NULL,
-                agent_b TEXT NOT NULL,
-                debate_count INTEGER DEFAULT 0,
-                agreement_count INTEGER DEFAULT 0,
-                critique_count_a_to_b INTEGER DEFAULT 0,
-                critique_count_b_to_a INTEGER DEFAULT 0,
-                critique_accepted_a_to_b INTEGER DEFAULT 0,
-                critique_accepted_b_to_a INTEGER DEFAULT 0,
-                position_changes_a_after_b INTEGER DEFAULT 0,
-                position_changes_b_after_a INTEGER DEFAULT 0,
-                a_wins_over_b INTEGER DEFAULT 0,
-                b_wins_over_a INTEGER DEFAULT 0,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (agent_a, agent_b),
-                CHECK (agent_a < agent_b)
-            )
-        """)
+            # Agent relationships tracking (for grounded personas)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_relationships (
+                    agent_a TEXT NOT NULL,
+                    agent_b TEXT NOT NULL,
+                    debate_count INTEGER DEFAULT 0,
+                    agreement_count INTEGER DEFAULT 0,
+                    critique_count_a_to_b INTEGER DEFAULT 0,
+                    critique_count_b_to_a INTEGER DEFAULT 0,
+                    critique_accepted_a_to_b INTEGER DEFAULT 0,
+                    critique_accepted_b_to_a INTEGER DEFAULT 0,
+                    position_changes_a_after_b INTEGER DEFAULT 0,
+                    position_changes_b_after_a INTEGER DEFAULT 0,
+                    a_wins_over_b INTEGER DEFAULT 0,
+                    b_wins_over_a INTEGER DEFAULT 0,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (agent_a, agent_b),
+                    CHECK (agent_a < agent_b)
+                )
+            """)
 
-        conn.commit()
-        conn.close()
 
     def get_rating(self, agent_name: str) -> AgentRating:
         """Get or create rating for an agent."""
@@ -559,8 +557,9 @@ class EloSystem:
 
     def get_leaderboard(self, limit: int = 20, domain: str = None) -> list[AgentRating]:
         """Get top agents by ELO."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -573,7 +572,6 @@ class EloSystem:
             (limit,),
         )
         rows = cursor.fetchall()
-        conn.close()
 
         ratings = [
             AgentRating(
@@ -602,8 +600,9 @@ class EloSystem:
 
     def get_elo_history(self, agent_name: str, limit: int = 50) -> list[tuple[str, float]]:
         """Get ELO history for an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -615,7 +614,6 @@ class EloSystem:
             (agent_name, limit),
         )
         rows = cursor.fetchall()
-        conn.close()
 
         return [(row[0], row[1]) for row in rows]
 
@@ -625,8 +623,9 @@ class EloSystem:
         Returns list of dicts with: debate_id, winner, participants, domain,
         elo_changes, created_at
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -638,7 +637,6 @@ class EloSystem:
             (limit,),
         )
         rows = cursor.fetchall()
-        conn.close()
 
         matches = []
         for row in rows:
@@ -656,8 +654,9 @@ class EloSystem:
 
     def get_head_to_head(self, agent_a: str, agent_b: str) -> dict:
         """Get head-to-head statistics between two agents."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -667,7 +666,6 @@ class EloSystem:
             (f"%{agent_a}%", f"%{agent_b}%"),
         )
         rows = cursor.fetchall()
-        conn.close()
 
         a_wins = 0
         b_wins = 0
@@ -690,8 +688,9 @@ class EloSystem:
 
     def get_stats(self) -> dict:
         """Get overall system statistics."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute("SELECT COUNT(*), AVG(elo), MAX(elo), MIN(elo) FROM ratings")
         ratings_row = cursor.fetchone()
@@ -699,7 +698,6 @@ class EloSystem:
         cursor.execute("SELECT COUNT(*) FROM matches")
         matches_row = cursor.fetchone()
 
-        conn.close()
 
         return {
             "total_agents": ratings_row[0] or 0,
@@ -729,8 +727,9 @@ class EloSystem:
             predicted_winner: Agent predicted to win
             confidence: Confidence level (0.0 to 1.0)
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -742,7 +741,6 @@ class EloSystem:
         )
 
         conn.commit()
-        conn.close()
 
     def resolve_tournament_calibration(
         self,
@@ -762,8 +760,9 @@ class EloSystem:
         Returns:
             Dict of predictor_agent -> brier_score for this prediction
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -774,7 +773,6 @@ class EloSystem:
             (tournament_id,),
         )
         predictions = cursor.fetchall()
-        conn.close()
 
         brier_scores = {}
 
@@ -801,8 +799,9 @@ class EloSystem:
 
         Only includes agents with minimum predictions.
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -818,7 +817,6 @@ class EloSystem:
             (CALIBRATION_MIN_COUNT, limit),
         )
         rows = cursor.fetchall()
-        conn.close()
 
         return [
             AgentRating(
@@ -843,8 +841,9 @@ class EloSystem:
         self, agent_name: str, limit: int = 50
     ) -> list[dict]:
         """Get recent predictions made by an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         cursor.execute(
             """
@@ -857,7 +856,6 @@ class EloSystem:
             (agent_name, limit),
         )
         rows = cursor.fetchall()
-        conn.close()
 
         return [
             {
@@ -899,8 +897,10 @@ class EloSystem:
         brier = (confidence - (1.0 if correct else 0.0)) ** 2
         bucket_key = self._get_bucket_key(confidence)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+
+            cursor = conn.cursor()
 
         # Update domain calibration
         cursor.execute(
@@ -941,13 +941,13 @@ class EloSystem:
         rating.updated_at = datetime.now().isoformat()
 
         conn.commit()
-        conn.close()
         self._save_rating(rating)
 
     def get_domain_calibration(self, agent_name: str, domain: Optional[str] = None) -> dict:
         """Get calibration statistics for an agent, optionally filtered by domain."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         if domain:
             cursor.execute(
@@ -961,7 +961,6 @@ class EloSystem:
             )
 
         rows = cursor.fetchall()
-        conn.close()
 
         if not rows:
             return {"total": 0, "correct": 0, "accuracy": 0.0, "brier_score": 1.0, "domains": {}}
@@ -993,8 +992,9 @@ class EloSystem:
 
     def get_calibration_by_bucket(self, agent_name: str, domain: Optional[str] = None) -> list[dict]:
         """Get calibration broken down by confidence bucket for calibration curves."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
 
         if domain:
             cursor.execute(
@@ -1008,7 +1008,6 @@ class EloSystem:
             )
 
         rows = cursor.fetchall()
-        conn.close()
 
         buckets = []
         for row in rows:
@@ -1086,8 +1085,10 @@ class EloSystem:
             position_change_a_after_b, position_change_b_after_a = position_change_b_after_a, position_change_a_after_b
             a_win, b_win = b_win, a_win
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+
+            cursor = conn.cursor()
         cursor.execute(
             """
             INSERT INTO agent_relationships (agent_a, agent_b, debate_count, agreement_count,
@@ -1109,20 +1110,19 @@ class EloSystem:
              a_win, b_win, datetime.now().isoformat()),
         )
         conn.commit()
-        conn.close()
 
     def get_relationship_raw(self, agent_a: str, agent_b: str) -> Optional[dict]:
         """Get raw relationship data between two agents."""
         if agent_a > agent_b:
             agent_a, agent_b = agent_b, agent_a
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
         cursor.execute(
             "SELECT debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
             (agent_a, agent_b),
         )
         row = cursor.fetchone()
-        conn.close()
         if not row:
             return None
         return {
@@ -1135,14 +1135,14 @@ class EloSystem:
 
     def get_all_relationships_for_agent(self, agent_name: str) -> list[dict]:
         """Get all relationships involving an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+
+            cursor = conn.cursor()
         cursor.execute(
             "SELECT agent_a, agent_b, debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? OR agent_b = ? ORDER BY debate_count DESC",
             (agent_name, agent_name),
         )
         rows = cursor.fetchall()
-        conn.close()
         return [
             {"agent_a": r[0], "agent_b": r[1], "debate_count": r[2], "agreement_count": r[3],
              "critique_count_a_to_b": r[4], "critique_count_b_to_a": r[5],
