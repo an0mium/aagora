@@ -3935,7 +3935,10 @@ Synthesize these suggestions into a coherent, working implementation.
                     self._log(f"    [disagreement] {len(report.risk_areas)} risk areas identified", also_print=False)
 
                 # Heavy3-inspired decision influence based on disagreement patterns
-                self._handle_disagreement_influence(report, phase_name, result)
+                disagreement_actions = self._handle_disagreement_influence(report, phase_name, result)
+
+                # Store actions on result for phase handlers to use
+                result.disagreement_actions = disagreement_actions
 
             self._save_state({
                 "phase": phase_name,
@@ -3948,6 +3951,7 @@ Synthesize these suggestions into a coherent, working implementation.
                     "unanimous_critiques": result.disagreement_report.unanimous_critiques if result.disagreement_report else [],
                     "split_opinions_count": len(result.disagreement_report.split_opinions) if result.disagreement_report else 0,
                     "agreement_score": result.disagreement_report.agreement_score if result.disagreement_report else None,
+                    "actions": result.disagreement_actions if hasattr(result, 'disagreement_actions') else None,
                 } if result.disagreement_report else None,
             })
 
