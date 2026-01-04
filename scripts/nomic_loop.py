@@ -986,7 +986,7 @@ class NomicLoop:
                     loop_id=self.loop_id,
                     cycle=self.cycle_count,
                     event_type=hook_name,
-                    event_data={"args": [str(a)[:500] for a in args], "kwargs": {k: str(v)[:500] for k, v in kwargs.items()}},
+                    event_data={"args": [str(a)[:10000] for a in args], "kwargs": {k: str(v)[:10000] for k, v in kwargs.items()}},
                     agent=kwargs.get("agent"),
                 )
                 # Run async save in background (fire and forget)
@@ -1535,10 +1535,10 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             # Get participating agents
             agents = [self.gemini.name, self.codex.name, self.claude.name, self.grok.name]
 
-            # Store the consensus
+            # Store the consensus (full content, no truncation)
             record = self.consensus_memory.store_consensus(
-                topic=topic[:500],
-                conclusion=result.final_answer[:2000] if result.final_answer else "",
+                topic=topic,
+                conclusion=result.final_answer if result.final_answer else "",
                 strength=strength,
                 confidence=result.confidence,
                 participating_agents=agents,
@@ -2202,8 +2202,9 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             return ""
         try:
             source = SourceType.AGENT_GENERATED if source_type == "agent" else SourceType.CODE_ANALYSIS
+            # Store full content, no truncation
             record = self.provenance_manager.record_evidence(
-                content=content[:1000],
+                content=content,
                 source_type=source,
                 source_id=source_id
             )

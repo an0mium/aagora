@@ -274,11 +274,11 @@ class Arena:
                     details=f"Retrieved {len(results)} similar debates (top: {top_similarity:.0%})",
                     metric=top_similarity
                 )
-            # Also emit to WebSocket stream for live dashboard
+            # Also emit to WebSocket stream for live dashboard (full content, no truncation)
             if self.event_emitter:
                 self.event_emitter.emit("memory_recall", {
-                    "query": task[:100],
-                    "hits": [{"topic": excerpt[:80], "similarity": round(sim, 2)} for _, excerpt, sim in results[:3]],
+                    "query": task,
+                    "hits": [{"topic": excerpt, "similarity": round(sim, 2)} for _, excerpt, sim in results[:3]],
                     "count": len(results)
                 })
 
@@ -286,7 +286,7 @@ class Arena:
             lines.append("Learn from these previous debates on similar topics:\n")
 
             for debate_id, excerpt, similarity in results:
-                lines.append(f"**[{similarity:.0%} similar]** {excerpt[:400]}...")
+                lines.append(f"**[{similarity:.0%} similar]** {excerpt}")
                 lines.append("")  # blank line between entries
 
             return "\n".join(lines)
