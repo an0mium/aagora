@@ -61,7 +61,7 @@ class GitHubConnector(BaseConnector):
                 ["gh", "auth", "status"],
                 capture_output=True,
                 text=True,
-                timeout=180,  # Minimum 3 min (was 5)
+                timeout=30,  # Auth check should be fast
             )
             self._gh_available = result.returncode == 0
         except Exception:
@@ -82,7 +82,7 @@ class GitHubConnector(BaseConnector):
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
-                timeout=180,  # Minimum 3 min (was 30)
+                timeout=60,  # Reasonable timeout for most gh operations
             )
 
             if proc.returncode == 0:

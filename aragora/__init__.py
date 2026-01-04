@@ -136,6 +136,28 @@ from aragora.agents.laboratory import (
     EmergentTrait,
     TraitTransfer,
 )
+from aragora.agents.grounded import (
+    Position,
+    PositionLedger,
+    RelationshipTracker,
+    Relationship,
+    GroundedPersona,
+    PersonaSynthesizer,
+    SignificantMoment,
+    MomentDetector,
+)
+
+# Evidence, Pulse, Uncertainty (newly exported)
+from aragora.evidence import EvidenceCollector, Evidence, EvidenceType, SourceCredibility
+from aragora.pulse import TrendingTopic, PulseIngestor, PulseManager
+from aragora.uncertainty import (
+    ConfidenceScore,
+    DisagreementCrux,
+    UncertaintyMetrics,
+    ConfidenceEstimator,
+    DisagreementAnalyzer,
+    UncertaintyAggregator,
+)
 
 # Ranking
 from aragora.ranking import EloSystem, AgentRating, MatchResult
@@ -301,6 +323,31 @@ __all__ = [
     "PersonaExperiment",
     "EmergentTrait",
     "TraitTransfer",
+    # Grounded Personas (Emergent Persona Laboratory v2)
+    "Position",
+    "PositionLedger",
+    "RelationshipTracker",
+    "Relationship",
+    "GroundedPersona",
+    "PersonaSynthesizer",
+    "SignificantMoment",
+    "MomentDetector",
+    # Evidence
+    "EvidenceCollector",
+    "Evidence",
+    "EvidenceType",
+    "SourceCredibility",
+    # Pulse (Trending Topics)
+    "TrendingTopic",
+    "PulseIngestor",
+    "PulseManager",
+    # Uncertainty
+    "ConfidenceScore",
+    "DisagreementCrux",
+    "UncertaintyMetrics",
+    "ConfidenceEstimator",
+    "DisagreementAnalyzer",
+    "UncertaintyAggregator",
     # Ranking
     "EloSystem",
     "AgentRating",

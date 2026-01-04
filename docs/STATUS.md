@@ -50,10 +50,18 @@
 - **NEW**: Added `agent_type` attribute to all API agents (fixes nomic loop blocking issue)
 - **NEW**: Fixed OpenRouterAgent broken super().__init__() call
 - **NEW**: Fixed RelationshipTracker.get_influence_network() parameter issue in nomic_loop.py
+- **NEW**: Added ReasoningDepthProbe and EdgeCaseProbe to prober.py
+- **NEW**: Added compute_relationship_metrics() to EloSystem (rivalry/alliance scores)
+- **NEW**: Added get_rivals() and get_allies() methods to EloSystem
+- **NEW**: Created comprehensive ELO ranking tests (tests/test_elo.py)
+- **NEW**: Fixed GitHub connector timeouts (180s → 30s/60s)
+- **NEW**: Added __init__.py for evidence, pulse, uncertainty modules
+- **NEW**: Implemented MomentDetector for significant debate events (Emergent Persona Lab v2)
+- **NEW**: Exported 24+ new classes from main __init__.py (grounded personas, evidence, pulse, uncertainty)
 
 ## Feature Integration Status
 
-### Fully Integrated (8)
+### Fully Integrated (11)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -64,6 +72,9 @@
 | Calibration Tracking | Active | `aragora/agents/calibration.py` |
 | Convergence Detection | Active | `aragora/debate/convergence.py` |
 | Role Rotation | Active | `aragora/debate/roles.py` |
+| PersonaSynthesizer | Active | `aragora/agents/grounded.py` |
+| MomentDetector | Active | `aragora/agents/grounded.py` |
+| Relationship Metrics | Active | `aragora/ranking/elo.py` |
 
 ### Implemented but Underutilized (1)
 | Feature | Issue | Location |

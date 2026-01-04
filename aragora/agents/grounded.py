@@ -1005,3 +1005,313 @@ class PersonaSynthesizer:
             lines.append(f"- This is a significant rivalry (score: {rel.rivalry_score:.2f})")
 
         return "\n".join(lines)
+
+
+@dataclass
+class SignificantMoment:
+    """A significant narrative event in an agent's debate history."""
+
+    id: str
+    moment_type: Literal[
+        "upset_victory",       # Low-rated agent beats high-rated
+        "position_reversal",   # Agent publicly changes stance
+        "calibration_vindication",  # Prediction proven correct
+        "alliance_shift",      # Relationship dynamic changes
+        "consensus_breakthrough",  # Agreement on contentious issue
+        "streak_achievement",  # Win/loss streak milestone
+        "domain_mastery",      # Agent becomes top in a domain
+    ]
+    agent_name: str
+    description: str
+    significance_score: float  # 0.0-1.0, higher = more significant
+    debate_id: Optional[str] = None
+    other_agents: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+class MomentDetector:
+    """
+    Detects genuinely significant narrative moments from debate history.
+
+    Part of the Emergent Persona Laboratory - identifies moments that
+    define an agent's identity through actual performance, not manufactured drama.
+
+    Significant moments include:
+    - Upset victories (underdog wins)
+    - Position reversals (changing stance with evidence)
+    - Calibration vindications (predictions proven right)
+    - Alliance shifts (relationship changes)
+    - Consensus breakthroughs (resolving disagreements)
+    """
+
+    def __init__(
+        self,
+        elo_system=None,
+        position_ledger: Optional[PositionLedger] = None,
+        relationship_tracker: Optional[RelationshipTracker] = None,
+    ):
+        self.elo_system = elo_system
+        self.position_ledger = position_ledger
+        self.relationship_tracker = relationship_tracker
+        self._moment_cache: dict[str, list[SignificantMoment]] = {}
+
+    def detect_upset_victory(
+        self,
+        winner: str,
+        loser: str,
+        debate_id: str,
+    ) -> Optional[SignificantMoment]:
+        """Detect if a match result is a significant upset."""
+        if not self.elo_system:
+            return None
+
+        try:
+            winner_rating = self.elo_system.get_rating(winner)
+            loser_rating = self.elo_system.get_rating(loser)
+
+            elo_diff = loser_rating.elo - winner_rating.elo
+
+            # Significant upset: winner was 100+ ELO below loser
+            if elo_diff >= 100:
+                # Scale significance by ELO difference
+                significance = min(1.0, elo_diff / 300)
+
+                return SignificantMoment(
+                    id=str(uuid.uuid4())[:8],
+                    moment_type="upset_victory",
+                    agent_name=winner,
+                    description=f"{winner} defeated {loser} despite being {elo_diff:.0f} ELO lower",
+                    significance_score=significance,
+                    debate_id=debate_id,
+                    other_agents=[loser],
+                    metadata={
+                        "winner_elo": winner_rating.elo,
+                        "loser_elo": loser_rating.elo,
+                        "elo_difference": elo_diff,
+                    },
+                )
+        except Exception:
+            pass
+
+        return None
+
+    def detect_position_reversal(
+        self,
+        agent_name: str,
+        original_position: Position,
+        new_position: Position,
+        debate_id: str,
+    ) -> Optional[SignificantMoment]:
+        """Detect when an agent reverses a significant position."""
+        if not original_position.reversed:
+            return None
+
+        # Calculate significance based on original confidence
+        # Higher confidence reversal = more significant
+        significance = original_position.confidence * 0.8
+
+        # Bonus if the original position was later proven wrong
+        if original_position.outcome == "incorrect":
+            significance = min(1.0, significance + 0.2)
+
+        return SignificantMoment(
+            id=str(uuid.uuid4())[:8],
+            moment_type="position_reversal",
+            agent_name=agent_name,
+            description=f"{agent_name} reversed position on '{original_position.claim[:50]}...' (was {original_position.confidence:.0%} confident)",
+            significance_score=significance,
+            debate_id=debate_id,
+            metadata={
+                "original_position_id": original_position.id,
+                "original_confidence": original_position.confidence,
+                "original_outcome": original_position.outcome,
+            },
+        )
+
+    def detect_calibration_vindication(
+        self,
+        agent_name: str,
+        prediction_confidence: float,
+        was_correct: bool,
+        domain: str,
+        debate_id: str,
+    ) -> Optional[SignificantMoment]:
+        """Detect when a high-confidence prediction is vindicated."""
+        if not was_correct or prediction_confidence < 0.85:
+            return None
+
+        # High-confidence correct prediction is significant
+        significance = (prediction_confidence - 0.5) * 2  # Scale 0.5-1.0 to 0.0-1.0
+
+        return SignificantMoment(
+            id=str(uuid.uuid4())[:8],
+            moment_type="calibration_vindication",
+            agent_name=agent_name,
+            description=f"{agent_name}'s {prediction_confidence:.0%} confidence prediction in {domain} was correct",
+            significance_score=significance,
+            debate_id=debate_id,
+            metadata={
+                "prediction_confidence": prediction_confidence,
+                "domain": domain,
+            },
+        )
+
+    def detect_streak_achievement(
+        self,
+        agent_name: str,
+        streak_type: Literal["win", "loss"],
+        streak_length: int,
+        debate_id: str,
+    ) -> Optional[SignificantMoment]:
+        """Detect significant win/loss streaks."""
+        # Minimum 5 for significance
+        if streak_length < 5:
+            return None
+
+        # Scale significance: 5 = 0.5, 10 = 1.0
+        significance = min(1.0, streak_length / 10)
+
+        if streak_type == "win":
+            description = f"{agent_name} achieves {streak_length}-debate winning streak"
+        else:
+            description = f"{agent_name} faces {streak_length}-debate losing streak"
+
+        return SignificantMoment(
+            id=str(uuid.uuid4())[:8],
+            moment_type="streak_achievement",
+            agent_name=agent_name,
+            description=description,
+            significance_score=significance,
+            debate_id=debate_id,
+            metadata={
+                "streak_type": streak_type,
+                "streak_length": streak_length,
+            },
+        )
+
+    def detect_domain_mastery(
+        self,
+        agent_name: str,
+        domain: str,
+        rank: int,
+        elo: float,
+    ) -> Optional[SignificantMoment]:
+        """Detect when an agent becomes top-ranked in a domain."""
+        if rank != 1:
+            return None
+
+        return SignificantMoment(
+            id=str(uuid.uuid4())[:8],
+            moment_type="domain_mastery",
+            agent_name=agent_name,
+            description=f"{agent_name} becomes #1 in {domain} domain with {elo:.0f} ELO",
+            significance_score=0.9,  # Reaching #1 is always significant
+            metadata={
+                "domain": domain,
+                "elo": elo,
+            },
+        )
+
+    def detect_consensus_breakthrough(
+        self,
+        agents: list[str],
+        topic: str,
+        confidence: float,
+        debate_id: str,
+    ) -> Optional[SignificantMoment]:
+        """Detect when opposing agents reach consensus."""
+        if len(agents) < 2 or confidence < 0.7:
+            return None
+
+        # Check if these agents have been rivals
+        rivalry_score = 0.0
+        if self.relationship_tracker and len(agents) >= 2:
+            try:
+                rel = self.relationship_tracker.get_relationship(agents[0], agents[1])
+                rivalry_score = rel.rivalry_score
+            except Exception:
+                pass
+
+        # Consensus between rivals is more significant
+        base_significance = confidence * 0.6
+        if rivalry_score > 0.3:
+            base_significance += rivalry_score * 0.4
+
+        significance = min(1.0, base_significance)
+
+        return SignificantMoment(
+            id=str(uuid.uuid4())[:8],
+            moment_type="consensus_breakthrough",
+            agent_name=agents[0],  # First agent as primary
+            description=f"Consensus reached on '{topic[:50]}...' with {confidence:.0%} confidence",
+            significance_score=significance,
+            debate_id=debate_id,
+            other_agents=agents[1:],
+            metadata={
+                "topic": topic,
+                "confidence": confidence,
+                "rivalry_score": rivalry_score,
+                "participants": agents,
+            },
+        )
+
+    def get_agent_moments(
+        self,
+        agent_name: str,
+        limit: int = 10,
+        moment_types: Optional[list[str]] = None,
+    ) -> list[SignificantMoment]:
+        """Get significant moments for an agent."""
+        moments = self._moment_cache.get(agent_name, [])
+
+        if moment_types:
+            moments = [m for m in moments if m.moment_type in moment_types]
+
+        # Sort by significance and recency
+        moments.sort(key=lambda m: (m.significance_score, m.created_at), reverse=True)
+
+        return moments[:limit]
+
+    def record_moment(self, moment: SignificantMoment):
+        """Record a detected moment."""
+        if moment.agent_name not in self._moment_cache:
+            self._moment_cache[moment.agent_name] = []
+
+        self._moment_cache[moment.agent_name].append(moment)
+
+        # Also record for other involved agents
+        for other in moment.other_agents:
+            if other not in self._moment_cache:
+                self._moment_cache[other] = []
+            self._moment_cache[other].append(moment)
+
+    def format_moment_narrative(self, moment: SignificantMoment) -> str:
+        """Format a moment as a narrative string for prompts."""
+        significance_labels = {
+            (0.0, 0.3): "notable",
+            (0.3, 0.6): "significant",
+            (0.6, 0.8): "major",
+            (0.8, 1.0): "defining",
+        }
+
+        label = "notable"
+        for (low, high), lbl in significance_labels.items():
+            if low <= moment.significance_score < high:
+                label = lbl
+                break
+
+        return f"**{label.title()} Moment**: {moment.description}"
+
+    def get_narrative_summary(self, agent_name: str, limit: int = 5) -> str:
+        """Get a narrative summary of an agent's significant moments."""
+        moments = self.get_agent_moments(agent_name, limit=limit)
+
+        if not moments:
+            return f"{agent_name} has not yet established defining moments."
+
+        lines = [f"### {agent_name}'s Defining Moments"]
+        for moment in moments:
+            lines.append(f"- {self.format_moment_narrative(moment)}")
+
+        return "\n".join(lines)
