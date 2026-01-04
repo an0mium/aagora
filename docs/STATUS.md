@@ -37,6 +37,12 @@
 - **NEW**: Added MemoryInspector for Continuum Memory browsing
 - **NEW**: Fixed asyncio.gather timeout in debate orchestrator (prevents 50% timeout failures)
 - **NEW**: Fixed BeliefPropagationAnalyzer import in server
+- **NEW**: Added LaboratoryPanel for emergent traits and cross-pollinations
+- **NEW**: Implemented LLM-based Lean theorem translation (formal.py)
+- **NEW**: Implemented LLM-based prompt refinement (evolver.py)
+- **NEW**: Fixed security: unvalidated float parameter in /api/critiques/patterns
+- **NEW**: Fixed security: path traversal in raw document upload
+- **NEW**: Improved error handling in DocumentStore.list_all()
 
 ## Feature Integration Status
 
@@ -52,19 +58,20 @@
 | Convergence Detection | Active | `aragora/debate/convergence.py` |
 | Role Rotation | Active | `aragora/debate/roles.py` |
 
-### Implemented but Underutilized (2)
+### Implemented but Underutilized (1)
 | Feature | Issue | Location |
 |---------|-------|----------|
-| Persona Laboratory | Endpoints exist, not used | `aragora/agents/laboratory.py` |
-| Prompt Evolution | 3 TODO items | `aragora/evolution/evolver.py` |
+| Formal Verification | Lean backend not connected | `aragora/verification/formal.py` |
 
-### Recently Surfaced (4)
+### Recently Surfaced (6)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Tournament System | TournamentPanel added | `aragora/live/src/components/TournamentPanel.tsx` |
 | Agent Routing | Integrated in DebateInput | `aragora/live/src/components/DebateInput.tsx` |
 | Belief Network | CruxPanel added | `aragora/live/src/components/CruxPanel.tsx` |
 | Continuum Memory | MemoryInspector added | `aragora/live/src/components/MemoryInspector.tsx` |
+| Persona Laboratory | LaboratoryPanel added | `aragora/live/src/components/LaboratoryPanel.tsx` |
+| Prompt Evolution | LLM refinement implemented | `aragora/evolution/evolver.py` |
 
 ### Server Endpoints (54 total)
 - **Used by Frontend**: ~10%
