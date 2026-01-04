@@ -1,0 +1,144 @@
+# Claude Code Integration Guide
+
+This document provides context for Claude Code when working with the Aragora codebase.
+
+## Project Overview
+
+Aragora is a multi-agent debate framework where heterogeneous AI agents discuss, critique, and improve each other's responses. It implements self-improvement through the **Nomic Loop** - an autonomous cycle where agents debate improvements, design solutions, implement code, and verify changes.
+
+## Key Architecture
+
+```
+aragora/
+├── debate/           # Core debate orchestration
+│   ├── orchestrator.py  # Arena class - main debate engine
+│   ├── consensus.py     # Consensus detection and proofs
+│   └── convergence.py   # Semantic similarity detection
+├── agents/           # Agent implementations
+│   ├── cli_agents.py    # CLI-based agents (claude, codex, gemini)
+│   └── api_agents.py    # API-based agents (anthropic-api, openai)
+├── memory/           # Learning and persistence
+│   ├── continuum.py     # Multi-tier memory (fast/medium/slow/glacial)
+│   └── consensus.py     # Historical debate outcomes
+├── server/           # HTTP/WebSocket API
+│   └── unified_server.py  # Main server (54+ endpoints)
+├── ranking/          # Agent skill tracking
+│   └── elo.py           # ELO ratings and calibration scoring
+└── verification/     # Proof generation
+    └── formal.py        # Z3/Lean verification backends
+```
+
+## Protected Files
+
+The following files should NOT be modified by autonomous agents:
+- `CLAUDE.md` - This file
+- `core.py` - Core dataclasses and types
+- `aragora/__init__.py` - Package exports
+- `.env` - Environment configuration (never commit)
+- `scripts/nomic_loop.py` - Critical for self-improvement safety
+
+## Nomic Loop Context
+
+The nomic loop (`scripts/nomic_loop.py`) is the autonomous self-improvement cycle:
+
+1. **Phase 0: Context** - Gather codebase understanding
+2. **Phase 1: Debate** - Agents propose improvements
+3. **Phase 2: Design** - Architecture planning
+4. **Phase 3: Implement** - Code generation (Codex/Claude)
+5. **Phase 4: Verify** - Tests and checks
+
+**Safety Features:**
+- All changes backed up before implementation
+- Protected files checksummed
+- Automatic rollback on verification failure
+- Human approval required for dangerous changes
+
+## Important Patterns
+
+### Debate Protocol
+```python
+from aragora import Arena, Environment, DebateProtocol
+
+env = Environment(task="Design a rate limiter")
+protocol = DebateProtocol(rounds=3, consensus="majority")
+arena = Arena(env, agents, protocol)
+result = await arena.run()
+```
+
+### Memory Tiers
+- **Fast (1 min)**: Immediate context, high importance
+- **Medium (1 hour)**: Session memory
+- **Slow (1 day)**: Cross-session learning
+- **Glacial (1 week)**: Long-term patterns
+
+### Event Streaming
+All debates emit events to WebSocket clients:
+- `debate_start`, `round_start`, `agent_message`
+- `critique`, `vote`, `consensus`, `debate_end`
+
+## Common Tasks
+
+### Running the Server
+```bash
+python -m aragora.server.unified_server --port 8080
+```
+
+### Running with Streaming
+```bash
+python scripts/run_nomic_with_stream.py run --cycles 3
+```
+
+### Testing
+```bash
+pytest tests/ -v
+```
+
+## Safety Guidelines
+
+1. **Never modify protected files** without explicit approval
+2. **Always run tests** after code changes
+3. **Preserve existing functionality** - avoid breaking changes
+4. **Use rate limiting** for API calls (respect provider limits)
+5. **Log all changes** for audit trails
+6. **Backup before modify** - always create backups
+
+## Environment Variables
+
+Required:
+- `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` - At least one AI provider
+
+Optional:
+- `GEMINI_API_KEY`, `XAI_API_KEY` - Additional providers
+- `SUPABASE_URL`, `SUPABASE_KEY` - Persistence
+- `ARAGORA_API_TOKEN` - Auth token
+- `ARAGORA_ALLOWED_ORIGINS` - CORS origins
+
+See `docs/ENVIRONMENT.md` for full reference.
+
+## Helpful Commands
+
+```bash
+# Check syntax
+python -c "import ast; ast.parse(open('file.py').read())"
+
+# Run specific test
+pytest tests/test_orchestrator.py -v
+
+# Check git status
+git status && git diff --stat
+```
+
+## Feature Status
+
+Well-integrated:
+- Memory systems (CritiqueStore, ContinuumMemory)
+- ELO rankings and tournaments
+- Debate templates
+- Verification proofs
+
+Partially integrated:
+- Pulse (trending topics)
+- Evidence collection
+- Belief networks
+
+See `docs/STATUS.md` for detailed feature status.

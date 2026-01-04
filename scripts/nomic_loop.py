@@ -700,6 +700,18 @@ except ImportError:
     BROADCAST_AVAILABLE = False
     DebateSummaryGenerator = None
 
+# =============================================================================
+# Pulse Integration (Trending Topics for Debate Generation)
+# =============================================================================
+
+try:
+    from aragora.pulse import PulseManager, TrendingTopic, PulseIngestor
+    PULSE_AVAILABLE = True
+except ImportError:
+    PULSE_AVAILABLE = False
+    PulseManager = None
+    TrendingTopic = None
+
 
 class NomicLoop:
     """
@@ -904,6 +916,12 @@ class NomicLoop:
             self.citation_store = CitationStore()
             self.citation_extractor = CitationExtractor()
             print(f"[citations] Citation grounding enabled for evidence-backed verdicts")
+
+        # Pulse Integration: PulseManager for trending topic awareness
+        self.pulse_manager = None
+        if PULSE_AVAILABLE:
+            self.pulse_manager = PulseManager()
+            print(f"[pulse] PulseManager initialized for trending topic awareness")
 
         # Broadcast: Generate post-debate summaries
         self.summary_generator = None
@@ -1739,6 +1757,60 @@ The most valuable proposals combine deep analysis with actionable implementation
             return "\n".join(lines)
         except Exception as e:
             self._log(f"  [consensus] Error formatting history: {e}")
+            return ""
+
+    async def _get_pulse_topic_context(self, limit: int = 3) -> str:
+        """Get trending topic context to inform debate priorities (Pulse integration).
+
+        Retrieves trending topics from social platforms that may be relevant
+        to aragora improvements (e.g., AI safety, multi-agent systems, LLM trends).
+        """
+        if not self.pulse_manager or not PULSE_AVAILABLE:
+            return ""
+
+        try:
+            # Fetch trending topics (async)
+            trending = await self.pulse_manager.get_trending_topics(
+                limit_per_platform=limit,
+                filters={
+                    "skip_toxic": True,
+                    "categories": ["tech", "ai", "programming", "science"],
+                }
+            )
+
+            if not trending:
+                return ""
+
+            # Filter for topics relevant to aragora/AI development
+            relevant_keywords = [
+                "ai", "llm", "gpt", "claude", "agent", "multi-agent",
+                "debate", "consensus", "reasoning", "safety", "alignment",
+                "model", "api", "developer", "code", "programming"
+            ]
+
+            relevant_topics = [
+                t for t in trending
+                if any(kw in t.topic.lower() for kw in relevant_keywords)
+            ][:3]
+
+            if not relevant_topics:
+                return ""
+
+            lines = ["## TRENDING CONTEXT (from Pulse)"]
+            lines.append("Current AI/tech trends that may inform improvement priorities:\n")
+
+            for topic in relevant_topics:
+                lines.append(f"- **{topic.topic}** ({topic.platform}, {topic.volume} engagement)")
+                if topic.category:
+                    lines.append(f"  Category: {topic.category}")
+
+            lines.append("\nConsider how aragora improvements could address or leverage these trends.")
+
+            self._log(f"  [pulse] Injected {len(relevant_topics)} trending topics")
+            return "\n".join(lines)
+
+        except Exception as e:
+            self._log(f"  [pulse] Error fetching trending topics: {e}")
             return ""
 
     async def _store_debate_consensus(self, result, topic: str) -> None:
@@ -4805,6 +4877,11 @@ Claude and Codex have read the actual codebase. DO NOT propose features that alr
         calibration_context = self._audit_agent_calibration()
         if calibration_context:
             learning_context += f"\n{calibration_context}\n"
+
+        # Inject trending topic context from Pulse (informs improvement priorities)
+        pulse_context = await self._get_pulse_topic_context(limit=3)
+        if pulse_context:
+            learning_context += f"\n{pulse_context}\n"
 
         task = f"""{SAFETY_PREAMBLE}
 

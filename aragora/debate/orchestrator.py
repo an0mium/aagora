@@ -434,6 +434,52 @@ class Arena:
         except Exception as e:
             logger.warning(f"  [continuum] Failed to store outcome: {e}")
 
+    def _store_evidence_in_memory(self, evidence_snippets: list, task: str) -> None:
+        """Store collected evidence snippets in ContinuumMemory for future retrieval.
+
+        Evidence from web research and local docs is valuable for future debates
+        on similar topics. This stores each unique snippet with moderate importance.
+        """
+        if not self.continuum_memory or not evidence_snippets:
+            return
+
+        try:
+            domain = self._extract_debate_domain()
+            stored_count = 0
+
+            for snippet in evidence_snippets[:10]:  # Limit to top 10 snippets
+                # Get content from snippet (handle different formats)
+                content = getattr(snippet, 'content', str(snippet))[:500]
+                source = getattr(snippet, 'source', 'unknown')
+                relevance = getattr(snippet, 'relevance', 0.5)
+
+                if len(content) < 50:  # Skip too-short snippets
+                    continue
+
+                # Store as medium-tier memory with moderate importance
+                try:
+                    self.continuum_memory.add(
+                        id=f"evidence_{hash(content) % 100000:05d}",
+                        content=f"[Evidence:{domain}] {content} (Source: {source})",
+                        tier="medium",
+                        importance=min(0.7, relevance + 0.2),
+                        metadata={
+                            "task": task[:100],
+                            "domain": domain,
+                            "source": source,
+                            "type": "evidence",
+                        }
+                    )
+                    stored_count += 1
+                except Exception:
+                    pass  # Skip duplicates or storage errors
+
+            if stored_count > 0:
+                logger.info(f"  [continuum] Stored {stored_count} evidence snippets for future retrieval")
+
+        except Exception as e:
+            logger.warning(f"  [continuum] Failed to store evidence: {e}")
+
     def _update_continuum_memory_outcomes(self, result: "DebateResult") -> None:
         """Update retrieved memories based on debate outcome.
 
@@ -929,6 +975,9 @@ class Arena:
 
             # Format as context string
             if evidence_pack.snippets:
+                # Store evidence in ContinuumMemory for future debates
+                self._store_evidence_in_memory(evidence_pack.snippets, task)
+
                 context = evidence_pack.to_context_string()
                 return f"## WEB RESEARCH CONTEXT\n{context}"
             else:

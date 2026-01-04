@@ -7,7 +7,7 @@ with the nomic loop events streaming to connected clients in real-time.
 
 Usage:
     python scripts/run_nomic_with_stream.py run --cycles 3
-    python scripts/run_nomic_with_stream.py run --cycles 3 --http-port 8080 --ws-port 8765
+    python scripts/run_nomic_with_stream.py run --cycles 3 --port 8080
 """
 
 import argparse
@@ -22,8 +22,45 @@ from threading import Thread
 # Add aragora to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from aragora.server.unified_server import UnifiedServer
+from aragora.server.stream import AiohttpUnifiedServer
 from scripts.nomic_loop import NomicLoop
+
+
+def find_available_port(start_port: int = 8080, max_attempts: int = 10) -> int:
+    """Find an available port, starting from start_port.
+
+    Tries ports sequentially until one is available.
+    This prevents "address already in use" errors when restarting the server.
+
+    Args:
+        start_port: The preferred port to start with
+        max_attempts: Maximum number of ports to try
+
+    Returns:
+        An available port number
+
+    Raises:
+        RuntimeError: If no available port found in range
+    """
+    import socket
+
+    for offset in range(max_attempts):
+        port = start_port + offset
+        try:
+            # Try to bind to the port
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('0.0.0.0', port))
+            sock.close()
+            return port
+        except OSError:
+            # Port is in use, try next one
+            continue
+
+    raise RuntimeError(
+        f"No available ports in range {start_port}-{start_port + max_attempts - 1}. "
+        f"Try killing existing processes or use a different port range."
+    )
 
 
 def generate_loop_id() -> str:
@@ -43,32 +80,27 @@ def get_loop_name(aragora_path: Path) -> str:
 
 async def run_with_streaming(
     cycles: int = 3,
-    http_port: int = 8080,
-    ws_port: int = 8765,
+    port: int = 8080,
     aragora_path: Path = None,
     auto_commit: bool = False,
 ):
     """Run nomic loop with streaming enabled."""
     aragora_path = aragora_path or Path(__file__).parent.parent
 
+    # Find an available port (handles port conflicts gracefully)
+    actual_port = find_available_port(start_port=port, max_attempts=10)
+    if actual_port != port:
+        print(f"Note: Port {port} was in use, using port {actual_port} instead")
+
     # Generate unique loop ID for multi-loop tracking
     loop_id = generate_loop_id()
     loop_name = get_loop_name(aragora_path)
 
-    # Resolve paths
-    static_dir = aragora_path / "aragora" / "live" / "out"
-    if not static_dir.exists():
-        print(f"Warning: Static directory not found: {static_dir}")
-        print("Run 'cd aragora/live && npm run build' to build the dashboard")
-        static_dir = None
-
     nomic_dir = aragora_path / ".nomic"
 
-    # Create unified server
-    server = UnifiedServer(
-        http_port=http_port,
-        ws_port=ws_port,
-        static_dir=static_dir,
+    # Create unified server (HTTP + WebSocket on same port)
+    server = AiohttpUnifiedServer(
+        port=actual_port,
         nomic_dir=nomic_dir,
     )
 
@@ -81,9 +113,8 @@ async def run_with_streaming(
     print("=" * 60)
     print(f"Loop ID:      {loop_id}")
     print(f"Loop Name:    {loop_name}")
-    print(f"Dashboard:    http://localhost:{http_port}")
+    print(f"Server:       http://localhost:{actual_port} (HTTP + WebSocket)")
     print(f"Live view:    https://live.aragora.ai")
-    print(f"WebSocket:    ws://localhost:{ws_port}")
     print(f"Cycles:       {cycles}")
     print(f"Auto-commit:  {'Yes' if auto_commit else 'No (requires confirmation)'}")
     print("=" * 60)
@@ -107,8 +138,8 @@ async def run_with_streaming(
     # Give server time to start
     await asyncio.sleep(1)
 
-    # Register this loop instance with the stream server
-    server.stream_server.register_loop(
+    # Register this loop instance with the unified server
+    server.register_loop(
         loop_id=loop_id,
         name=loop_name,
         path=str(aragora_path),
@@ -128,9 +159,9 @@ async def run_with_streaming(
         raise
     finally:
         # Unregister the loop instance
-        server.stream_server.unregister_loop(loop_id)
-        # Gracefully close all websocket connections
-        await server.stream_server.graceful_shutdown()
+        server.unregister_loop(loop_id)
+        # Stop server
+        server.stop()
         # Cancel server task
         server_task.cancel()
         try:
@@ -159,16 +190,23 @@ def main():
         help="Number of cycles to run (default: 3)",
     )
     run_parser.add_argument(
-        "--http-port",
+        "--port", "-p",
         type=int,
         default=8080,
-        help="HTTP port for dashboard (default: 8080)",
+        help="Port for unified server (HTTP + WebSocket) (default: 8080)",
+    )
+    # Legacy arguments for backwards compatibility
+    run_parser.add_argument(
+        "--http-port",
+        type=int,
+        default=None,
+        help="(Deprecated) Use --port instead",
     )
     run_parser.add_argument(
         "--ws-port",
         type=int,
-        default=8765,
-        help="WebSocket port for streaming (default: 8765)",
+        default=None,
+        help="(Deprecated) Ignored - unified server uses single port",
     )
     run_parser.add_argument(
         "--aragora-path",
@@ -185,10 +223,11 @@ def main():
     args = parser.parse_args()
 
     if args.command == "run":
+        # Support legacy --http-port
+        port = args.http_port if args.http_port else args.port
         asyncio.run(run_with_streaming(
             cycles=args.cycles,
-            http_port=args.http_port,
-            ws_port=args.ws_port,
+            port=port,
             aragora_path=args.aragora_path,
             auto_commit=args.auto,
         ))
