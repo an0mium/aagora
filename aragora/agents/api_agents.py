@@ -742,3 +742,391 @@ REASONING: explanation"""
 
         response = await self.generate(critique_prompt, context)
         return self._parse_critique(response, "proposal", proposal)
+
+
+class GrokAgent(APIAgent):
+    """Agent that uses xAI's Grok API (OpenAI-compatible).
+
+    Uses the xAI API at https://api.x.ai/v1 with models like grok-3.
+    """
+
+    def __init__(
+        self,
+        name: str = "grok",
+        model: str = "grok-3",
+        role: str = "proposer",
+        timeout: int = 120,
+        api_key: str = None,
+    ):
+        super().__init__(
+            name=name,
+            model=model,
+            role=role,
+            timeout=timeout,
+            api_key=api_key or os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY"),
+            base_url="https://api.x.ai/v1",
+        )
+
+    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+        """Generate a response using Grok API."""
+        if not self.api_key:
+            raise ValueError("XAI_API_KEY or GROK_API_KEY environment variable required")
+
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+
+        url = f"{self.base_url}/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        messages = [{"role": "user", "content": full_prompt}]
+        if self.system_prompt:
+            messages.insert(0, {"role": "system", "content": self.system_prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"Grok API error {response.status}: {sanitized}")
+
+                data = await response.json()
+
+                try:
+                    return data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError):
+                    raise RuntimeError(f"Unexpected Grok response format: {data}")
+
+    async def generate_stream(self, prompt: str, context: list[Message] = None):
+        """Stream tokens from Grok API."""
+        if not self.api_key:
+            raise ValueError("XAI_API_KEY or GROK_API_KEY environment variable required")
+
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+
+        url = f"{self.base_url}/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        messages = [{"role": "user", "content": full_prompt}]
+        if self.system_prompt:
+            messages.insert(0, {"role": "system", "content": self.system_prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+            "stream": True,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"Grok streaming API error {response.status}: {sanitized}")
+
+                buffer = ""
+                async for chunk in response.content.iter_any():
+                    buffer += chunk.decode('utf-8', errors='ignore')
+
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+
+                        if not line or not line.startswith('data: '):
+                            continue
+
+                        data_str = line[6:]
+
+                        if data_str == '[DONE]':
+                            return
+
+                        try:
+                            event = json.loads(data_str)
+                            choices = event.get('choices', [])
+                            if choices:
+                                delta = choices[0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+
+                        except json.JSONDecodeError:
+                            continue
+
+    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+        """Critique a proposal using Grok API."""
+        critique_prompt = f"""Critically analyze this proposal:
+
+Task: {task}
+Proposal: {proposal}
+
+Format your response as:
+ISSUES:
+- issue 1
+- issue 2
+
+SUGGESTIONS:
+- suggestion 1
+- suggestion 2
+
+SEVERITY: X.X
+REASONING: explanation"""
+
+        response = await self.generate(critique_prompt, context)
+        return self._parse_critique(response, "proposal", proposal)
+
+
+class OpenRouterAgent(APIAgent):
+    """Agent that uses OpenRouter API for access to many models.
+
+    OpenRouter provides unified access to models like DeepSeek, Llama, Mistral,
+    and others through an OpenAI-compatible API.
+
+    Supported models (via model parameter):
+    - deepseek/deepseek-chat (DeepSeek V3)
+    - deepseek/deepseek-reasoner (DeepSeek R1)
+    - meta-llama/llama-3.3-70b-instruct
+    - mistralai/mistral-large-2411
+    - google/gemini-2.0-flash-exp:free
+    - anthropic/claude-3.5-sonnet
+    - openai/gpt-4o
+    """
+
+    def __init__(
+        self,
+        name: str = "openrouter",
+        role: str = "analyst",
+        model: str = "deepseek/deepseek-chat",
+        system_prompt: str = None,
+        timeout: int = 300,
+    ):
+        super().__init__(name, role, system_prompt)
+        self.model = model
+        self.timeout = timeout
+        self.api_key = os.environ.get("OPENROUTER_API_KEY")
+        self.base_url = "https://openrouter.ai/api/v1"
+
+    def _build_context_prompt(self, context: list[Message]) -> str:
+        """Build context prompt from message history."""
+        if not context:
+            return ""
+        prompt = "Previous discussion:\n"
+        for msg in context[-5:]:
+            prompt += f"- {msg.agent} ({msg.role}): {msg.content[:500]}...\n"
+        return prompt + "\n"
+
+    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+        """Generate a response using OpenRouter API."""
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY environment variable required")
+
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+
+        url = f"{self.base_url}/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://aragora.ai",
+            "X-Title": "Aragora Multi-Agent Debate",
+        }
+
+        messages = [{"role": "user", "content": full_prompt}]
+        if self.system_prompt:
+            messages.insert(0, {"role": "system", "content": self.system_prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"OpenRouter API error {response.status}: {sanitized}")
+
+                data = await response.json()
+                try:
+                    return data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError):
+                    raise RuntimeError(f"Unexpected OpenRouter response format: {data}")
+
+    async def generate_stream(self, prompt: str, context: list[Message] = None):
+        """Stream tokens from OpenRouter API.
+
+        Yields chunks of text as they arrive from the API using SSE.
+        """
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY environment variable required")
+
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+
+        url = f"{self.base_url}/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://aragora.ai",
+            "X-Title": "Aragora Multi-Agent Debate",
+        }
+
+        messages = [{"role": "user", "content": full_prompt}]
+        if self.system_prompt:
+            messages.insert(0, {"role": "system", "content": self.system_prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+            "stream": True,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"OpenRouter streaming API error {response.status}: {sanitized}")
+
+                # OpenRouter uses SSE format (OpenAI-compatible)
+                buffer = ""
+                async for chunk in response.content.iter_any():
+                    buffer += chunk.decode('utf-8', errors='ignore')
+
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+
+                        if not line or not line.startswith('data: '):
+                            continue
+
+                        data_str = line[6:]
+
+                        if data_str == '[DONE]':
+                            return
+
+                        try:
+                            event = json.loads(data_str)
+                            choices = event.get('choices', [])
+                            if choices:
+                                delta = choices[0].get('delta', {})
+                                content = delta.get('content', '')
+                                if content:
+                                    yield content
+
+                        except json.JSONDecodeError:
+                            continue
+
+    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+        """Critique a proposal using OpenRouter API."""
+        critique_prompt = f"""Critically analyze this proposal:
+
+Task: {task}
+Proposal: {proposal}
+
+Format your response as:
+ISSUES:
+- issue 1
+- issue 2
+
+SUGGESTIONS:
+- suggestion 1
+- suggestion 2
+
+SEVERITY: X.X
+REASONING: explanation"""
+
+        response = await self.generate(critique_prompt, context)
+        return self._parse_critique(response, "proposal", proposal)
+
+
+# Convenience aliases for specific OpenRouter models
+class DeepSeekAgent(OpenRouterAgent):
+    """DeepSeek V3 via OpenRouter - excellent for coding/math, very cost-effective."""
+
+    def __init__(self, name: str = "deepseek", role: str = "analyst", system_prompt: str = None):
+        super().__init__(
+            name=name,
+            role=role,
+            model="deepseek/deepseek-chat",
+            system_prompt=system_prompt,
+        )
+
+
+class DeepSeekReasonerAgent(OpenRouterAgent):
+    """DeepSeek R1 via OpenRouter - chain-of-thought reasoning model."""
+
+    def __init__(self, name: str = "deepseek-r1", role: str = "analyst", system_prompt: str = None):
+        super().__init__(
+            name=name,
+            role=role,
+            model="deepseek/deepseek-reasoner",
+            system_prompt=system_prompt,
+        )
+
+
+class LlamaAgent(OpenRouterAgent):
+    """Llama 3.3 70B via OpenRouter."""
+
+    def __init__(self, name: str = "llama", role: str = "analyst", system_prompt: str = None):
+        super().__init__(
+            name=name,
+            role=role,
+            model="meta-llama/llama-3.3-70b-instruct",
+            system_prompt=system_prompt,
+        )
+
+
+class MistralAgent(OpenRouterAgent):
+    """Mistral Large via OpenRouter."""
+
+    def __init__(self, name: str = "mistral", role: str = "analyst", system_prompt: str = None):
+        super().__init__(
+            name=name,
+            role=role,
+            model="mistralai/mistral-large-2411",
+            system_prompt=system_prompt,
+        )

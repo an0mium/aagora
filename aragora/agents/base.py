@@ -7,8 +7,10 @@ from typing import Literal, Union
 AgentType = Literal[
     # CLI-based
     "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli",
-    # API-based
-    "gemini", "ollama", "anthropic-api", "openai-api",
+    # API-based (direct)
+    "gemini", "ollama", "anthropic-api", "openai-api", "grok",
+    # API-based (via OpenRouter)
+    "deepseek", "deepseek-r1", "llama", "mistral", "openrouter",
 ]
 
 
@@ -35,6 +37,12 @@ def create_agent(
             - "ollama": Local Ollama API
             - "anthropic-api": Direct Anthropic API
             - "openai-api": Direct OpenAI API
+            - "grok": xAI Grok API
+            - "deepseek": DeepSeek V3 via OpenRouter
+            - "deepseek-r1": DeepSeek R1 (reasoning) via OpenRouter
+            - "llama": Llama 3.3 70B via OpenRouter
+            - "mistral": Mistral Large via OpenRouter
+            - "openrouter": Generic OpenRouter (specify model)
         name: Agent name (defaults to model_type)
         role: Agent role ("proposer", "critic", "synthesizer")
         model: Specific model to use (optional)
@@ -126,11 +134,52 @@ def create_agent(
             role=role,
             api_key=api_key,
         )
+    elif model_type == "grok":
+        from aragora.agents.api_agents import GrokAgent
+        return GrokAgent(
+            name=name or "grok",
+            model=model or "grok-3",
+            role=role,
+        )
+
+    # OpenRouter-based agents
+    elif model_type == "deepseek":
+        from aragora.agents.api_agents import DeepSeekAgent
+        return DeepSeekAgent(
+            name=name or "deepseek",
+            role=role,
+        )
+    elif model_type == "deepseek-r1":
+        from aragora.agents.api_agents import DeepSeekReasonerAgent
+        return DeepSeekReasonerAgent(
+            name=name or "deepseek-r1",
+            role=role,
+        )
+    elif model_type == "llama":
+        from aragora.agents.api_agents import LlamaAgent
+        return LlamaAgent(
+            name=name or "llama",
+            role=role,
+        )
+    elif model_type == "mistral":
+        from aragora.agents.api_agents import MistralAgent
+        return MistralAgent(
+            name=name or "mistral",
+            role=role,
+        )
+    elif model_type == "openrouter":
+        from aragora.agents.api_agents import OpenRouterAgent
+        return OpenRouterAgent(
+            name=name or "openrouter",
+            model=model or "deepseek/deepseek-chat",
+            role=role,
+        )
 
     else:
         raise ValueError(
             f"Unknown model type: {model_type}. "
-            f"Valid types: codex, claude, openai, gemini-cli, grok-cli, qwen-cli, deepseek-cli, gemini, ollama, anthropic-api, openai-api"
+            f"Valid types: codex, claude, openai, gemini-cli, grok-cli, qwen-cli, deepseek-cli, "
+            f"gemini, ollama, anthropic-api, openai-api, grok, deepseek, deepseek-r1, llama, mistral, openrouter"
         )
 
 
@@ -191,5 +240,40 @@ def list_available_agents() -> dict:
             "type": "API",
             "requires": None,
             "env_vars": "OPENAI_API_KEY",
+        },
+        "grok": {
+            "type": "API",
+            "requires": None,
+            "env_vars": "XAI_API_KEY or GROK_API_KEY",
+        },
+        "deepseek": {
+            "type": "API (OpenRouter)",
+            "requires": None,
+            "env_vars": "OPENROUTER_API_KEY",
+            "description": "DeepSeek V3 - excellent for coding/math, very cost-effective",
+        },
+        "deepseek-r1": {
+            "type": "API (OpenRouter)",
+            "requires": None,
+            "env_vars": "OPENROUTER_API_KEY",
+            "description": "DeepSeek R1 - chain-of-thought reasoning model",
+        },
+        "llama": {
+            "type": "API (OpenRouter)",
+            "requires": None,
+            "env_vars": "OPENROUTER_API_KEY",
+            "description": "Llama 3.3 70B Instruct",
+        },
+        "mistral": {
+            "type": "API (OpenRouter)",
+            "requires": None,
+            "env_vars": "OPENROUTER_API_KEY",
+            "description": "Mistral Large",
+        },
+        "openrouter": {
+            "type": "API (OpenRouter)",
+            "requires": None,
+            "env_vars": "OPENROUTER_API_KEY",
+            "description": "Generic OpenRouter - specify model via 'model' parameter",
         },
     }

@@ -14,7 +14,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
   const [question, setQuestion] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [agents, setAgents] = useState('claude,openai');
+  const [agents, setAgents] = useState('gemini,anthropic-api');
   const [rounds, setRounds] = useState(3);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('checking');
 
