@@ -18,6 +18,37 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
   const [rounds, setRounds] = useState(3);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('checking');
 
+  // Combined question pool: AI philosophy + Multi-agent debate + Technical architecture
+  const allQuestions = [
+    // AI Philosophy & Ethics
+    'Can AI systems develop genuine understanding, or only simulate it?',
+    'Should autonomous AI agents have the right to refuse unethical requests?',
+    'Is Hegelian dialectics the optimal framework for AI reasoning?',
+    'Will AI agents eventually form their own societies and cultures?',
+    'Is truth something AI can discover, or only approximate?',
+
+    // Multi-Agent Debate
+    'Is consensus among AI agents more reliable than a single powerful model?',
+    'Can adversarial debate eliminate AI hallucinations?',
+    'Can competing AI perspectives reach genuine synthesis?',
+    'What makes a good debate question for AI agents?',
+    'How would you redesign democracy using multi-agent systems?',
+    'When should a multi-agent system override human judgment?',
+    'Should AI critics be more aggressive or more diplomatic?',
+
+    // Technical Architecture
+    'What are the tradeoffs between microservices and monoliths?',
+    'How should we implement rate limiting for 1M requests/sec?',
+    'Is GraphQL or REST better for real-time collaborative APIs?',
+    'What authentication strategy balances security with UX?',
+    'Should we use TypeScript or JavaScript for this project?',
+  ];
+
+  // Select random placeholder on mount (stable across re-renders)
+  const [placeholder] = useState(
+    () => allQuestions[Math.floor(Math.random() * allQuestions.length)]
+  );
+
   // Check API health on mount
   useEffect(() => {
     const checkHealth = async () => {
@@ -45,7 +76,8 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const trimmedQuestion = question.trim();
+    // Use placeholder as fallback when input is empty
+    const trimmedQuestion = question.trim() || placeholder;
     if (!trimmedQuestion || isSubmitting) return;
 
     setIsSubmitting(true);
@@ -84,29 +116,37 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
     } finally {
       setIsSubmitting(false);
     }
-  }, [question, agents, rounds, apiBase, isSubmitting, onDebateStarted, onError]);
+  }, [question, placeholder, agents, rounds, apiBase, isSubmitting, onDebateStarted, onError]);
 
-  const placeholders = [
-    // Philosophy & AI Ethics
+  // Combined question pool: AI philosophy + Multi-agent debate + Technical architecture
+  const allQuestions = [
+    // AI Philosophy & Ethics
     'Can AI systems develop genuine understanding, or only simulate it?',
     'Should autonomous AI agents have the right to refuse unethical requests?',
     'Is Hegelian dialectics the optimal framework for AI reasoning?',
-    // Technical Debates
-    'Is consensus among AI agents more reliable than a single powerful model?',
-    'When should a multi-agent system override human judgment?',
-    'Can adversarial debate eliminate AI hallucinations?',
-    // Provocative Questions
     'Will AI agents eventually form their own societies and cultures?',
     'Is truth something AI can discover, or only approximate?',
-    'Should AI critics be more aggressive or more diplomatic?',
-    // Meta Questions
+
+    // Multi-Agent Debate
+    'Is consensus among AI agents more reliable than a single powerful model?',
+    'Can adversarial debate eliminate AI hallucinations?',
+    'Can competing AI perspectives reach genuine synthesis?',
     'What makes a good debate question for AI agents?',
     'How would you redesign democracy using multi-agent systems?',
-    'Can competing AI perspectives reach genuine synthesis?',
+    'When should a multi-agent system override human judgment?',
+    'Should AI critics be more aggressive or more diplomatic?',
+
+    // Technical Architecture
+    'What are the tradeoffs between microservices and monoliths?',
+    'How should we implement rate limiting for 1M requests/sec?',
+    'Is GraphQL or REST better for real-time collaborative APIs?',
+    'What authentication strategy balances security with UX?',
+    'Should we use TypeScript or JavaScript for this project?',
   ];
 
-  const [placeholder] = useState(() =>
-    placeholders[Math.floor(Math.random() * placeholders.length)]
+  // Select random placeholder on mount (stable across re-renders)
+  const [placeholder] = useState(
+    () => allQuestions[Math.floor(Math.random() * allQuestions.length)]
   );
 
   const isDisabled = isSubmitting || apiStatus === 'offline' || apiStatus === 'checking';
@@ -148,7 +188,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
           />
           <div className="absolute bottom-2 right-2 text-xs text-text-muted font-mono">
             {question.length > 0 && `${question.length} chars`}
-            {question.length === 0 && 'Cmd+Enter to submit'}
+            {question.length === 0 && 'Cmd+Enter to debate this question'}
           </div>
         </div>
 
@@ -164,7 +204,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
 
           <button
             type="submit"
-            disabled={!question.trim() || isDisabled}
+            disabled={isDisabled}
             className="px-6 py-2 bg-acid-green text-bg font-mono font-bold
                        hover:bg-acid-green/80 transition-colors
                        disabled:bg-text-muted disabled:cursor-not-allowed

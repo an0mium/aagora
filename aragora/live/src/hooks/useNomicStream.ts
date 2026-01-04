@@ -4,8 +4,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { StreamEvent, NomicState, LoopInstance } from '@/types/events';
 
 const DEFAULT_WS_URL = 'ws://localhost:8765';
-const RECONNECT_INTERVAL = 3000;
 const MAX_EVENTS = 5000;
+
+// Circuit breaker configuration
+const MAX_RECONNECT_ATTEMPTS = 5;
+const INITIAL_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
 
 export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
@@ -15,6 +19,10 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
   const [selectedLoopId, setSelectedLoopId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Circuit breaker state
+  const reconnectAttemptsRef = useRef(0);
+  const [circuitOpen, setCircuitOpen] = useState(false);
 
   // Audience participation callbacks
   const ackCallbacksRef = useRef<((msgType: string) => void)[]>([]);
@@ -28,6 +36,9 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
       ws.onopen = () => {
         console.log('WebSocket connected');
         setConnected(true);
+        // Reset circuit breaker on successful connection
+        reconnectAttemptsRef.current = 0;
+        setCircuitOpen(false);
       };
 
       ws.onclose = () => {
@@ -35,11 +46,24 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
         setConnected(false);
         wsRef.current = null;
 
-        // Reconnect after delay
+        // Circuit breaker: stop reconnecting after MAX_RECONNECT_ATTEMPTS
+        if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          console.log('Circuit breaker open - stopping reconnection attempts');
+          setCircuitOpen(true);
+          return;
+        }
+
+        // Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s (max)
+        const backoffMs = Math.min(
+          INITIAL_BACKOFF_MS * Math.pow(2, reconnectAttemptsRef.current),
+          MAX_BACKOFF_MS
+        );
+        reconnectAttemptsRef.current += 1;
+
+        console.log(`Reconnect attempt ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS} in ${backoffMs}ms`);
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('Attempting to reconnect...');
           connect();
-        }, RECONNECT_INTERVAL);
+        }, backoffMs);
       };
 
       ws.onerror = (error) => {
@@ -134,8 +158,22 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
       };
     } catch (e) {
       console.error('Failed to create WebSocket:', e);
-      // Retry connection
-      reconnectTimeoutRef.current = setTimeout(connect, RECONNECT_INTERVAL);
+
+      // Circuit breaker check
+      if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        console.log('Circuit breaker open - stopping reconnection attempts');
+        setCircuitOpen(true);
+        return;
+      }
+
+      // Exponential backoff for connection errors
+      const backoffMs = Math.min(
+        INITIAL_BACKOFF_MS * Math.pow(2, reconnectAttemptsRef.current),
+        MAX_BACKOFF_MS
+      );
+      reconnectAttemptsRef.current += 1;
+
+      reconnectTimeoutRef.current = setTimeout(connect, backoffMs);
     }
   }, [wsUrl]);
 
@@ -195,6 +233,13 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
   const clearEvents = useCallback(() => {
     setEvents([]);
   }, []);
+
+  // Reset circuit breaker and attempt to reconnect
+  const resetCircuitBreaker = useCallback(() => {
+    reconnectAttemptsRef.current = 0;
+    setCircuitOpen(false);
+    connect();
+  }, [connect]);
 
   const selectLoop = useCallback((loopId: string) => {
     setSelectedLoopId(loopId);
@@ -262,6 +307,9 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
     onError,
     // Replay forking
     forkReplay,
+    // Circuit breaker
+    circuitOpen,
+    resetCircuitBreaker,
   };
 }
 

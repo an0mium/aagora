@@ -2253,6 +2253,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                     ),
                     position_tracker=self.position_tracker,
                     event_hooks=self._create_arena_hooks("tournament"),  # Enable streaming
+                    persona_manager=self.persona_manager,
                 )
                 return await arena.run(env)
 
@@ -3022,6 +3023,7 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                     env, agents, protocol,
                     position_tracker=self.position_tracker,
                     event_hooks=self._create_arena_hooks("scenario"),  # Enable streaming
+                    persona_manager=self.persona_manager,
                 )
                 return await arena.run(env)
 
@@ -4392,6 +4394,7 @@ Synthesize these suggestions into a coherent, working implementation.
                 insight_store=self.insight_store, position_tracker=self.position_tracker,
                 position_ledger=self.position_ledger, elo_system=self.elo_system,
                 event_emitter=self.stream_emitter, loop_id=self.loop_id,
+                persona_manager=self.persona_manager,
             )
             return await self._run_arena_with_logging(arena, phase_name)
 
@@ -4464,6 +4467,7 @@ Synthesize these suggestions into a coherent, working implementation.
                 insight_store=self.insight_store, position_tracker=self.position_tracker,
                 position_ledger=self.position_ledger, elo_system=self.elo_system,
                 event_emitter=self.stream_emitter, loop_id=self.loop_id,
+                persona_manager=self.persona_manager,
             )
             return await self._run_arena_with_logging(arena, phase_name)
 
@@ -4860,6 +4864,7 @@ Recent changes:
             elo_system=self.elo_system,
             event_emitter=self.stream_emitter, loop_id=self.loop_id,
             event_hooks=self._create_arena_hooks("debate"),  # Enable real-time streaming
+            persona_manager=self.persona_manager,
         )
 
         # P1-Phase2: Use graph-based debate for complex multi-agent reasoning if available
@@ -5462,6 +5467,7 @@ Learn from past patterns shown above - repeat successes and avoid failures.""",
             position_ledger=self.position_ledger,
             elo_system=self.elo_system,
             event_hooks=self._create_arena_hooks("design"),  # Enable real-time streaming
+            persona_manager=self.persona_manager,
         )
         result = await self._run_arena_with_logging(arena, "design")
 
