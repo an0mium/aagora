@@ -92,7 +92,7 @@ export function AsciiBanner({ subtitle = 'live', showStatus = true, connected = 
 
       {/* Decorative border */}
       <div className="mt-4 text-center text-acid-green/50 text-xs font-mono select-none">
-        {'='}.repeat(60).split('').join('')}
+        {'='.repeat(60)}
       </div>
     </div>
   );

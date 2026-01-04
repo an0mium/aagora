@@ -41,7 +41,7 @@ export function VerdictCard({ events }: VerdictCardProps) {
       unanimousIssues: (data.unanimous_issues || []) as string[],
       splitOpinions: (data.split_opinions || []) as string[],
       riskAreas: (data.risk_areas || []) as string[],
-      citationCount: (data.all_citations?.length || data.citation_count || 0) as number,
+      citationCount: (Array.isArray(data.all_citations) ? data.all_citations.length : (data.citation_count || 0)) as number,
       crossExamination: data.cross_examination_notes as string | undefined,
       timestamp: latest.timestamp,
     };

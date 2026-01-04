@@ -74,9 +74,13 @@ export function LeaderboardPanel({ wsMessages = [], loopId, apiBase = DEFAULT_AP
         const data = await matchesRes.json();
         setMatches(data.matches || []);
         // Also extract domains from recent matches
-        const matchDomains = [...new Set(data.matches?.map((m: Match) => m.domain).filter(Boolean) || [])];
+        const domainSet = new Set<string>(data.matches?.map((m: Match) => m.domain).filter(Boolean) || []);
+        const matchDomains = Array.from(domainSet);
         if (matchDomains.length > 0) {
-          setAvailableDomains(prev => [...new Set([...prev, ...matchDomains])]);
+          setAvailableDomains(prev => {
+            const combined = new Set<string>([...prev, ...matchDomains]);
+            return Array.from(combined);
+          });
         }
       }
 

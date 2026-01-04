@@ -7,25 +7,25 @@ interface AgentPanelProps {
   events: StreamEvent[];
 }
 
-// Agent color schemes by model family
+// Agent color schemes by model family - acid/terminal aesthetic
 const MODEL_COLORS = {
   // Gemini - purple (Google AI)
-  gemini: { bg: 'bg-purple/10', text: 'text-purple', border: 'border-purple/30' },
+  gemini: { bg: 'bg-purple/5', text: 'text-purple', border: 'border-purple/40', glow: 'shadow-[0_0_10px_rgba(191,0,255,0.1)]' },
   // Codex - gold (OpenAI)
-  codex: { bg: 'bg-gold/10', text: 'text-gold', border: 'border-gold/30' },
-  // Claude - accent/indigo (Anthropic)
-  claude: { bg: 'bg-accent/10', text: 'text-accent', border: 'border-accent/30' },
+  codex: { bg: 'bg-gold/5', text: 'text-gold', border: 'border-gold/40', glow: 'shadow-[0_0_10px_rgba(255,215,0,0.1)]' },
+  // Claude - cyan (Anthropic)
+  claude: { bg: 'bg-acid-cyan/5', text: 'text-acid-cyan', border: 'border-acid-cyan/40', glow: 'shadow-[0_0_10px_rgba(0,255,255,0.1)]' },
   // Grok - crimson red (xAI)
-  grok: { bg: 'bg-crimson/10', text: 'text-crimson', border: 'border-crimson/30' },
-  // Default - neutral
-  default: { bg: 'bg-surface', text: 'text-text', border: 'border-border' },
+  grok: { bg: 'bg-crimson/5', text: 'text-crimson', border: 'border-crimson/40', glow: 'shadow-[0_0_10px_rgba(255,0,64,0.1)]' },
+  // Default - acid green
+  default: { bg: 'bg-acid-green/5', text: 'text-acid-green', border: 'border-acid-green/30', glow: '' },
 };
 
 /**
  * Get colors for an agent by name, using prefix matching.
  * This ensures any variant (e.g., "grok-explorer", "grok-pragmatist") gets the right color.
  */
-function getAgentColors(agentName: string): { bg: string; text: string; border: string } {
+function getAgentColors(agentName: string): { bg: string; text: string; border: string; glow: string } {
   const name = agentName.toLowerCase();
   // Match by prefix (order matters - check specific models first)
   if (name.startsWith('gemini')) return MODEL_COLORS.gemini;
@@ -35,14 +35,15 @@ function getAgentColors(agentName: string): { bg: string; text: string; border: 
   return MODEL_COLORS.default;
 }
 
+// Terminal-style role indicators
 const ROLE_ICONS: Record<string, string> = {
-  proposer: '💡',
-  critic: '🔍',
-  synthesizer: '🔮',
-  judge: '⚖️',
-  reviewer: '📋',
-  implementer: '🔧',
-  default: '🤖',
+  proposer: '[P]',
+  critic: '[C]',
+  synthesizer: '[S]',
+  judge: '[J]',
+  reviewer: '[R]',
+  implementer: '[I]',
+  default: '[>]',
 };
 
 export function AgentPanel({ events }: AgentPanelProps) {
@@ -151,34 +152,38 @@ export function AgentPanel({ events }: AgentPanelProps) {
   };
 
   return (
-    <div className="card flex flex-col h-full">
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider">
-          Agent Activity
-        </h2>
-        <div className="flex gap-2">
+    <div className="bg-surface border border-acid-green/30 flex flex-col h-full font-mono">
+      {/* Terminal-style header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-acid-green/20 bg-bg/50">
+        <div className="flex items-center gap-2">
+          <span className="text-acid-green">[</span>
+          <span className="text-xs text-acid-green uppercase tracking-wider">AGENT_STREAM</span>
+          <span className="text-acid-green">]</span>
+          <span className="text-text-muted text-xs">// {agentEvents.length} events</span>
+        </div>
+        <div className="flex gap-1">
           <button
             onClick={expandAll}
-            className="text-xs text-text-muted hover:text-text px-2 py-1 rounded hover:bg-surface"
+            className="text-xs text-text-muted hover:text-acid-green px-2 py-0.5 border border-transparent hover:border-acid-green/30 transition-colors"
           >
-            Expand All
+            [+ALL]
           </button>
           <button
             onClick={collapseAll}
-            className="text-xs text-text-muted hover:text-text px-2 py-1 rounded hover:bg-surface"
+            className="text-xs text-text-muted hover:text-acid-green px-2 py-0.5 border border-transparent hover:border-acid-green/30 transition-colors"
           >
-            Collapse All
+            [-ALL]
           </button>
         </div>
       </div>
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-3"
+        className="flex-1 overflow-y-auto p-3 space-y-2"
       >
         {agentEvents.length === 0 ? (
-          <div className="text-center text-text-muted py-8">
-            Waiting for agent activity...
+          <div className="text-center text-text-muted py-8 font-mono text-sm">
+            <span className="text-acid-green animate-pulse">{'>'}</span> Awaiting agent activity...
           </div>
         ) : (
           agentEvents.map((event, index) => (
@@ -200,9 +205,9 @@ export function AgentPanel({ events }: AgentPanelProps) {
               scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
             }
           }}
-          className="absolute bottom-4 right-4 bg-accent text-white px-3 py-1 rounded-full text-sm shadow-lg"
+          className="absolute bottom-4 right-4 bg-acid-green text-bg px-3 py-1 text-xs font-mono shadow-glow"
         >
-          ↓ New messages
+          [NEW MESSAGES]
         </button>
       )}
     </div>
@@ -273,32 +278,33 @@ function EventCard({ id, event, isExpanded, onToggle }: EventCardProps) {
 
   return (
     <div
-      className={`${colors.bg} border ${colors.border} rounded-lg overflow-hidden transition-all`}
+      className={`${colors.bg} border ${colors.border} ${colors.glow} overflow-hidden transition-all`}
     >
       <button
         onClick={() => onToggle(id)}
-        className="w-full text-left p-3 flex items-start gap-3 hover:bg-white/5 transition-colors"
+        className="w-full text-left p-2 flex items-start gap-2 hover:bg-white/5 transition-colors"
       >
-        <span className="text-lg flex-shrink-0">{icon}</span>
+        {/* Terminal-style role icon */}
+        <span className={`text-xs font-bold flex-shrink-0 ${colors.text}`}>{icon}</span>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className={`font-medium ${colors.text}`}>{agentName}</span>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className={`font-medium text-sm ${colors.text}`}>{agentName.toUpperCase()}</span>
             {event.round !== undefined && event.round > 0 && (
-              <span className="text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded">
-                Round {event.round}
+              <span className="text-[10px] text-text-muted border border-text-muted/30 px-1">
+                R{event.round}
               </span>
             )}
-            <span className="text-xs text-text-muted ml-auto">{timestamp}</span>
+            <span className="text-[10px] text-text-muted/70 ml-auto font-mono">{timestamp}</span>
           </div>
-          <p className="agent-output text-text-muted whitespace-pre-wrap break-words">{preview}</p>
+          <p className="agent-output text-text-muted text-xs whitespace-pre-wrap break-words line-clamp-2">{preview}</p>
         </div>
-        <span className="text-text-muted flex-shrink-0">
-          {isExpanded ? '▼' : '▶'}
+        <span className={`text-xs flex-shrink-0 ${colors.text}`}>
+          {isExpanded ? '[-]' : '[+]'}
         </span>
       </button>
       {isExpanded && (
-        <div className="px-3 pb-3 pt-0">
-          <div className="agent-output bg-bg/50 rounded-lg p-3 whitespace-pre-wrap break-words">
+        <div className="px-2 pb-2 pt-0">
+          <div className="agent-output bg-bg/80 border-l-2 border-acid-green/30 p-2 text-xs whitespace-pre-wrap break-words text-text">
             {content}
           </div>
         </div>

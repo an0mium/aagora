@@ -143,7 +143,7 @@ class GeminiAgent(APIAgent):
             "contents": [{"parts": [{"text": full_prompt}]}],
             "generationConfig": {
                 "temperature": 0.7,
-                "maxOutputTokens": 4096,
+                "maxOutputTokens": 16384,
             },
         }
 

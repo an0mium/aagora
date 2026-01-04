@@ -1,10 +1,13 @@
 """
-Tests for AudienceInbox and TokenBucket rate limiting.
+Tests for AudienceInbox, TokenBucket rate limiting, and conviction-weighted voting.
 """
 
 import time
 import threading
-from aragora.server.stream import TokenBucket, AudienceInbox, AudienceMessage
+from aragora.server.stream import (
+    TokenBucket, AudienceInbox, AudienceMessage, normalize_intensity
+)
+from aragora.debate.orchestrator import DebateProtocol, user_vote_multiplier
 
 
 def test_token_bucket():
@@ -84,6 +87,126 @@ def test_audience_inbox_thread_safety():
     assert sum(results) == 100
 
 
+def test_normalize_intensity():
+    """Test intensity normalization for conviction-weighted voting."""
+    # Normal values
+    assert normalize_intensity(5) == 5
+    assert normalize_intensity(1) == 1
+    assert normalize_intensity(10) == 10
+
+    # Clamping
+    assert normalize_intensity(0) == 1   # Below min
+    assert normalize_intensity(11) == 10  # Above max
+    assert normalize_intensity(-5) == 1  # Negative
+
+    # Invalid inputs
+    assert normalize_intensity(None) == 5  # None -> default
+    assert normalize_intensity("invalid") == 5  # String -> default
+    assert normalize_intensity(5.7) == 5  # Float -> truncated int
+
+    # Edge cases
+    assert normalize_intensity("3") == 3  # String number
+    assert normalize_intensity(3.9) == 3  # Float truncation
+
+
+def test_user_vote_multiplier():
+    """Test conviction-weighted vote multiplier calculation."""
+    protocol = DebateProtocol()
+
+    # Neutral intensity = 1.0 multiplier
+    assert user_vote_multiplier(5, protocol) == 1.0
+
+    # Low conviction = lower weight
+    low = user_vote_multiplier(1, protocol)
+    assert low == 0.5  # Min multiplier
+
+    # High conviction = higher weight
+    high = user_vote_multiplier(10, protocol)
+    assert high == 2.0  # Max multiplier
+
+    # Intermediate values
+    mid_low = user_vote_multiplier(3, protocol)
+    assert 0.5 < mid_low < 1.0
+
+    mid_high = user_vote_multiplier(7, protocol)
+    assert 1.0 < mid_high < 2.0
+
+    # Clamping at edges
+    assert user_vote_multiplier(0, protocol) == 0.5  # Below min -> min
+    assert user_vote_multiplier(15, protocol) == 2.0  # Above max -> max
+
+
+def test_get_summary_with_histograms():
+    """Test get_summary includes conviction histograms."""
+    inbox = AudienceInbox()
+
+    # Add votes with different intensities
+    votes = [
+        AudienceMessage(type="vote", loop_id="test", payload={"choice": "A", "intensity": 8}),
+        AudienceMessage(type="vote", loop_id="test", payload={"choice": "A", "intensity": 9}),
+        AudienceMessage(type="vote", loop_id="test", payload={"choice": "B", "intensity": 3}),
+        AudienceMessage(type="vote", loop_id="test", payload={"choice": "B", "intensity": 4}),
+        AudienceMessage(type="suggestion", loop_id="test", payload={"text": "Great!"}),
+    ]
+
+    for v in votes:
+        inbox.put(v)
+
+    summary = inbox.get_summary()
+
+    # Basic counts
+    assert summary["votes"]["A"] == 2
+    assert summary["votes"]["B"] == 2
+    assert summary["suggestions"] == 1
+
+    # Histograms present
+    assert "histograms" in summary
+    assert "A" in summary["histograms"]
+    assert "B" in summary["histograms"]
+
+    # Check histogram values
+    assert summary["histograms"]["A"][8] == 1
+    assert summary["histograms"]["A"][9] == 1
+    assert summary["histograms"]["B"][3] == 1
+    assert summary["histograms"]["B"][4] == 1
+
+    # Conviction distribution
+    assert "conviction_distribution" in summary
+    assert summary["conviction_distribution"][8] == 1
+    assert summary["conviction_distribution"][9] == 1
+    assert summary["conviction_distribution"][3] == 1
+    assert summary["conviction_distribution"][4] == 1
+
+    # Weighted votes (high intensity votes count more)
+    assert summary["weighted_votes"]["A"] > summary["weighted_votes"]["B"]
+
+
+def test_get_summary_loop_id_filter():
+    """Test get_summary filters by loop_id."""
+    inbox = AudienceInbox()
+
+    # Add votes for different loops
+    inbox.put(AudienceMessage(type="vote", loop_id="loop1", payload={"choice": "X", "intensity": 5}))
+    inbox.put(AudienceMessage(type="vote", loop_id="loop1", payload={"choice": "Y", "intensity": 7}))
+    inbox.put(AudienceMessage(type="vote", loop_id="loop2", payload={"choice": "X", "intensity": 3}))
+
+    # Filter by loop1
+    summary1 = inbox.get_summary(loop_id="loop1")
+    assert summary1["votes"]["X"] == 1
+    assert summary1["votes"]["Y"] == 1
+    assert "loop2" not in str(summary1["votes"])
+
+    # Filter by loop2
+    summary2 = inbox.get_summary(loop_id="loop2")
+    assert summary2["votes"]["X"] == 1
+    assert "Y" not in summary2["votes"]
+
+    # No filter = all
+    summary_all = inbox.get_summary()
+    assert summary_all["votes"]["X"] == 2
+    assert summary_all["votes"]["Y"] == 1
+
+
 if __name__ == "__main__":
     test_token_bucket()
     print("✓ TokenBucket test passed")
@@ -94,4 +217,16 @@ if __name__ == "__main__":
     test_audience_inbox_thread_safety()
     print("✓ AudienceInbox thread safety test passed")
 
-    print("All tests passed!")
+    test_normalize_intensity()
+    print("✓ normalize_intensity test passed")
+
+    test_user_vote_multiplier()
+    print("✓ user_vote_multiplier test passed")
+
+    test_get_summary_with_histograms()
+    print("✓ get_summary with histograms test passed")
+
+    test_get_summary_loop_id_filter()
+    print("✓ get_summary loop_id filter test passed")
+
+    print("\nAll tests passed!")
