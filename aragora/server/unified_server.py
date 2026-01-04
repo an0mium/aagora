@@ -34,6 +34,14 @@ except ImportError:
     INSIGHTS_AVAILABLE = False
     InsightStore = None
 
+# Optional EloSystem for agent rankings
+try:
+    from aragora.ranking.elo import EloSystem
+    RANKING_AVAILABLE = True
+except ImportError:
+    RANKING_AVAILABLE = False
+    EloSystem = None
+
 
 class UnifiedHandler(BaseHTTPRequestHandler):
     """HTTP handler with API endpoints and static file serving."""
@@ -44,6 +52,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     nomic_state_file: Optional[Path] = None
     persistence: Optional["SupabaseClient"] = None  # Supabase client for history
     insight_store: Optional["InsightStore"] = None  # InsightStore for debate insights
+    elo_system: Optional["EloSystem"] = None  # EloSystem for agent rankings
 
     def do_GET(self) -> None:
         """Handle GET requests."""
@@ -87,6 +96,19 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path == '/api/insights/recent':
             limit = int(query.get('limit', [20])[0])
             self._get_recent_insights(limit)
+
+        # Leaderboard API (debate consensus feature)
+        elif path == '/api/leaderboard':
+            limit = int(query.get('limit', [20])[0])
+            domain = query.get('domain', [None])[0]
+            self._get_leaderboard(limit, domain)
+        elif path == '/api/matches/recent':
+            limit = int(query.get('limit', [10])[0])
+            self._get_recent_matches(limit)
+        elif path.startswith('/api/agent/') and path.endswith('/history'):
+            agent = path.split('/')[3]
+            limit = int(query.get('limit', [30])[0])
+            self._get_agent_history(agent, limit)
 
         # Static file serving
         elif path in ('/', '/index.html'):
@@ -278,6 +300,83 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e), "insights": []})
 
+    def _get_leaderboard(self, limit: int, domain: Optional[str]) -> None:
+        """Get agent leaderboard by ELO ranking (debate consensus feature)."""
+        if not self.elo_system:
+            self._send_json({"error": "Rankings not configured", "agents": []})
+            return
+
+        try:
+            agents = self.elo_system.get_leaderboard(limit=limit, domain=domain)
+            self._send_json({
+                "agents": [
+                    {
+                        "name": a.agent_name,
+                        "elo": round(a.elo),
+                        "wins": a.wins,
+                        "losses": a.losses,
+                        "draws": a.draws,
+                        "win_rate": round(a.win_rate * 100, 1),
+                        "games": a.games_played,
+                    }
+                    for a in agents
+                ],
+                "count": len(agents),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "agents": []})
+
+    def _get_recent_matches(self, limit: int) -> None:
+        """Get recent match results (debate consensus feature)."""
+        if not self.elo_system:
+            self._send_json({"error": "Rankings not configured", "matches": []})
+            return
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.elo_system.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT debate_id, winner, participants, domain, elo_changes, created_at
+                FROM matches
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            conn.close()
+
+            matches = []
+            for row in rows:
+                elo_changes = json.loads(row[4]) if row[4] else {}
+                participants = json.loads(row[2]) if row[2] else []
+                matches.append({
+                    "debate_id": row[0],
+                    "winner": row[1],
+                    "participants": participants,
+                    "domain": row[3],
+                    "elo_changes": elo_changes,
+                    "created_at": row[5],
+                })
+            self._send_json({"matches": matches, "count": len(matches)})
+        except Exception as e:
+            self._send_json({"error": str(e), "matches": []})
+
+    def _get_agent_history(self, agent: str, limit: int) -> None:
+        """Get ELO history for an agent (debate consensus feature)."""
+        if not self.elo_system:
+            self._send_json({"error": "Rankings not configured", "history": []})
+            return
+
+        try:
+            history = self.elo_system.get_elo_history(agent, limit=limit)
+            self._send_json({
+                "agent": agent,
+                "history": [{"debate_id": h[0], "elo": h[1]} for h in history],
+                "count": len(history),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "history": []})
+
     def _serve_file(self, filename: str) -> None:
         """Serve a static file."""
         if not self.static_dir:
@@ -397,6 +496,12 @@ class UnifiedServer:
                 if insights_path.exists():
                     UnifiedHandler.insight_store = InsightStore(str(insights_path))
                     print("[server] InsightStore loaded for API access")
+            # Initialize EloSystem from nomic directory
+            if RANKING_AVAILABLE:
+                elo_path = nomic_dir / "agent_elo.db"
+                if elo_path.exists():
+                    UnifiedHandler.elo_system = EloSystem(str(elo_path))
+                    print("[server] EloSystem loaded for leaderboard API")
 
     @property
     def emitter(self) -> SyncEventEmitter:

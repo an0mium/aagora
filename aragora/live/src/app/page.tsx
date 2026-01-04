@@ -10,6 +10,7 @@ import { HistoryPanel } from '@/components/HistoryPanel';
 import { UserParticipation } from '@/components/UserParticipation';
 import { ReplayBrowser } from '@/components/ReplayBrowser';
 import { InsightsPanel } from '@/components/InsightsPanel';
+import { LeaderboardPanel } from '@/components/LeaderboardPanel';
 import type { NomicState } from '@/types/events';
 
 // WebSocket URL - can be overridden via environment variable
@@ -196,6 +197,7 @@ export default function Home() {
               onError={onError}
             />
             <HistoryPanel />
+            <LeaderboardPanel />
             <InsightsPanel wsMessages={events} />
             <ReplayBrowser />
           </div>
