@@ -2573,8 +2573,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                         agent_memories = self._format_agent_memories(agent.name, topic_hint[:200], limit=3)
                         if agent_memories:
                             full_prompt += f"\n\n{agent_memories}"
-                    except Exception:
-                        pass  # Don't break on memory injection failure
+                    except Exception as e:
+                        self._log(f"  [memory] Injection failed for {agent.name}: {e}")
 
                     # Inject position history for consistency tracking (P9: PositionLedger read)
                     try:
@@ -2582,8 +2582,8 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                         position_history = self._format_position_history(agent.name, topic_hint[:200], limit=5)
                         if position_history:
                             full_prompt += f"\n\n{position_history}"
-                    except Exception:
-                        pass  # Don't break on position history injection failure
+                    except Exception as e:
+                        self._log(f"  [position] History injection failed for {agent.name}: {e}")
 
                     # Inject flip detection warnings (P9: FlipDetector integration)
                     try:
