@@ -413,6 +413,10 @@ Aragora implements several security measures:
 - **Debate Timeouts**: Configurable per-debate and per-round timeouts prevent runaway processes
 - **Connection Health**: WebSocket ping/pong (30s/10s) detects stale connections
 - **Thread Safety**: Double-checked locking for shared executor initialization
+- **Secure Client IDs**: Cryptographically random WebSocket client identifiers
+- **JSON Parse Timeout**: 5-second timeout prevents CPU-bound DoS attacks
+- **Payload Validation**: WebSocket payloads validated for structure and size (max 10KB)
+- **Upload Rate Limiting**: IP-based limits (5/min, 30/hour) prevent storage DoS
 
 Configure security via environment variables:
 ```bash
