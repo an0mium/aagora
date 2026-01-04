@@ -199,6 +199,15 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             limit = self._safe_int(query, 'limit', 30, 100)
             self._get_agent_history(agent, limit)
 
+        # Calibration API
+        elif path == '/api/calibration/leaderboard':
+            limit = self._safe_int(query, 'limit', 20, 50)
+            self._get_calibration_leaderboard(limit)
+        elif path.startswith('/api/agent/') and path.endswith('/calibration'):
+            agent = path.split('/')[3]
+            domain = query.get('domain', [None])[0]
+            self._get_agent_calibration(agent, domain)
+
         # Document API
         elif path == '/api/documents':
             self._list_documents()
@@ -783,6 +792,56 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": str(e), "history": []})
+
+    def _get_calibration_leaderboard(self, limit: int) -> None:
+        """Get agents ranked by calibration score (accuracy vs confidence)."""
+        if not self.elo_system:
+            self._send_json({"error": "Rankings not configured", "agents": []})
+            return
+
+        try:
+            agents = self.elo_system.get_calibration_leaderboard(limit=limit)
+            self._send_json({
+                "agents": [
+                    {
+                        "name": a.agent_name,
+                        "elo": round(a.elo),
+                        "calibration_score": round(a.calibration_score, 3),
+                        "brier_score": round(a.calibration_brier_score, 3),
+                        "accuracy": round(a.calibration_accuracy, 3),
+                        "games": a.games_played,
+                    }
+                    for a in agents
+                ],
+                "count": len(agents),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "agents": []})
+
+    def _get_agent_calibration(self, agent: str, domain: Optional[str] = None) -> None:
+        """Get detailed calibration metrics for an agent."""
+        if not self.elo_system:
+            self._send_json({"error": "Rankings not configured"})
+            return
+
+        try:
+            # Get ECE (Expected Calibration Error)
+            ece = self.elo_system.get_expected_calibration_error(agent)
+
+            # Get confidence buckets
+            buckets = self.elo_system.get_calibration_by_bucket(agent, domain)
+
+            # Get domain-specific calibration if available
+            domain_calibration = self.elo_system.get_domain_calibration(agent, domain)
+
+            self._send_json({
+                "agent": agent,
+                "ece": round(ece, 3),
+                "buckets": buckets,
+                "domain_calibration": domain_calibration,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)})
 
     def _list_replays(self) -> None:
         """List available replay directories."""
