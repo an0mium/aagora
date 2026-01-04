@@ -84,9 +84,20 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
           if (data.type === 'loop_list') {
             const loopData = data.data as { loops: LoopInstance[]; count: number };
             setActiveLoops(loopData.loops || []);
-            // Auto-select first loop if none selected
-            if (!selectedLoopId && loopData.loops?.length > 0) {
-              setSelectedLoopId(loopData.loops[0].loop_id);
+            // Find the loop to use for state (selected or first)
+            const targetLoop = selectedLoopId
+              ? loopData.loops?.find(l => l.loop_id === selectedLoopId)
+              : loopData.loops?.[0];
+            if (targetLoop) {
+              if (!selectedLoopId) {
+                setSelectedLoopId(targetLoop.loop_id);
+              }
+              // Initialize/update nomicState from loop data
+              setNomicState((prev) => ({
+                ...prev,
+                cycle: targetLoop.cycle || 0,
+                phase: targetLoop.phase || 'starting',
+              }));
             }
             return;
           }
