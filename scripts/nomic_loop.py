@@ -4256,7 +4256,7 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
             grok_explorer = KiloCodeAgent(
                 name="grok-explorer",
                 provider_id="grok-explorer",
-                model="grok-code-fast-1",
+                model="grok-4",
                 role="explorer",
                 timeout=600,  # 10 min for agentic codebase exploration (reduced from 30 min)
                 mode="architect",

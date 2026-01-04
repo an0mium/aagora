@@ -76,7 +76,7 @@ def create_agent(
         from aragora.agents.cli_agents import GrokCLIAgent
         return GrokCLIAgent(
             name=name or "grok",
-            model=model or "grok-3-latest",
+            model=model or "grok-4",
             role=role,
         )
     elif model_type == "qwen-cli":
