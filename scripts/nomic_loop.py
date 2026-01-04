@@ -618,6 +618,23 @@ except ImportError:
     PersonaSynthesizer = None
     GroundedPersona = None
 
+# =============================================================================
+# Citation Grounding (Heavy3-inspired scholarly evidence)
+# =============================================================================
+
+# CitationStore for evidence-backed verdicts
+try:
+    from aragora.reasoning.citations import (
+        CitationStore, CitationExtractor, GroundedVerdict,
+        ScholarlyEvidence, CitedClaim, CitationType, CitationQuality
+    )
+    CITATION_GROUNDING_AVAILABLE = True
+except ImportError:
+    CITATION_GROUNDING_AVAILABLE = False
+    CitationStore = None
+    CitationExtractor = None
+    GroundedVerdict = None
+
 
 class NomicLoop:
     """
@@ -810,6 +827,14 @@ class NomicLoop:
         if COUNTERFACTUAL_AVAILABLE:
             self.counterfactual = CounterfactualOrchestrator()
             print(f"[counterfactual] Deadlock resolution via forking enabled")
+
+        # Citation Grounding: CitationStore + CitationExtractor for evidence-backed verdicts
+        self.citation_store = None
+        self.citation_extractor = None
+        if CITATION_GROUNDING_AVAILABLE:
+            self.citation_store = CitationStore()
+            self.citation_extractor = CitationExtractor()
+            print(f"[citations] Citation grounding enabled for evidence-backed verdicts")
 
         # Phase 3: CapabilityProber for agent quality assurance
         self.prober = None
@@ -4439,6 +4464,21 @@ Recent changes:
         if result.final_answer:
             self._record_evidence_provenance(result.final_answer, "agent", "debate-consensus")
 
+        # Citation Grounding: Extract citation-worthy claims from debate result
+        if result.final_answer and self.citation_extractor:
+            citation_needs = self.citation_extractor.identify_citation_needs(result.final_answer)
+            if citation_needs:
+                high_priority = [c for c in citation_needs if c.get("priority") == "high"]
+                if high_priority:
+                    self._log(f"  [citations] Found {len(high_priority)} high-priority claims needing citations")
+                    for need in high_priority[:3]:
+                        self._log(f"    - {need['claim'][:80]}...")
+                        # Try to find existing citations from store
+                        if self.citation_store:
+                            existing = self.citation_store.find_for_claim(need['claim'], limit=2)
+                            if existing:
+                                self._log(f"      Found {len(existing)} potential citations")
+
         # Phase 6: Create verification proofs for code claims (P19: ProofExecutor)
         await self._create_verification_proofs(result)
 
@@ -4556,6 +4596,16 @@ Recent changes:
         if continuum_patterns:
             design_learning += f"\n{continuum_patterns}\n"
 
+        # Build citation guidance if available
+        citation_guidance = ""
+        if self.citation_extractor:
+            citation_guidance = """
+6. EVIDENCE: Support architectural claims with evidence (cite prior debates, docs, or research)
+   - When making claims about best practices, cite the source
+   - When referencing existing patterns, cite the file path
+   - Flag any assumptions that need verification
+"""
+
         env = Environment(
             task=f"""{SAFETY_PREAMBLE}
 
@@ -4569,7 +4619,7 @@ Provide:
 3. INTEGRATION: How it connects to existing aragora modules (preserve all existing functionality)
 4. TEST PLAN: How to verify it works AND that existing features still work
 5. EXAMPLE USAGE: Code snippet showing the feature in action
-
+{citation_guidance}
 Be specific enough that an engineer could implement it.
 The implementation MUST preserve all existing aragora functionality.
 Learn from past patterns shown above - repeat successes and avoid failures.""",
