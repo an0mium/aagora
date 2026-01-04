@@ -7,12 +7,16 @@ Events are queued synchronously and consumed by an async drain loop.
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Any
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 # Allowed origins for WebSocket connections - configure via environment variable
 WS_ALLOWED_ORIGINS = os.getenv("ARAGORA_ALLOWED_ORIGINS", "").split(",")
@@ -316,8 +320,8 @@ class SyncEventEmitter:
         for sub in self._subscribers:
             try:
                 sub(event)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[stream] Subscriber callback error: {e}")
 
     def subscribe(self, callback: Callable[[StreamEvent], None]) -> None:
         """Add synchronous subscriber for immediate event handling."""
@@ -636,10 +640,10 @@ class DebateStreamServer:
                             "data": {"message": "Message received", "msg_type": msg_type}
                         }))
 
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logger.warning(f"[ws] Invalid JSON from client: {e}")
         except Exception:
-            # Silently handle connection closed errors (normal during shutdown)
+            # Connection closed errors are normal during shutdown - don't log
             pass
         finally:
             self.clients.discard(websocket)

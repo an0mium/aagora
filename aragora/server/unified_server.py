@@ -825,6 +825,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             "agents": d.agents,
             "consensus": d.consensus_reached,
             "confidence": d.confidence,
+            "consensus_strength": getattr(d, 'consensus_strength', 'none'),
+            "winner": getattr(d, 'winner', None),
             "views": d.view_count,
             "created": d.created_at.isoformat(),
         } for d in debates])
