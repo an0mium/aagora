@@ -375,6 +375,10 @@ class DebateStreamServer:
         # Audience participation
         self.audience_inbox = AudienceInbox()
         self._rate_limiters: dict[str, TokenBucket] = {}  # client_id -> TokenBucket
+        self._rate_limiter_last_access: dict[str, float] = {}  # client_id -> last access time
+        self._rate_limiter_cleanup_counter = 0  # Counter for periodic cleanup
+        self._RATE_LIMITER_TTL = 3600  # 1 hour TTL for rate limiters
+        self._CLEANUP_INTERVAL = 100  # Cleanup every N accesses
 
         # Subscribe to emitter to maintain debate states
         self._emitter.subscribe(self._update_debate_state)
@@ -383,6 +387,19 @@ class DebateStreamServer:
     def emitter(self) -> SyncEventEmitter:
         """Get the event emitter for Arena hooks."""
         return self._emitter
+
+    def _cleanup_stale_rate_limiters(self) -> None:
+        """Remove rate limiters not accessed within TTL period."""
+        now = time.time()
+        stale_keys = [
+            k for k, v in self._rate_limiter_last_access.items()
+            if now - v > self._RATE_LIMITER_TTL
+        ]
+        for k in stale_keys:
+            self._rate_limiters.pop(k, None)
+            self._rate_limiter_last_access.pop(k, None)
+        if stale_keys:
+            print(f"[stream] Cleaned up {len(stale_keys)} stale rate limiters")
 
     def _update_debate_state(self, event: StreamEvent) -> None:
         """Update cached debate state based on emitted events."""
@@ -569,6 +586,15 @@ class DebateStreamServer:
                                 rate_per_minute=10.0,  # 10 messages per minute
                                 burst_size=5  # Allow burst of 5
                             )
+
+                        # Track access time for TTL-based cleanup
+                        self._rate_limiter_last_access[client_id] = time.time()
+
+                        # Periodic cleanup to prevent memory leak
+                        self._rate_limiter_cleanup_counter += 1
+                        if self._rate_limiter_cleanup_counter >= self._CLEANUP_INTERVAL:
+                            self._rate_limiter_cleanup_counter = 0
+                            self._cleanup_stale_rate_limiters()
 
                         # Check rate limit
                         if not self._rate_limiters[client_id].consume(1):

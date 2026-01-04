@@ -336,7 +336,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             limit = self._safe_int(query, 'limit', 20, 50)
             self._get_calibration_leaderboard(limit)
         elif path.startswith('/api/agent/') and path.endswith('/calibration'):
-            agent = path.split('/')[3]
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
             domain = query.get('domain', [None])[0]
             self._get_agent_calibration(agent, domain)
 
@@ -346,14 +348,18 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path == '/api/documents/formats':
             self._send_json(get_supported_formats())
         elif path.startswith('/api/documents/'):
-            doc_id = path.split('/')[-1]
+            doc_id = self._extract_path_segment(path, 3, "document_id")
+            if doc_id is None:
+                return
             self._get_document(doc_id)
 
         # Replay API
         elif path == '/api/replays':
             self._list_replays()
         elif path.startswith('/api/replays/') and not path.endswith('/fork'):
-            replay_id = path.split('/')[3]
+            replay_id = self._extract_path_segment(path, 3, "replay_id")
+            if replay_id is None:
+                return
             self._get_replay(replay_id)
 
         # Learning Evolution API
@@ -367,10 +373,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path == '/api/flips/summary':
             self._get_flip_summary()
         elif path.startswith('/api/agent/') and path.endswith('/consistency'):
-            agent = path.split('/')[3]
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
             self._get_agent_consistency(agent)
         elif path.startswith('/api/agent/') and path.endswith('/flips'):
-            agent = path.split('/')[3]
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
             limit = self._safe_int(query, 'limit', 20, 100)
             self._get_agent_flips(agent, limit)
 
@@ -378,10 +388,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path == '/api/personas':
             self._get_all_personas()
         elif path.startswith('/api/agent/') and path.endswith('/persona'):
-            agent = path.split('/')[3]
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
             self._get_agent_persona(agent)
         elif path.startswith('/api/agent/') and path.endswith('/performance'):
-            agent = path.split('/')[3]
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
             self._get_agent_performance(agent)
 
         # Consensus Memory API (expose underutilized databases)
@@ -396,13 +410,17 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path == '/api/consensus/stats':
             self._get_consensus_stats()
         elif path.startswith('/api/consensus/domain/'):
-            domain = path.split('/')[-1]
+            domain = self._extract_path_segment(path, 4, "domain")
+            if domain is None:
+                return
             limit = self._safe_int(query, 'limit', 50, 200)
             self._get_domain_history(domain, limit)
 
         # Combined Agent Profile API
         elif path.startswith('/api/agent/') and path.endswith('/profile'):
-            agent = path.split('/')[3]
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
             self._get_agent_full_profile(agent)
 
         # Static file serving
