@@ -7,11 +7,24 @@ Events are queued synchronously and consumed by an async drain loop.
 
 import asyncio
 import json
+import os
 import queue
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Any
+
+# Allowed origins for WebSocket connections - configure via environment variable
+WS_ALLOWED_ORIGINS = os.getenv("ARAGORA_ALLOWED_ORIGINS", "").split(",")
+if not WS_ALLOWED_ORIGINS or WS_ALLOWED_ORIGINS == [""]:
+    # Default to common development and production origins
+    WS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "https://aragora.ai",
+        "https://live.aragora.ai",
+        "https://www.aragora.ai",
+    ]
 
 
 class StreamEventType(Enum):
@@ -475,7 +488,14 @@ class DebateStreamServer:
         ]
 
     async def handler(self, websocket) -> None:
-        """Handle a WebSocket connection."""
+        """Handle a WebSocket connection with origin validation."""
+        # Validate origin for security
+        origin = websocket.request_headers.get("Origin", "")
+        if origin and origin not in WS_ALLOWED_ORIGINS:
+            # Reject connection from unauthorized origin
+            await websocket.close(4003, "Origin not allowed")
+            return
+
         self.clients.add(websocket)
         try:
             # Send list of active loops

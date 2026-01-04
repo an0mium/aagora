@@ -5,11 +5,24 @@ Provides REST endpoints for fetching debates and serves the viewer HTML.
 """
 
 import json
+import os
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
+
+# Allowed origins for CORS - configure via environment variable
+ALLOWED_ORIGINS = os.getenv("ARAGORA_ALLOWED_ORIGINS", "").split(",")
+if not ALLOWED_ORIGINS or ALLOWED_ORIGINS == [""]:
+    # Default to common development origins
+    ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "https://aragora.ai",
+        "https://live.aragora.ai",
+        "https://www.aragora.ai",
+    ]
 
 from aragora.server.storage import DebateStorage
 from aragora.replay.storage import ReplayStorage
@@ -215,23 +228,30 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             self.send_error(500, f"Error reading replay: {str(e)}")
 
     def _health_check(self) -> None:
-        """Health check endpoint."""
-        self._send_json({
-            "status": "ok",
-            "storage": self.storage is not None,
-            "replay_storage": self.replay_storage is not None,
-            "static_dir": str(self.static_dir) if self.static_dir else None,
-        })
+        """Health check endpoint - minimal info to avoid information disclosure."""
+        self._send_json({"status": "ok"})
 
     def _serve_file(self, filename: str) -> None:
-        """Serve a static file."""
+        """Serve a static file with path traversal protection."""
         if not self.static_dir:
             self.send_error(404, "Static directory not configured")
             return
 
-        filepath = self.static_dir / filename
+        # Security: Resolve paths and validate within static_dir
+        try:
+            filepath = (self.static_dir / filename).resolve()
+            static_dir_resolved = self.static_dir.resolve()
+
+            # Prevent path traversal attacks
+            if not str(filepath).startswith(str(static_dir_resolved)):
+                self.send_error(403, "Access denied")
+                return
+        except (ValueError, OSError):
+            self.send_error(400, "Invalid path")
+            return
+
         if not filepath.exists():
-            self.send_error(404, f"File not found: {filename}")
+            self.send_error(404, "File not found")
             return
 
         # Determine content type
@@ -265,10 +285,20 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def _add_cors_headers(self) -> None:
-        """Add CORS headers for cross-origin requests."""
-        self.send_header('Access-Control-Allow-Origin', '*')
+        """Add CORS headers with origin validation for security."""
+        request_origin = self.headers.get('Origin', '')
+
+        # Validate origin against allowed list
+        if request_origin in ALLOWED_ORIGINS:
+            self.send_header('Access-Control-Allow-Origin', request_origin)
+        elif not request_origin:
+            # Same-origin requests (no Origin header)
+            pass
+        # else: no CORS header = browser blocks cross-origin request
+
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.send_header('Access-Control-Max-Age', '3600')
 
     def log_message(self, format: str, *args) -> None:
         """Suppress default logging (too verbose)."""
