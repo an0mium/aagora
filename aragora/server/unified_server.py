@@ -56,7 +56,7 @@ def _safe_error_message(e: Exception, context: str = "") -> str:
 # Valid agent types (allowlist for security)
 ALLOWED_AGENT_TYPES = frozenset({
     # CLI-based
-    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli",
+    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli", "kilocode",
     # API-based (direct)
     "gemini", "ollama", "anthropic-api", "openai-api", "grok",
     # API-based (via OpenRouter)

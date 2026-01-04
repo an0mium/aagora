@@ -13,6 +13,11 @@ Key concepts:
 - ProofExecutor: Sandbox for safe proof execution
 - ClaimVerifier: Manages proof-claim relationships
 - VerificationReport: Aggregated results
+
+SECURITY NOTE:
+Code execution is inherently risky. The SAFE_BUILTINS whitelist restricts
+what functions are available to executed code. Do not expose proof execution
+to untrusted users without additional sandboxing (subprocess, containers).
 """
 
 from dataclasses import dataclass, field
@@ -25,6 +30,31 @@ import json
 import subprocess
 import traceback
 import uuid
+
+# Safe subset of builtins for proof execution (no imports, no file access)
+SAFE_BUILTINS = {
+    # Math and logic
+    'abs': abs, 'all': all, 'any': any, 'bin': bin, 'bool': bool,
+    'divmod': divmod, 'float': float, 'hex': hex, 'int': int,
+    'len': len, 'max': max, 'min': min, 'oct': oct, 'ord': ord,
+    'pow': pow, 'round': round, 'sum': sum,
+    # String/data
+    'chr': chr, 'str': str, 'repr': repr, 'ascii': ascii,
+    'format': format, 'hash': hash,
+    # Collections
+    'dict': dict, 'frozenset': frozenset, 'list': list, 'set': set,
+    'tuple': tuple, 'range': range, 'enumerate': enumerate, 'zip': zip,
+    'filter': filter, 'map': map, 'reversed': reversed, 'sorted': sorted,
+    'slice': slice,
+    # Types and inspection
+    'callable': callable, 'isinstance': isinstance, 'issubclass': issubclass,
+    'type': type, 'id': id, 'iter': iter, 'next': next,
+    # Exceptions (needed for try/except in proofs)
+    'Exception': Exception, 'ValueError': ValueError, 'TypeError': TypeError,
+    'KeyError': KeyError, 'IndexError': IndexError, 'AssertionError': AssertionError,
+    'AttributeError': AttributeError, 'RuntimeError': RuntimeError,
+    # Explicitly excluded: __import__, open, exec, eval, compile, globals, locals
+}
 
 
 class ProofType(Enum):
@@ -299,7 +329,7 @@ class ProofExecutor:
         namespace: dict[str, Any] = {}
 
         try:
-            exec(exec_code, {"__builtins__": __builtins__}, namespace)
+            exec(exec_code, {"__builtins__": SAFE_BUILTINS}, namespace)
 
             if assertion:
                 assertion_value = namespace.get("__result__", False)
@@ -348,7 +378,7 @@ class ProofExecutor:
         try:
             sys.stdout = stdout_capture
             namespace: dict[str, Any] = {}
-            exec(proof.code, {"__builtins__": __builtins__}, namespace)
+            exec(proof.code, {"__builtins__": SAFE_BUILTINS}, namespace)
             output = stdout_capture.getvalue()
 
         finally:

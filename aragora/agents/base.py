@@ -6,7 +6,7 @@ from typing import Literal, Union
 
 AgentType = Literal[
     # CLI-based
-    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli",
+    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli", "kilocode",
     # API-based (direct)
     "gemini", "ollama", "anthropic-api", "openai-api", "grok",
     # API-based (via OpenRouter)
@@ -99,6 +99,12 @@ def create_agent(
         return DeepseekCLIAgent(
             name=name or "deepseek",
             model=model or "deepseek-v3",
+            role=role,
+        )
+    elif model_type == "kilocode":
+        from aragora.agents.cli_agents import KiloCodeAgent
+        return KiloCodeAgent(
+            name=name or "kilocode",
             role=role,
         )
 

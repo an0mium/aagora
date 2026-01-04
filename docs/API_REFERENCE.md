@@ -1500,6 +1500,105 @@ Run memory consolidation and get tier transition statistics.
 
 ---
 
+### Formal Verification
+
+#### POST /api/verification/formal-verify
+Attempt formal verification of a claim using Z3 SMT solver.
+
+**Request Body:**
+```json
+{
+  "claim": "If X > Y and Y > Z, then X > Z",
+  "claim_type": "logical",
+  "context": "Transitivity property of greater-than",
+  "timeout": 30
+}
+```
+
+**Parameters:**
+- `claim` (required): The claim to verify
+- `claim_type` (optional): Hint for the type (assertion, logical, arithmetic, constraint)
+- `context` (optional): Additional context for translation
+- `timeout` (optional): Timeout in seconds (default: 30, max: 120)
+
+**Response:**
+```json
+{
+  "claim": "If X > Y and Y > Z, then X > Z",
+  "status": "proof_found",
+  "is_verified": true,
+  "language": "z3_smt",
+  "formal_statement": "(declare-const X Int)...",
+  "proof_hash": "a1b2c3d4e5f6",
+  "proof_search_time_ms": 15.2,
+  "prover_version": "z3-4.12.0"
+}
+```
+
+**Status Values:**
+- `proof_found`: Claim is formally verified
+- `proof_failed`: Counterexample found (claim is false)
+- `translation_failed`: Could not translate to formal language
+- `timeout`: Solver timed out
+- `not_supported`: Claim type not suitable for formal proof
+- `backend_unavailable`: Z3 not installed
+
+---
+
+### Insight Extraction
+
+#### POST /api/insights/extract-detailed
+Extract detailed insights from debate content.
+
+**Request Body:**
+```json
+{
+  "content": "The debate transcript content...",
+  "debate_id": "debate-123",
+  "extract_claims": true,
+  "extract_evidence": true,
+  "extract_patterns": true
+}
+```
+
+**Response:**
+```json
+{
+  "debate_id": "debate-123",
+  "content_length": 5420,
+  "claims": [
+    {
+      "text": "Therefore, we should adopt this approach",
+      "position": 12,
+      "type": "argument"
+    }
+  ],
+  "evidence_chains": [
+    {
+      "text": "According to the 2024 study",
+      "type": "citation",
+      "source": "the 2024 study"
+    }
+  ],
+  "patterns": [
+    {
+      "type": "causal_reasoning",
+      "strength": "strong",
+      "instances": 5
+    }
+  ]
+}
+```
+
+**Pattern Types:**
+- `balanced_comparison`: Uses "on one hand... on the other hand"
+- `concession_rebuttal`: Uses "while... however"
+- `enumerated_argument`: Uses "first... second..."
+- `conditional_reasoning`: Uses "if... then"
+- `causal_reasoning`: Uses "because" (with instance count)
+
+---
+
 ## WebSocket API
 
 Connect to the WebSocket server for real-time streaming:

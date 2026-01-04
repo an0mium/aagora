@@ -16,12 +16,19 @@ from aragora.agents.cli_agents import (
     GrokCLIAgent,
     QwenCLIAgent,
     DeepseekCLIAgent,
+    KiloCodeAgent,
 )
 from aragora.agents.api_agents import (
     GeminiAgent,
     OllamaAgent,
     AnthropicAPIAgent,
     OpenAIAPIAgent,
+    GrokAgent,
+    OpenRouterAgent,
+    DeepSeekAgent,
+    DeepSeekReasonerAgent,
+    LlamaAgent,
+    MistralAgent,
 )
 from aragora.agents.base import create_agent
 from aragora.agents.personas import Persona, PersonaManager, EXPERTISE_DOMAINS, PERSONALITY_TRAITS
@@ -46,11 +53,19 @@ __all__ = [
     "GrokCLIAgent",
     "QwenCLIAgent",
     "DeepseekCLIAgent",
-    # API-based
+    "KiloCodeAgent",
+    # API-based (direct)
     "GeminiAgent",
     "OllamaAgent",
     "AnthropicAPIAgent",
     "OpenAIAPIAgent",
+    "GrokAgent",
+    # API-based (OpenRouter)
+    "OpenRouterAgent",
+    "DeepSeekAgent",
+    "DeepSeekReasonerAgent",
+    "LlamaAgent",
+    "MistralAgent",
     # Factory
     "create_agent",
     # Personas
