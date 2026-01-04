@@ -55,9 +55,12 @@ def _safe_error_message(e: Exception, context: str = "") -> str:
 
 # Valid agent types (allowlist for security)
 ALLOWED_AGENT_TYPES = frozenset({
-    "codex", "claude", "openai", "gemini-cli", "grok-cli",
-    "qwen-cli", "deepseek-cli", "gemini", "ollama",
-    "anthropic-api", "openai-api"
+    # CLI-based
+    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli",
+    # API-based (direct)
+    "gemini", "ollama", "anthropic-api", "openai-api", "grok",
+    # API-based (via OpenRouter)
+    "deepseek", "deepseek-r1", "llama", "mistral", "openrouter",
 })
 
 # Maximum number of agents per debate (DoS protection)
