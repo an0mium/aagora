@@ -363,6 +363,9 @@ class EloSystem:
         # Save match
         self._save_match(debate_id, winner, participants, domain, scores, elo_changes)
 
+        # Write JSON snapshot for fast reads (avoids SQLite locking)
+        self._write_snapshot()
+
         return elo_changes
 
     def _save_match(
@@ -408,6 +411,102 @@ class EloSystem:
 
         conn.commit()
         conn.close()
+
+    def _write_snapshot(self) -> None:
+        """Write JSON snapshot for fast reads.
+
+        Creates an atomic JSON file with current leaderboard and recent matches.
+        This avoids SQLite locking issues when multiple readers access data.
+        """
+        snapshot_path = self.db_path.parent / "elo_snapshot.json"
+
+        # Gather current state
+        leaderboard = self.get_leaderboard(limit=100)
+        data = {
+            "leaderboard": [
+                {
+                    "agent_name": r.agent_name,
+                    "elo": r.elo,
+                    "wins": r.wins,
+                    "losses": r.losses,
+                    "draws": r.draws,
+                    "games_played": r.games_played,
+                    "win_rate": r.win_rate,
+                }
+                for r in leaderboard
+            ],
+            "recent_matches": self.get_recent_matches(limit=50),
+            "updated_at": datetime.now().isoformat(),
+        }
+
+        # Atomic write: write to temp file then rename
+        temp_path = snapshot_path.with_suffix('.tmp')
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(data, f)
+            temp_path.rename(snapshot_path)
+        except Exception:
+            # Snapshot is optional, don't fail on write errors
+            if temp_path.exists():
+                temp_path.unlink()
+
+    def get_cached_leaderboard(self, limit: int = 20) -> list[dict]:
+        """Get leaderboard from cache if available.
+
+        Falls back to database query if cache is missing or stale.
+
+        Args:
+            limit: Maximum number of entries to return
+
+        Returns:
+            List of dicts with agent_name, elo, wins, losses, draws, games_played, win_rate
+        """
+        snapshot_path = self.db_path.parent / "elo_snapshot.json"
+        if snapshot_path.exists():
+            try:
+                with open(snapshot_path) as f:
+                    data = json.load(f)
+                return data.get("leaderboard", [])[:limit]
+            except Exception:
+                pass
+
+        # Fall back to database
+        leaderboard = self.get_leaderboard(limit)
+        return [
+            {
+                "agent_name": r.agent_name,
+                "elo": r.elo,
+                "wins": r.wins,
+                "losses": r.losses,
+                "draws": r.draws,
+                "games_played": r.games_played,
+                "win_rate": r.win_rate,
+            }
+            for r in leaderboard
+        ]
+
+    def get_cached_recent_matches(self, limit: int = 10) -> list[dict]:
+        """Get recent matches from cache if available.
+
+        Falls back to database query if cache is missing.
+
+        Args:
+            limit: Maximum number of matches to return
+
+        Returns:
+            List of match dicts
+        """
+        snapshot_path = self.db_path.parent / "elo_snapshot.json"
+        if snapshot_path.exists():
+            try:
+                with open(snapshot_path) as f:
+                    data = json.load(f)
+                return data.get("recent_matches", [])[:limit]
+            except Exception:
+                pass
+
+        # Fall back to database
+        return self.get_recent_matches(limit)
 
     def record_critique(self, agent_name: str, accepted: bool):
         """Record a critique and whether it was accepted."""

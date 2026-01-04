@@ -22,6 +22,9 @@ class AuthConfig:
         self.api_token: Optional[str] = None
         self.token_ttl = 3600  # 1 hour default
         self.allowed_origins: list[str] = ["*"]  # CORS origins
+        # Rate limiting
+        self.rate_limit_per_minute = 60  # Default requests per minute per token
+        self._token_request_counts: Dict[str, list] = {}  # token -> timestamps
 
     def configure_from_env(self):
         """Configure from environment variables."""
@@ -90,6 +93,38 @@ class AuthConfig:
         except (ValueError, IndexError):
             return False
 
+    def check_rate_limit(self, token: str) -> tuple:
+        """Check if token is within rate limit.
+
+        Uses sliding window algorithm with 1-minute window.
+
+        Args:
+            token: The token to check
+
+        Returns:
+            (allowed, remaining_requests) tuple
+        """
+        now = time.time()
+        window_start = now - 60  # 1 minute window
+
+        # Get or create request list for this token
+        if token not in self._token_request_counts:
+            self._token_request_counts[token] = []
+
+        # Remove old requests outside window
+        self._token_request_counts[token] = [
+            t for t in self._token_request_counts[token] if t > window_start
+        ]
+
+        # Check limit
+        current_count = len(self._token_request_counts[token])
+        if current_count >= self.rate_limit_per_minute:
+            return False, 0
+
+        # Record this request
+        self._token_request_counts[token].append(now)
+        return True, self.rate_limit_per_minute - current_count - 1
+
     def extract_token_from_request(self, headers: Dict[str, str], query_params: Dict[str, list]) -> Optional[str]:
         """Extract token from Authorization header or query params."""
         # Check Authorization header
@@ -110,9 +145,9 @@ auth_config = AuthConfig()
 auth_config.configure_from_env()
 
 
-def check_auth(headers: Dict[str, Any], query_string: str = "", loop_id: str = "") -> bool:
+def check_auth(headers: Dict[str, Any], query_string: str = "", loop_id: str = "") -> tuple:
     """
-    Check authentication for a request.
+    Check authentication and rate limiting for a request.
 
     Args:
         headers: HTTP headers dict
@@ -120,15 +155,25 @@ def check_auth(headers: Dict[str, Any], query_string: str = "", loop_id: str = "
         loop_id: Optional loop ID to validate against token
 
     Returns:
-        True if authenticated or auth disabled
+        (authenticated, rate_limit_remaining) tuple.
+        authenticated is True if authenticated or auth disabled.
+        rate_limit_remaining is -1 if rate limiting not applicable.
     """
     if not auth_config.enabled:
-        return True
+        return True, -1
 
     query_params = parse_qs(query_string.lstrip("?")) if query_string else {}
     token = auth_config.extract_token_from_request(headers, query_params)
 
-    return auth_config.validate_token(token or "", loop_id)
+    if not auth_config.validate_token(token or "", loop_id):
+        return False, -1
+
+    # Check rate limit
+    allowed, remaining = auth_config.check_rate_limit(token or "anonymous")
+    if not allowed:
+        return False, 0
+
+    return True, remaining
 
 
 def generate_shareable_link(base_url: str, loop_id: str, expires_in: int = 3600) -> str:

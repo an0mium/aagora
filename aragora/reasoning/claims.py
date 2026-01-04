@@ -162,6 +162,88 @@ class ArgumentChain:
     author: str = ""
 
 
+# ===========================================================================
+# Fast Claims Extraction (for real-time streaming visualization)
+# ===========================================================================
+
+import re
+from functools import lru_cache
+
+# Patterns for quick claim detection (compiled once for performance)
+_CLAIM_PATTERNS = {
+    ClaimType.PROPOSAL: re.compile(r'\b(should|propose|suggest|recommend|let\'s|we could|consider)\b', re.I),
+    ClaimType.OBJECTION: re.compile(r'\b(however|but|disagree|object|problem|issue|concern|although|whereas)\b', re.I),
+    ClaimType.CONCESSION: re.compile(r'\b(agree|accept|true|valid|correct|fair point|you\'re right|indeed)\b', re.I),
+    ClaimType.QUESTION: re.compile(r'\?|^(what|how|why|when|where|who|which|could you|would you)\b', re.I),
+    ClaimType.REBUTTAL: re.compile(r'\b(actually|in fact|on the contrary|no,|not quite|that\'s not)\b', re.I),
+    ClaimType.SYNTHESIS: re.compile(r'\b(therefore|thus|in summary|combining|overall|to conclude)\b', re.I),
+}
+
+
+def fast_extract_claims(text: str, author: str = "unknown") -> list[dict]:
+    """
+    Fast claim extraction using regex patterns.
+
+    Suitable for real-time streaming visualization where low latency is critical.
+    For deeper semantic analysis, use ClaimsKernel.extract_claims_from_message().
+
+    Args:
+        text: The text to extract claims from
+        author: Name of the agent/author
+
+    Returns:
+        List of dicts with: type, text, author, confidence
+    """
+    if not text or len(text) < 10:
+        return []
+
+    claims = []
+    # Split into sentences (handle multiple punctuation patterns)
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if len(sentence) < 10:
+            continue
+
+        # Detect claim type via pattern matching
+        claim_type = ClaimType.ASSERTION  # default
+        confidence = 0.3
+
+        for ctype, pattern in _CLAIM_PATTERNS.items():
+            if pattern.search(sentence):
+                claim_type = ctype
+                confidence = 0.5
+                break
+
+        # Boost confidence for stronger indicators
+        if re.search(r'\b(must|definitely|certainly|clearly|obviously)\b', sentence, re.I):
+            confidence = min(0.8, confidence + 0.2)
+        elif re.search(r'\b(maybe|perhaps|might|possibly|could be)\b', sentence, re.I):
+            confidence = max(0.2, confidence - 0.1)
+
+        claims.append({
+            "type": claim_type.value,
+            "text": sentence[:200],  # Truncate long sentences
+            "author": author,
+            "confidence": confidence,
+        })
+
+    return claims
+
+
+# Cached version for repeated calls with same text
+@lru_cache(maxsize=1000)
+def fast_extract_claims_cached(text: str, author: str = "unknown") -> tuple:
+    """
+    Cached version of fast_extract_claims.
+
+    Returns tuple instead of list for hashability.
+    """
+    claims = fast_extract_claims(text, author)
+    return tuple(tuple(sorted(c.items())) for c in claims)
+
+
 class ClaimsKernel:
     """
     The reasoning kernel for structured debate.
