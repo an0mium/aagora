@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
 from typing import Optional, Dict, Any
 from urllib.parse import parse_qs
@@ -25,6 +26,7 @@ class AuthConfig:
         # Rate limiting
         self.rate_limit_per_minute = 60  # Default requests per minute per token
         self._token_request_counts: Dict[str, list] = {}  # token -> timestamps
+        self._rate_limit_lock = threading.Lock()  # Thread-safe rate limiting
 
     def configure_from_env(self):
         """Configure from environment variables."""
@@ -107,23 +109,24 @@ class AuthConfig:
         now = time.time()
         window_start = now - 60  # 1 minute window
 
-        # Get or create request list for this token
-        if token not in self._token_request_counts:
-            self._token_request_counts[token] = []
+        with self._rate_limit_lock:
+            # Get or create request list for this token
+            if token not in self._token_request_counts:
+                self._token_request_counts[token] = []
 
-        # Remove old requests outside window
-        self._token_request_counts[token] = [
-            t for t in self._token_request_counts[token] if t > window_start
-        ]
+            # Remove old requests outside window
+            self._token_request_counts[token] = [
+                t for t in self._token_request_counts[token] if t > window_start
+            ]
 
-        # Check limit
-        current_count = len(self._token_request_counts[token])
-        if current_count >= self.rate_limit_per_minute:
-            return False, 0
+            # Check limit
+            current_count = len(self._token_request_counts[token])
+            if current_count >= self.rate_limit_per_minute:
+                return False, 0
 
-        # Record this request
-        self._token_request_counts[token].append(now)
-        return True, self.rate_limit_per_minute - current_count - 1
+            # Record this request
+            self._token_request_counts[token].append(now)
+            return True, self.rate_limit_per_minute - current_count - 1
 
     def extract_token_from_request(self, headers: Dict[str, str], query_params: Dict[str, list]) -> Optional[str]:
         """Extract token from Authorization header or query params."""

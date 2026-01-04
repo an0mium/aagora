@@ -137,7 +137,7 @@ class GeminiAgent(APIAgent):
         if self.system_prompt:
             full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
 
-        url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
 
         payload = {
             "contents": [{"parts": [{"text": full_prompt}]}],
@@ -147,10 +147,16 @@ class GeminiAgent(APIAgent):
             },
         }
 
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
                 json=payload,
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
                 if response.status != 200:

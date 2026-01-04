@@ -47,13 +47,19 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             slug = path.split('/')[-1]
             self._get_debate(slug)
         elif path == '/api/debates':
-            limit = int(query.get('limit', [20])[0])
+            try:
+                limit = min(int(query.get('limit', [20])[0]), 100)  # Cap at 100
+            except (ValueError, IndexError):
+                limit = 20
             self._list_debates(limit)
         elif path.startswith('/api/replays/'):
             debate_id = path.split('/')[-1]
             self._get_replay(debate_id)
         elif path == '/api/replays':
-            limit = int(query.get('limit', [20])[0])
+            try:
+                limit = min(int(query.get('limit', [20])[0]), 100)  # Cap at 100
+            except (ValueError, IndexError):
+                limit = 20
             self._list_replays(limit)
         elif path == '/api/health':
             self._health_check()
@@ -222,10 +228,9 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
 
             self._send_json(fork_data)
 
-        except Exception as e:
-            self.send_error(500, f"Fork failed: {str(e)}")
-        except Exception as e:
-            self.send_error(500, f"Error reading replay: {str(e)}")
+        except Exception:
+            # Log error server-side but return generic message to client
+            self.send_error(500, "Fork operation failed")
 
     def _health_check(self) -> None:
         """Health check endpoint - minimal info to avoid information disclosure."""

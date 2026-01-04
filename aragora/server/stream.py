@@ -303,11 +303,11 @@ class SyncEventEmitter:
         """Add synchronous subscriber for immediate event handling."""
         self._subscribers.append(callback)
 
-    def drain(self) -> list[StreamEvent]:
-        """Get all queued events (non-blocking)."""
+    def drain(self, max_batch_size: int = 100) -> list[StreamEvent]:
+        """Get queued events (non-blocking) with backpressure limit."""
         events = []
         try:
-            while True:
+            while len(events) < max_batch_size:
                 events.append(self._queue.get_nowait())
         except queue.Empty:
             pass
