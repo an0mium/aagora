@@ -1839,6 +1839,21 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     flips = self.flip_detector.detect_flips_for_agent(agent.name)
                     if flips:
                         logger.info("[flip] Detected %d position changes for %s", len(flips), agent.name)
+                        # Emit FLIP_DETECTED events to WebSocket for real-time UI updates
+                        if self.event_emitter:
+                            from aragora.server.stream import StreamEvent, StreamEventType
+                            for flip in flips:
+                                self.event_emitter.emit(StreamEvent(
+                                    type=StreamEventType.FLIP_DETECTED,
+                                    data={
+                                        "agent": agent.name,
+                                        "flip_type": flip.flip_type if hasattr(flip, 'flip_type') else "unknown",
+                                        "original_claim": flip.original_claim[:200] if hasattr(flip, 'original_claim') else "",
+                                        "new_claim": flip.new_claim[:200] if hasattr(flip, 'new_claim') else "",
+                                        "similarity": flip.similarity_score if hasattr(flip, 'similarity_score') else 0.0,
+                                        "debate_id": result.id,
+                                    }
+                                ))
             except Exception as e:
                 logger.debug("Flip detection failed: %s", e)
 

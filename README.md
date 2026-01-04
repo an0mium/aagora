@@ -400,8 +400,11 @@ Aragora implements several security measures:
 - **API Key Protection**: Gemini API keys are transmitted via HTTP headers, not URL parameters
 - **Rate Limiting**: Thread-safe rate limiting with configurable limits per minute
 - **Input Validation**: API parameters are validated and capped to prevent resource exhaustion
+- **Content-Length Validation**: POST requests validated against max size (100MB general, 10MB JSON)
+- **Multipart Limits**: Max 100 multipart form parts prevents DoS via form flooding
 - **Path Traversal Protection**: Static file serving validates paths against base directory
 - **CORS Validation**: Origin allowlist prevents unauthorized cross-origin requests (no wildcards)
+- **Security Headers**: X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy
 - **Generic Error Messages**: Internal errors don't leak stack traces to clients
 - **Error Message Sanitization**: API error responses redact patterns resembling API keys and tokens
 - **Process Cleanup**: CLI agents properly kill and await zombie processes on exceptions
@@ -409,6 +412,7 @@ Aragora implements several security measures:
 - **WebSocket Message Limits**: Max message size of 64KB prevents memory exhaustion
 - **Debate Timeouts**: Configurable per-debate and per-round timeouts prevent runaway processes
 - **Connection Health**: WebSocket ping/pong (30s/10s) detects stale connections
+- **Thread Safety**: Double-checked locking for shared executor initialization
 
 Configure security via environment variables:
 ```bash

@@ -140,7 +140,7 @@ from aragora.agents.grounded import (
     Position,
     PositionLedger,
     RelationshipTracker,
-    Relationship,
+    AgentRelationship,
     GroundedPersona,
     PersonaSynthesizer,
     SignificantMoment,
@@ -148,7 +148,7 @@ from aragora.agents.grounded import (
 )
 
 # Evidence, Pulse, Uncertainty (newly exported)
-from aragora.evidence import EvidenceCollector, Evidence, EvidenceType, SourceCredibility
+from aragora.evidence import EvidenceCollector, Evidence, EvidenceType, EvidenceSnippet, EvidencePack
 from aragora.pulse import TrendingTopic, PulseIngestor, PulseManager
 from aragora.uncertainty import (
     ConfidenceScore,
@@ -158,6 +158,34 @@ from aragora.uncertainty import (
     DisagreementAnalyzer,
     UncertaintyAggregator,
 )
+
+# Export (debate artifacts, CSV, DOT, HTML)
+from aragora.export.artifact import (
+    DebateArtifact,
+    ArtifactBuilder,
+    ConsensusProof as ExportConsensusProof,
+    VerificationResult as ExportVerificationResult,
+)
+from aragora.export.csv_exporter import CSVExporter
+from aragora.export.dot_exporter import DOTExporter
+from aragora.export.static_html import StaticHTMLExporter
+
+# Insights (pattern learning, flip detection)
+from aragora.insights.store import InsightStore
+from aragora.insights.extractor import (
+    InsightExtractor,
+    InsightType,
+    Insight,
+    DebateInsights,
+    AgentPerformance,
+)
+from aragora.insights.flip_detector import FlipDetector, FlipEvent, AgentConsistencyScore
+
+# Connectors (external data sources)
+from aragora.connectors.base import BaseConnector
+from aragora.connectors.github import GitHubConnector
+from aragora.connectors.local_docs import LocalDocsConnector
+from aragora.connectors.web import WebConnector
 
 # Ranking
 from aragora.ranking import EloSystem, AgentRating, MatchResult
@@ -336,7 +364,8 @@ __all__ = [
     "EvidenceCollector",
     "Evidence",
     "EvidenceType",
-    "SourceCredibility",
+    "EvidenceSnippet",
+    "EvidencePack",
     # Pulse (Trending Topics)
     "TrendingTopic",
     "PulseIngestor",
@@ -348,6 +377,29 @@ __all__ = [
     "ConfidenceEstimator",
     "DisagreementAnalyzer",
     "UncertaintyAggregator",
+    # Export
+    "DebateArtifact",
+    "ArtifactBuilder",
+    "ExportConsensusProof",
+    "ExportVerificationResult",
+    "CSVExporter",
+    "DOTExporter",
+    "StaticHTMLExporter",
+    # Insights
+    "InsightStore",
+    "InsightExtractor",
+    "InsightType",
+    "Insight",
+    "DebateInsights",
+    "AgentPerformance",
+    "FlipDetector",
+    "FlipEvent",
+    "AgentConsistencyScore",
+    # Connectors
+    "BaseConnector",
+    "GitHubConnector",
+    "LocalDocsConnector",
+    "WebConnector",
     # Ranking
     "EloSystem",
     "AgentRating",

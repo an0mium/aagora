@@ -427,6 +427,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
     # Thread pool for debate execution (prevents unbounded thread creation)
     _debate_executor: Optional["ThreadPoolExecutor"] = None
+    _debate_executor_lock = threading.Lock()  # Lock for thread-safe executor creation
     MAX_CONCURRENT_DEBATES = 10  # Limit concurrent debates to prevent resource exhaustion
 
     def _safe_int(self, query: dict, key: str, default: int, max_val: int = 100) -> int:
@@ -1285,6 +1286,24 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                         "consensus_reached": result.consensus_reached,
                         "confidence": result.confidence,
                     }
+
+                # Emit LEADERBOARD_UPDATE after debate completes (if ELO system available)
+                if self.elo_system:
+                    try:
+                        top_agents = self.elo_system.get_leaderboard(limit=10)
+                        self.stream_emitter.emit(StreamEvent(
+                            type=StreamEventType.LEADERBOARD_UPDATE,
+                            data={
+                                "debate_id": debate_id,
+                                "leaderboard": [
+                                    {"agent": a.agent_name, "elo": a.elo_rating, "wins": a.wins, "debates": a.total_debates}
+                                    for a in top_agents
+                                ],
+                            }
+                        ))
+                    except Exception:
+                        pass  # Don't break on leaderboard emission errors
+
             except Exception as e:
                 import traceback
                 error_msg = str(e)
@@ -1301,11 +1320,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 ))
 
         # Use thread pool to prevent unbounded thread creation
+        # Double-checked locking for thread-safe executor creation
         if UnifiedHandler._debate_executor is None:
-            UnifiedHandler._debate_executor = ThreadPoolExecutor(
-                max_workers=UnifiedHandler.MAX_CONCURRENT_DEBATES,
-                thread_name_prefix="debate-"
-            )
+            with UnifiedHandler._debate_executor_lock:
+                if UnifiedHandler._debate_executor is None:
+                    UnifiedHandler._debate_executor = ThreadPoolExecutor(
+                        max_workers=UnifiedHandler.MAX_CONCURRENT_DEBATES,
+                        thread_name_prefix="debate-"
+                    )
 
         try:
             UnifiedHandler._debate_executor.submit(run_debate)

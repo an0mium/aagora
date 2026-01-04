@@ -17,6 +17,7 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
   const [nomicState, setNomicState] = useState<NomicState | null>(null);
   const [activeLoops, setActiveLoops] = useState<LoopInstance[]>([]);
   const [selectedLoopId, setSelectedLoopId] = useState<string | null>(null);
+  const selectedLoopIdRef = useRef<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -83,16 +84,21 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
           // Handle loop list event (sent on connect and on request)
           if (data.type === 'loop_list') {
             const loopData = data.data as { loops: LoopInstance[]; count: number };
+            console.log('[WS] loop_list received:', loopData);
             setActiveLoops(loopData.loops || []);
-            // Find the loop to use for state (selected or first)
-            const targetLoop = selectedLoopId
-              ? loopData.loops?.find(l => l.loop_id === selectedLoopId)
+            // Find the loop to use for state (use ref to avoid stale closure)
+            const currentLoopId = selectedLoopIdRef.current;
+            const targetLoop = currentLoopId
+              ? loopData.loops?.find(l => l.loop_id === currentLoopId)
               : loopData.loops?.[0];
+            console.log('[WS] targetLoop:', targetLoop, 'currentLoopId:', currentLoopId);
             if (targetLoop) {
-              if (!selectedLoopId) {
+              if (!currentLoopId) {
                 setSelectedLoopId(targetLoop.loop_id);
+                selectedLoopIdRef.current = targetLoop.loop_id;
               }
               // Initialize/update nomicState from loop data
+              console.log('[WS] Setting nomicState with cycle:', targetLoop.cycle, 'phase:', targetLoop.phase);
               setNomicState((prev) => ({
                 ...prev,
                 cycle: targetLoop.cycle || 0,
@@ -114,8 +120,9 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
             };
             setActiveLoops((prev) => [...prev, newLoop]);
             // Auto-select if this is the first loop
-            if (!selectedLoopId) {
+            if (!selectedLoopIdRef.current) {
               setSelectedLoopId(newLoop.loop_id);
+              selectedLoopIdRef.current = newLoop.loop_id;
             }
             return;
           }
