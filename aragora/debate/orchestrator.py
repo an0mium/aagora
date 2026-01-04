@@ -1626,7 +1626,6 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         # 4. Index debate in embeddings for historical retrieval
         if self.debate_embeddings:
             try:
-                import asyncio
                 # Create minimal debate artifact for indexing
                 artifact = {
                     'id': debate_id,
