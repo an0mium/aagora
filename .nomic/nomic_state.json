@@ -1,25 +1,6 @@
 {
-  "phase": "verify",
-  "stage": "complete",
-  "all_passed": true,
-  "checks": [
-    {
-      "check": "syntax",
-      "passed": true,
-      "output": ""
-    },
-    {
-      "check": "import",
-      "passed": true,
-      "output": ""
-    },
-    {
-      "check": "tests",
-      "passed": true,
-      "output": "........................................................................ [ 26%]\n..................................ss.................................... [ 53%]\n........................................................................ [ 80%]\n....................................................                     [100%]\n266 passed, 2 skipped in 11.39s\n",
-      "note": ""
-    }
-  ],
-  "saved_at": "2026-01-04T02:48:09.828431",
-  "cycle": 1
+  "phase": "cycle_start",
+  "cycle": 1,
+  "backup_path": "/Users/armand/Development/aragora/.nomic/backups/backup_cycle_1_20260104_025859",
+  "saved_at": "2026-01-04T02:58:59.247733"
 }

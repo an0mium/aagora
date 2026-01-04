@@ -1154,6 +1154,158 @@ Get meta-level analysis of a debate including repetition, circular arguments, an
 
 ---
 
+### Persona Laboratory
+
+Experimental framework for evolving agent personas and detecting emergent traits.
+
+#### GET /api/laboratory/emergent-traits
+Get emergent traits detected from agent performance patterns.
+
+**Parameters:**
+- `min_confidence` (float, default=0.5): Minimum confidence threshold
+- `limit` (int, default=10, max=50): Maximum traits to return
+
+**Response:**
+```json
+{
+  "emergent_traits": [
+    {
+      "agent": "claude",
+      "trait": "adversarial_robustness",
+      "domain": "security",
+      "confidence": 0.85,
+      "evidence": "Consistently identifies edge cases in security debates",
+      "detected_at": "2026-01-04T10:00:00Z"
+    }
+  ],
+  "count": 1,
+  "min_confidence": 0.5
+}
+```
+
+#### POST /api/laboratory/cross-pollinations/suggest
+Suggest beneficial trait transfers for a target agent.
+
+**Request Body:**
+```json
+{
+  "target_agent": "gemini"
+}
+```
+
+**Response:**
+```json
+{
+  "target_agent": "gemini",
+  "suggestions": [
+    {
+      "source_agent": "claude",
+      "trait_or_domain": "logical_rigor",
+      "reason": "Target agent underperforms in formal reasoning domains"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### Belief Network Analysis
+
+Bayesian belief network for probabilistic debate reasoning.
+
+#### GET /api/belief-network/:debate_id/cruxes
+Identify key claims that would most impact the debate outcome.
+
+**Parameters:**
+- `top_k` (int, default=3, max=10): Number of cruxes to return
+
+**Response:**
+```json
+{
+  "debate_id": "debate-123",
+  "cruxes": [
+    {
+      "claim_id": "claim-456",
+      "statement": "The proposed architecture scales linearly",
+      "score": 0.87,
+      "centrality": 0.9,
+      "uncertainty": 0.75
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### Provenance & Evidence Chain
+
+Verify evidence provenance and claim support.
+
+#### GET /api/provenance/:debate_id/claims/:claim_id/support
+Get verification status of all evidence supporting a claim.
+
+**Response:**
+```json
+{
+  "debate_id": "debate-123",
+  "claim_id": "claim-456",
+  "support": {
+    "verified": true,
+    "evidence_count": 3,
+    "supporting": [
+      {
+        "evidence_id": "ev-001",
+        "type": "citation",
+        "integrity_verified": true,
+        "relevance": 0.92
+      }
+    ],
+    "contradicting": []
+  }
+}
+```
+
+---
+
+### Agent Routing & Selection
+
+Optimal agent selection for tasks based on ELO, expertise, and team dynamics.
+
+#### POST /api/routing/recommendations
+Get agent recommendations for a task.
+
+**Request Body:**
+```json
+{
+  "task_id": "design-review",
+  "primary_domain": "architecture",
+  "secondary_domains": ["security", "performance"],
+  "required_traits": ["analytical"],
+  "limit": 5
+}
+```
+
+**Response:**
+```json
+{
+  "task_id": "design-review",
+  "primary_domain": "architecture",
+  "recommendations": [
+    {
+      "name": "claude",
+      "type": "anthropic-api",
+      "match_score": 0.92,
+      "domain_expertise": 0.85
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
 ## WebSocket API
 
 Connect to the WebSocket server for real-time streaming:
