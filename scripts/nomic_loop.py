@@ -896,6 +896,10 @@ class NomicLoop:
             self.meta_analyzer = MetaCritiqueAnalyzer()
             print(f"[meta] Process feedback enabled")
 
+        # P5-Phase2: Cache for meta-critique observations to inject into next debate
+        self._cached_meta_observations: list = []
+        self._last_meta_quality: float = 1.0
+
         # Phase 5: EloSystem for agent skill tracking
         self.elo_system = None
         if ELO_AVAILABLE:
@@ -968,6 +972,9 @@ class NomicLoop:
         if BELIEF_NETWORK_AVAILABLE:
             self.belief_network = BeliefNetwork(debate_id=f"nomic-cycle-0")
             print(f"[belief] Probabilistic reasoning enabled")
+
+        # P3-Phase2: Cache for crux injection - store cruxes from one debate to inject into next
+        self._cached_cruxes: list = []
 
         # Phase 6: ProofExecutor for executable verification (P19)
         self.proof_executor = None
@@ -1782,6 +1789,40 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             self._log(f"  [memory] Error retrieving memories: {e}")
             return ""
 
+    def _format_position_history(self, agent_name: str, topic: str, limit: int = 5) -> str:
+        """Format recent positions for prompt injection (P9: PositionLedger read)."""
+        if not self.position_ledger or not GROUNDED_PERSONAS_AVAILABLE:
+            return ""
+        try:
+            positions = self.position_ledger.get_agent_positions(agent_name, limit=limit)
+            if not positions:
+                return ""
+
+            lines = [f"## Your Recent Positions ({agent_name}):"]
+            lines.append("Review these to maintain consistency or explain any changes:")
+
+            reversed_count = sum(1 for p in positions if p.reversed)
+            if reversed_count > 0:
+                lines.append(f"⚠️ You have reversed {reversed_count} position(s) recently. If changing stance, explain why.")
+
+            for p in positions:
+                status = ""
+                if p.reversed:
+                    status = " [REVERSED]"
+                elif p.outcome == "correct":
+                    status = " ✓"
+                elif p.outcome == "incorrect":
+                    status = " ✗"
+
+                conf_pct = f"{p.confidence:.0%}" if p.confidence else "?"
+                domain_str = f" [{p.domain}]" if p.domain else ""
+                lines.append(f"- {p.claim[:80]}...{domain_str} (conf: {conf_pct}){status}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            self._log(f"  [positions] Error retrieving positions: {e}")
+            return ""
+
     async def _retrieve_relevant_insights(self, topic: str, limit: int = 5) -> str:
         """Retrieve relevant past insights for debate context (P2: InsightStore)."""
         if not self.insight_store or not INSIGHTS_AVAILABLE:
@@ -2187,16 +2228,39 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
         try:
             critique = self.meta_analyzer.analyze(result)
             self._log(f"  [meta] Debate quality: {critique.overall_quality:.0%}")
+
+            # P5-Phase2: Cache observations and quality for reflection injection
+            self._last_meta_quality = critique.overall_quality
             if critique.observations:
                 issues = [o for o in critique.observations if o.observation_type == "issue"]
                 if issues:
                     self._log(f"  [meta] Issues found: {len(issues)}")
+                    self._cached_meta_observations = issues[:5]  # Cache top 5 issues
+                    # Log warning if quality is low
+                    if critique.overall_quality < 0.6:
+                        self._log(f"  [meta] ⚠️ LOW QUALITY: Reflection needed")
+
             if critique.recommendations:
                 self._log(f"  [meta] Top recommendation: {critique.recommendations[0]}")
             return critique
         except Exception as e:
             self._log(f"  [meta] Error: {e}")
             return None
+
+    def _format_meta_observations(self) -> str:
+        """Format cached meta-critique observations for injection (P5-Phase2: MetaCritique Reflection)."""
+        if not self._cached_meta_observations or self._last_meta_quality >= 0.6:
+            return ""  # Only inject observations when quality was low
+        try:
+            lines = ["=== PROCESS REFLECTION (from previous debate) ==="]
+            lines.append("The previous debate had the following issues to avoid:\n")
+            for i, obs in enumerate(self._cached_meta_observations[:3], 1):
+                desc = getattr(obs, 'description', str(obs))
+                lines.append(f"{i}. {desc}")
+            lines.append("\nPlease actively avoid these anti-patterns in this debate.")
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     def _store_meta_recommendations(self, critique) -> None:
         """Store meta-critique recommendations for future cycle improvement (P12)."""
@@ -2397,11 +2461,11 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                 # Get opponent names (other agents in the debate)
                 opponent_names = [a.name for a in agents if a.name != agent.name]
 
-                # Synthesize grounded identity prompt
+                # Synthesize grounded identity prompt with full position history
                 identity = self.persona_synthesizer.synthesize_identity_prompt(
                     agent_name=agent.name,
                     opponent_names=opponent_names,
-                    include_sections=["performance", "calibration", "relationships"],
+                    include_sections=["performance", "calibration", "relationships", "positions"],
                 )
 
                 # Add opponent briefings for tactical intelligence
@@ -2428,6 +2492,15 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                             full_prompt += f"\n\n{agent_memories}"
                     except Exception:
                         pass  # Don't break on memory injection failure
+
+                    # Inject position history for consistency tracking (P9: PositionLedger read)
+                    try:
+                        topic_hint = getattr(self, 'initial_proposal', '') or 'aragora improvement'
+                        position_history = self._format_position_history(agent.name, topic_hint[:200], limit=5)
+                        if position_history:
+                            full_prompt += f"\n\n{position_history}"
+                    except Exception:
+                        pass  # Don't break on position history injection failure
 
                     # Prepend identity to system prompt
                     original_prompt = getattr(agent, 'system_prompt', '') or ''
@@ -2733,10 +2806,30 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             cruxes = analyzer.identify_debate_cruxes(top_k=3)
             if cruxes:
                 self._log(f"  [belief] Top crux: {cruxes[0]['statement']}")
+                # P3-Phase2: Cache cruxes for injection into next debate
+                self._cached_cruxes = cruxes
             return cruxes
         except Exception as e:
             self._log(f"  [belief] Crux analysis error: {e}")
             return []
+
+    def _format_crux_context(self) -> str:
+        """Format cached cruxes for injection into debate context (P3-Phase2: Crux-Fixing)."""
+        if not self._cached_cruxes:
+            return ""
+        try:
+            lines = ["=== PIVOTAL CLAIMS FROM PREVIOUS DEBATE ==="]
+            lines.append("Focus on these high-impact questions that could swing the outcome:\n")
+            for i, crux in enumerate(self._cached_cruxes[:3], 1):
+                statement = crux.get('statement', crux.get('claim', 'Unknown'))
+                impact = crux.get('impact_score', crux.get('sensitivity', 0.0))
+                lines.append(f"{i}. {statement}")
+                if impact:
+                    lines.append(f"   (Impact: {impact:.0%})")
+            lines.append("\nAddressing these cruxes directly will accelerate consensus.")
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     def _get_consensus_probability(self) -> dict:
         """Estimate probability of consensus based on belief network (P18: BeliefNetwork)."""
@@ -4459,6 +4552,12 @@ Claude and Codex have read the actual codebase. DO NOT propose features that alr
             learning_context += f"\n{similar_debates}\n"
             self._log(f"  [embeddings] Injected similar debate context")
 
+        # P3-Phase2: Inject pivotal claims (cruxes) from previous debates
+        crux_context = self._format_crux_context()
+        if crux_context:
+            learning_context += f"\n{crux_context}\n"
+            self._log(f"  [crux] Injected {len(self._cached_cruxes)} pivotal claims")
+
         # Add inter-agent dynamics
         relationship_context = self._format_relationship_network()
         if relationship_context:
@@ -4522,6 +4621,7 @@ Recent changes:
             asymmetric_stances=asymmetric_enabled,
             rotate_stances=asymmetric_enabled,
             audience_injection="summary",  # Enable user suggestions in prompts
+            enable_research=True,  # Enable web research for evidence gathering
         )
 
         # Select and apply debate template based on task type (P7: DebateTemplates)
@@ -5025,6 +5125,7 @@ Learn from past patterns shown above - repeat successes and avoid failures.""",
                 synthesizer_final_round=True,
             ),
             audience_injection="summary",  # Enable user suggestions in prompts
+            enable_research=True,  # Enable web research for evidence gathering
         )
 
         # NomicIntegration: Probe agents for reliability weights
