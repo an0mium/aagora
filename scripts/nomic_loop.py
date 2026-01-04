@@ -2571,6 +2571,113 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
             self._log(f"  [provenance] Error: {e}")
             return ""
 
+    def _link_claims_to_evidence(self, claims: list[dict], debate_id: str) -> list[str]:
+        """Link extracted claims to evidence with provenance tracking.
+
+        Creates a provenance chain: Claim → Evidence → Source
+        Returns list of evidence IDs for linking to subsequent phases.
+        """
+        if not self.provenance_manager or not PROVENANCE_AVAILABLE:
+            return []
+
+        evidence_ids = []
+        try:
+            for claim in claims[:10]:  # Limit to 10 claims per debate
+                claim_text = claim.get("claim", "")
+                priority = claim.get("priority", "medium")
+
+                # Record the claim as evidence
+                source_type = SourceType.AGENT_GENERATED
+                record = self.provenance_manager.record_evidence(
+                    content=claim_text,
+                    source_type=source_type,
+                    source_id=f"{debate_id}-claim",
+                    metadata={"priority": priority, "debate_id": debate_id},
+                )
+                evidence_ids.append(record.id)
+
+                # If we have citations for this claim, link them
+                if self.citation_store and CITATION_GROUNDING_AVAILABLE:
+                    existing_citations = self.citation_store.find_for_claim(claim_text, limit=3)
+                    for citation in existing_citations:
+                        self.provenance_manager.cite_evidence(
+                            claim_id=record.id,
+                            evidence_id=citation.id,
+                            relevance=citation.relevance_score,
+                            support_type="supports",
+                            citation_text=citation.excerpt[:200] if citation.excerpt else "",
+                        )
+
+            if evidence_ids:
+                self._log(f"  [provenance] Linked {len(evidence_ids)} claims to evidence chain")
+
+        except Exception as e:
+            self._log(f"  [provenance] Claim linking error: {e}")
+
+        return evidence_ids
+
+    def _build_phase_provenance(self, phase: str, content: str, parent_ids: list[str] = None) -> str:
+        """Build provenance chain from phase to phase.
+
+        Tracks: Source → Claim → Design → Implementation
+        Returns new evidence ID for chaining.
+        """
+        if not self.provenance_manager or not PROVENANCE_AVAILABLE:
+            return ""
+
+        try:
+            if parent_ids:
+                # Create synthesized evidence from multiple parent sources
+                record = self.provenance_manager.synthesize_evidence(
+                    parent_ids=parent_ids,
+                    synthesized_content=content[:5000],  # Limit size
+                    synthesizer_id=f"nomic-{phase}-{self.cycle_count}",
+                )
+            else:
+                # Record as new evidence
+                record = self.provenance_manager.record_evidence(
+                    content=content[:5000],
+                    source_type=SourceType.AGENT_GENERATED,
+                    source_id=f"nomic-{phase}-{self.cycle_count}",
+                )
+
+            self._log(f"  [provenance] {phase} phase recorded: {record.id[:8]}...")
+            return record.id
+
+        except Exception as e:
+            self._log(f"  [provenance] Phase recording error: {e}")
+            return ""
+
+    def _check_evidence_staleness(self, evidence_ids: list[str]) -> list[dict]:
+        """Check if evidence is stale before implementation (P7: Staleness Detection).
+
+        Returns list of stale evidence with details.
+        """
+        if not ENHANCED_PROVENANCE_AVAILABLE or not self.provenance_manager:
+            return []
+
+        stale_items = []
+        try:
+            if hasattr(self.provenance_manager, 'check_staleness'):
+                for evidence_id in evidence_ids[:20]:  # Limit checks
+                    staleness = self.provenance_manager.check_staleness(evidence_id)
+                    if staleness and staleness.get("is_stale", False):
+                        stale_items.append({
+                            "evidence_id": evidence_id,
+                            "reason": staleness.get("reason", "Unknown"),
+                            "age_hours": staleness.get("age_hours", 0),
+                        })
+
+            if stale_items:
+                self._log(f"  [provenance] WARNING: {len(stale_items)} stale evidence items detected")
+                for item in stale_items[:3]:
+                    self._log(f"    - {item['evidence_id'][:8]}: {item['reason']}")
+
+        except Exception as e:
+            self._log(f"  [provenance] Staleness check error: {e}")
+
+        return stale_items
+
     def _verify_evidence_chain(self) -> tuple:
         """Verify integrity of evidence chain (P17: ProvenanceManager)."""
         if not self.provenance_manager or not PROVENANCE_AVAILABLE:
@@ -4616,6 +4723,8 @@ Recent changes:
             self._record_evidence_provenance(result.final_answer, "agent", "debate-consensus")
 
         # Citation Grounding: Extract citation-worthy claims from debate result
+        # Also build provenance chain from claims to evidence
+        debate_evidence_ids = []
         if result.final_answer and self.citation_extractor:
             citation_needs = self.citation_extractor.identify_citation_needs(result.final_answer)
             if citation_needs:
@@ -4629,6 +4738,14 @@ Recent changes:
                             existing = self.citation_store.find_for_claim(need['claim'], limit=2)
                             if existing:
                                 self._log(f"      Found {len(existing)} potential citations")
+
+                # Link all claims to provenance chain
+                debate_id = f"debate-{self.cycle_count}-{result.id[:8] if hasattr(result, 'id') else 'unknown'}"
+                debate_evidence_ids = self._link_claims_to_evidence(citation_needs, debate_id)
+
+        # Store evidence IDs on result for phase chaining
+        if debate_evidence_ids:
+            result.provenance_evidence_ids = debate_evidence_ids
 
         # Phase 6: Create verification proofs for code claims (P19: ProofExecutor)
         await self._create_verification_proofs(result)
