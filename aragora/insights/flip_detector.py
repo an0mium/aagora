@@ -1,0 +1,491 @@
+"""
+Flip Detector - Semantic position reversal detection.
+
+Detects when agents reverse their positions on claims, tracks flip patterns,
+and provides data for UI visualization.
+
+Key components:
+- FlipEvent: A detected position reversal
+- AgentConsistencyScore: Per-agent consistency metrics
+- FlipDetector: Main detection logic with semantic comparison
+"""
+
+import sqlite3
+from dataclasses import dataclass, field
+from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Optional
+
+
+@dataclass
+class FlipEvent:
+    """A detected position reversal."""
+
+    id: str
+    agent_name: str
+    original_claim: str
+    new_claim: str
+    original_confidence: float
+    new_confidence: float
+    original_debate_id: str
+    new_debate_id: str
+    original_position_id: str
+    new_position_id: str
+    similarity_score: float  # How similar the claims are (high = contradiction likely)
+    flip_type: str  # "contradiction", "refinement", "retraction", "qualification"
+    domain: Optional[str] = None
+    detected_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "agent_name": self.agent_name,
+            "original_claim": self.original_claim,
+            "new_claim": self.new_claim,
+            "original_confidence": self.original_confidence,
+            "new_confidence": self.new_confidence,
+            "original_debate_id": self.original_debate_id,
+            "new_debate_id": self.new_debate_id,
+            "similarity_score": self.similarity_score,
+            "flip_type": self.flip_type,
+            "domain": self.domain,
+            "detected_at": self.detected_at,
+        }
+
+
+@dataclass
+class AgentConsistencyScore:
+    """Per-agent consistency metrics."""
+
+    agent_name: str
+    total_positions: int = 0
+    total_flips: int = 0
+    contradictions: int = 0
+    refinements: int = 0
+    retractions: int = 0
+    qualifications: int = 0
+    avg_confidence_on_flip: float = 0.0
+    domains_with_flips: list[str] = field(default_factory=list)
+
+    @property
+    def consistency_score(self) -> float:
+        """1.0 = perfectly consistent, 0.0 = always flipping."""
+        if self.total_positions == 0:
+            return 1.0
+        # Weight contradictions more heavily than other flip types
+        weighted_flips = (
+            self.contradictions * 1.0 +
+            self.retractions * 0.7 +
+            self.qualifications * 0.3 +
+            self.refinements * 0.1
+        )
+        return max(0.0, 1.0 - (weighted_flips / self.total_positions))
+
+    @property
+    def flip_rate(self) -> float:
+        """Percentage of positions that were flipped."""
+        if self.total_positions == 0:
+            return 0.0
+        return self.total_flips / self.total_positions
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "agent_name": self.agent_name,
+            "total_positions": self.total_positions,
+            "total_flips": self.total_flips,
+            "contradictions": self.contradictions,
+            "refinements": self.refinements,
+            "retractions": self.retractions,
+            "qualifications": self.qualifications,
+            "consistency_score": self.consistency_score,
+            "flip_rate": self.flip_rate,
+            "avg_confidence_on_flip": self.avg_confidence_on_flip,
+            "domains_with_flips": self.domains_with_flips,
+        }
+
+
+class FlipDetector:
+    """
+    Detects position reversals using semantic similarity.
+
+    Uses the PositionLedger's reversal data and enhances it with
+    semantic analysis to classify flip types.
+    """
+
+    def __init__(
+        self,
+        db_path: str = "aragora_personas.db",
+        similarity_threshold: float = 0.6,
+    ):
+        self.db_path = Path(db_path)
+        self.similarity_threshold = similarity_threshold
+        self._init_tables()
+
+    def _init_tables(self) -> None:
+        """Create flips table if not exists."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS detected_flips (
+                id TEXT PRIMARY KEY,
+                agent_name TEXT NOT NULL,
+                original_claim TEXT NOT NULL,
+                new_claim TEXT NOT NULL,
+                original_confidence REAL,
+                new_confidence REAL,
+                original_debate_id TEXT,
+                new_debate_id TEXT,
+                original_position_id TEXT,
+                new_position_id TEXT,
+                similarity_score REAL,
+                flip_type TEXT,
+                domain TEXT,
+                detected_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_flips_agent ON detected_flips(agent_name)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_flips_type ON detected_flips(flip_type)"
+        )
+        conn.commit()
+        conn.close()
+
+    def _compute_similarity(self, text1: str, text2: str) -> float:
+        """Compute semantic similarity between two texts using sequence matching."""
+        # Simple approach: use SequenceMatcher for now
+        # Could be enhanced with embeddings for better semantic matching
+        text1_lower = text1.lower().strip()
+        text2_lower = text2.lower().strip()
+        return SequenceMatcher(None, text1_lower, text2_lower).ratio()
+
+    def _classify_flip_type(
+        self,
+        original_claim: str,
+        new_claim: str,
+        original_confidence: float,
+        new_confidence: float,
+    ) -> str:
+        """
+        Classify the type of position flip.
+
+        Types:
+        - contradiction: Direct opposite (e.g., "X is good" -> "X is bad")
+        - retraction: Complete withdrawal (e.g., "X is true" -> "I was wrong about X")
+        - qualification: Adding nuance (e.g., "X is true" -> "X is sometimes true")
+        - refinement: Minor adjustment (e.g., "X is true" -> "X is mostly true")
+        """
+        orig_lower = original_claim.lower()
+        new_lower = new_claim.lower()
+
+        # Check for contradiction signals
+        contradiction_signals = [
+            ("not ", " not "),
+            ("isn't", "is"),
+            ("shouldn't", "should"),
+            ("bad", "good"),
+            ("wrong", "right"),
+            ("false", "true"),
+            ("disagree", "agree"),
+            ("oppose", "support"),
+        ]
+
+        for sig1, sig2 in contradiction_signals:
+            if (sig1 in orig_lower and sig2 in new_lower) or \
+               (sig2 in orig_lower and sig1 in new_lower):
+                return "contradiction"
+
+        # Check for retraction signals
+        retraction_signals = ["was wrong", "reconsider", "take back", "withdraw", "retract"]
+        if any(sig in new_lower for sig in retraction_signals):
+            return "retraction"
+
+        # Check for qualification signals
+        qualification_signals = ["sometimes", "partially", "in some cases", "under certain", "with caveats"]
+        if any(sig in new_lower for sig in qualification_signals):
+            return "qualification"
+
+        # Default to refinement for high similarity, contradiction for low
+        similarity = self._compute_similarity(original_claim, new_claim)
+        if similarity > 0.7:
+            return "refinement"
+        elif similarity < 0.3:
+            return "contradiction"
+        else:
+            return "qualification"
+
+    def detect_flips_for_agent(
+        self,
+        agent_name: str,
+        lookback_positions: int = 50,
+    ) -> list[FlipEvent]:
+        """
+        Detect position flips for an agent.
+
+        Scans positions marked as reversed in the position ledger
+        and classifies them.
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+
+        # Get positions marked as reversed
+        cursor = conn.execute(
+            """
+            SELECT p1.*, p2.claim as new_claim, p2.confidence as new_confidence,
+                   p2.debate_id as new_debate_id, p2.id as new_position_id
+            FROM positions p1
+            LEFT JOIN positions p2 ON p1.reversal_debate_id = p2.debate_id
+                AND p1.agent_name = p2.agent_name
+            WHERE p1.agent_name = ? AND p1.reversed = 1
+            ORDER BY p1.created_at DESC
+            LIMIT ?
+            """,
+            (agent_name, lookback_positions),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        flips = []
+        for row in rows:
+            if not row["new_claim"]:
+                continue
+
+            similarity = self._compute_similarity(row["claim"], row["new_claim"])
+            flip_type = self._classify_flip_type(
+                row["claim"],
+                row["new_claim"],
+                row["confidence"],
+                row["new_confidence"] or 0.5,
+            )
+
+            flip = FlipEvent(
+                id=f"flip-{row['id']}",
+                agent_name=agent_name,
+                original_claim=row["claim"],
+                new_claim=row["new_claim"],
+                original_confidence=row["confidence"],
+                new_confidence=row["new_confidence"] or 0.5,
+                original_debate_id=row["debate_id"],
+                new_debate_id=row["new_debate_id"] or row["reversal_debate_id"],
+                original_position_id=row["id"],
+                new_position_id=row["new_position_id"] or "",
+                similarity_score=similarity,
+                flip_type=flip_type,
+                domain=row["domain"],
+            )
+            flips.append(flip)
+
+            # Store detected flip
+            self._store_flip(flip)
+
+        return flips
+
+    def _store_flip(self, flip: FlipEvent) -> None:
+        """Store a detected flip in the database."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO detected_flips
+            (id, agent_name, original_claim, new_claim, original_confidence,
+             new_confidence, original_debate_id, new_debate_id,
+             original_position_id, new_position_id, similarity_score,
+             flip_type, domain, detected_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                flip.id,
+                flip.agent_name,
+                flip.original_claim,
+                flip.new_claim,
+                flip.original_confidence,
+                flip.new_confidence,
+                flip.original_debate_id,
+                flip.new_debate_id,
+                flip.original_position_id,
+                flip.new_position_id,
+                flip.similarity_score,
+                flip.flip_type,
+                flip.domain,
+                flip.detected_at,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_agent_consistency(self, agent_name: str) -> AgentConsistencyScore:
+        """Get consistency score and metrics for an agent."""
+        conn = sqlite3.connect(self.db_path)
+
+        # Count total positions
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM positions WHERE agent_name = ?", (agent_name,)
+        )
+        total_positions = cursor.fetchone()[0]
+
+        # Count flips by type
+        cursor = conn.execute(
+            """
+            SELECT flip_type, COUNT(*), AVG(original_confidence)
+            FROM detected_flips
+            WHERE agent_name = ?
+            GROUP BY flip_type
+            """,
+            (agent_name,),
+        )
+        flip_counts = {}
+        avg_conf = 0.0
+        total_flips = 0
+        for row in cursor.fetchall():
+            flip_counts[row[0]] = row[1]
+            total_flips += row[1]
+            avg_conf += row[2] * row[1] if row[2] else 0
+
+        if total_flips > 0:
+            avg_conf /= total_flips
+
+        # Get domains with flips
+        cursor = conn.execute(
+            """
+            SELECT DISTINCT domain FROM detected_flips
+            WHERE agent_name = ? AND domain IS NOT NULL
+            """,
+            (agent_name,),
+        )
+        domains = [row[0] for row in cursor.fetchall()]
+        conn.close()
+
+        return AgentConsistencyScore(
+            agent_name=agent_name,
+            total_positions=total_positions,
+            total_flips=total_flips,
+            contradictions=flip_counts.get("contradiction", 0),
+            refinements=flip_counts.get("refinement", 0),
+            retractions=flip_counts.get("retraction", 0),
+            qualifications=flip_counts.get("qualification", 0),
+            avg_confidence_on_flip=avg_conf,
+            domains_with_flips=domains,
+        )
+
+    def get_recent_flips(self, limit: int = 20) -> list[FlipEvent]:
+        """Get recent flips across all agents."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            """
+            SELECT * FROM detected_flips
+            ORDER BY detected_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            FlipEvent(
+                id=row["id"],
+                agent_name=row["agent_name"],
+                original_claim=row["original_claim"],
+                new_claim=row["new_claim"],
+                original_confidence=row["original_confidence"],
+                new_confidence=row["new_confidence"],
+                original_debate_id=row["original_debate_id"],
+                new_debate_id=row["new_debate_id"],
+                original_position_id=row["original_position_id"],
+                new_position_id=row["new_position_id"],
+                similarity_score=row["similarity_score"],
+                flip_type=row["flip_type"],
+                domain=row["domain"],
+                detected_at=row["detected_at"],
+            )
+            for row in rows
+        ]
+
+    def get_flip_summary(self) -> dict:
+        """Get summary of all flips for dashboard display."""
+        conn = sqlite3.connect(self.db_path)
+
+        # Total flips
+        cursor = conn.execute("SELECT COUNT(*) FROM detected_flips")
+        total_flips = cursor.fetchone()[0]
+
+        # Flips by type
+        cursor = conn.execute(
+            "SELECT flip_type, COUNT(*) FROM detected_flips GROUP BY flip_type"
+        )
+        by_type = dict(cursor.fetchall())
+
+        # Flips by agent
+        cursor = conn.execute(
+            "SELECT agent_name, COUNT(*) FROM detected_flips GROUP BY agent_name ORDER BY COUNT(*) DESC"
+        )
+        by_agent = dict(cursor.fetchall())
+
+        # Recent 24h flips
+        cursor = conn.execute(
+            """
+            SELECT COUNT(*) FROM detected_flips
+            WHERE detected_at > datetime('now', '-1 day')
+            """
+        )
+        recent_24h = cursor.fetchone()[0]
+
+        conn.close()
+
+        return {
+            "total_flips": total_flips,
+            "by_type": by_type,
+            "by_agent": by_agent,
+            "recent_24h": recent_24h,
+        }
+
+
+def format_flip_for_ui(flip: FlipEvent) -> dict:
+    """Format a flip event for UI display."""
+    return {
+        "id": flip.id,
+        "agent": flip.agent_name,
+        "type": flip.flip_type,
+        "type_emoji": {
+            "contradiction": "🔄",
+            "retraction": "↩️",
+            "qualification": "📝",
+            "refinement": "🔧",
+        }.get(flip.flip_type, "❓"),
+        "before": {
+            "claim": flip.original_claim[:100] + "..." if len(flip.original_claim) > 100 else flip.original_claim,
+            "confidence": f"{flip.original_confidence:.0%}",
+        },
+        "after": {
+            "claim": flip.new_claim[:100] + "..." if len(flip.new_claim) > 100 else flip.new_claim,
+            "confidence": f"{flip.new_confidence:.0%}",
+        },
+        "similarity": f"{flip.similarity_score:.0%}",
+        "domain": flip.domain,
+        "timestamp": flip.detected_at,
+    }
+
+
+def format_consistency_for_ui(score: AgentConsistencyScore) -> dict:
+    """Format agent consistency score for UI display."""
+    return {
+        "agent": score.agent_name,
+        "consistency": f"{score.consistency_score:.0%}",
+        "consistency_class": (
+            "high" if score.consistency_score > 0.8 else
+            "medium" if score.consistency_score > 0.5 else
+            "low"
+        ),
+        "total_positions": score.total_positions,
+        "flip_rate": f"{score.flip_rate:.0%}",
+        "breakdown": {
+            "contradictions": score.contradictions,
+            "retractions": score.retractions,
+            "qualifications": score.qualifications,
+            "refinements": score.refinements,
+        },
+        "problem_domains": score.domains_with_flips[:3],
+    }

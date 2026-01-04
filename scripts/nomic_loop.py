@@ -4558,6 +4558,12 @@ Claude and Codex have read the actual codebase. DO NOT propose features that alr
             learning_context += f"\n{crux_context}\n"
             self._log(f"  [crux] Injected {len(self._cached_cruxes)} pivotal claims")
 
+        # P5-Phase2: Inject meta-critique observations if previous debate had low quality
+        meta_context = self._format_meta_observations()
+        if meta_context:
+            learning_context += f"\n{meta_context}\n"
+            self._log(f"  [meta] Injected reflection (quality was {self._last_meta_quality:.0%})")
+
         # Add inter-agent dynamics
         relationship_context = self._format_relationship_network()
         if relationship_context:

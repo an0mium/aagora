@@ -20,6 +20,13 @@ from aragora.insights.extractor import (
     InsightExtractor,
 )
 from aragora.insights.store import InsightStore
+from aragora.insights.flip_detector import (
+    FlipEvent,
+    AgentConsistencyScore,
+    FlipDetector,
+    format_flip_for_ui,
+    format_consistency_for_ui,
+)
 
 __all__ = [
     "Insight",
@@ -27,4 +34,9 @@ __all__ = [
     "DebateInsights",
     "InsightExtractor",
     "InsightStore",
+    "FlipEvent",
+    "AgentConsistencyScore",
+    "FlipDetector",
+    "format_flip_for_ui",
+    "format_consistency_for_ui",
 ]
