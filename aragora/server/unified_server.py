@@ -181,6 +181,17 @@ except ImportError:
     CRITIQUE_STORE_AVAILABLE = False
     CritiqueStore = None
 
+# Optional export module for debate artifact export
+try:
+    from aragora.export import DebateArtifact, CSVExporter, DOTExporter, StaticHTMLExporter
+    EXPORT_AVAILABLE = True
+except ImportError:
+    EXPORT_AVAILABLE = False
+    DebateArtifact = None
+    CSVExporter = None
+    DOTExporter = None
+    StaticHTMLExporter = None
+
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 _active_debates_lock = threading.Lock()  # Thread-safe access to _active_debates
@@ -394,6 +405,16 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             # Slug-based lookup for permalinks (bridges SQLite storage to frontend)
             slug = path.split('/')[-1]
             self._get_debate_by_slug(slug)
+        elif '/export/' in path and path.startswith('/api/debates/'):
+            # Export endpoints: /api/debates/{id}/export/{format}
+            parts = path.split('/')
+            if len(parts) >= 6:
+                debate_id = parts[3]
+                export_format = parts[5]
+                table = query.get('table', ['summary'])[0]
+                self._export_debate(debate_id, export_format, table)
+            else:
+                self._send_json({"error": "Invalid export path"}, status=400)
         elif path.startswith('/api/debates/'):
             slug = path.split('/')[-1]
             self._get_debate(slug)
@@ -1072,6 +1093,108 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             "views": d.view_count,
             "created": d.created_at.isoformat(),
         } for d in debates])
+
+    def _export_debate(self, debate_id: str, export_format: str, table: str = "summary") -> None:
+        """Export a debate in the specified format (json, csv, dot, html)."""
+        if not self._check_rate_limit():
+            return
+
+        if not EXPORT_AVAILABLE:
+            self._send_json({"error": "Export module not available"}, status=503)
+            return
+
+        # Validate format
+        valid_formats = {"json", "csv", "dot", "html"}
+        if export_format not in valid_formats:
+            self._send_json({"error": f"Invalid format. Use: {', '.join(valid_formats)}"}, status=400)
+            return
+
+        # Validate table (for CSV)
+        valid_tables = {"summary", "messages", "critiques", "votes", "verifications"}
+        if table not in valid_tables:
+            table = "summary"
+
+        # Load debate data
+        if not self.storage:
+            self._send_json({"error": "Storage not configured"}, status=500)
+            return
+
+        debate = self.storage.get_by_slug(debate_id)
+        if not debate:
+            self._send_json({"error": f"Debate not found: {debate_id}"}, status=404)
+            return
+
+        try:
+            # Build artifact from debate data
+            from aragora.export.artifact import ConsensusProof
+
+            artifact = DebateArtifact(
+                debate_id=debate.slug,
+                task=debate.task,
+                agents=debate.agents,
+                rounds=getattr(debate, 'rounds', 0),
+                message_count=len(debate.messages) if hasattr(debate, 'messages') else 0,
+                critique_count=len(debate.critiques) if hasattr(debate, 'critiques') else 0,
+                consensus_proof=ConsensusProof(
+                    reached=debate.consensus_reached,
+                    confidence=debate.confidence,
+                    vote_breakdown={v.agent: v.choice == debate.final_answer[:20]
+                                    for v in debate.votes} if hasattr(debate, 'votes') else {},
+                    final_answer=debate.final_answer,
+                    rounds_used=getattr(debate, 'rounds', 0),
+                ) if debate.consensus_reached else None,
+            )
+
+            # Add trace data if available
+            if hasattr(debate, 'messages'):
+                artifact.trace_data = {
+                    "events": [
+                        {
+                            "event_type": "message",
+                            "agent": msg.agent,
+                            "content": msg.content,
+                            "round": getattr(msg, 'round', i // len(debate.agents) + 1),
+                        }
+                        for i, msg in enumerate(debate.messages)
+                    ]
+                }
+
+            # Export based on format
+            if export_format == "json":
+                self._send_json(artifact.to_dict())
+            elif export_format == "csv":
+                exporter = CSVExporter(artifact)
+                if table == "messages":
+                    content = exporter.export_messages()
+                elif table == "critiques":
+                    content = exporter.export_critiques()
+                elif table == "votes":
+                    content = exporter.export_votes()
+                elif table == "verifications":
+                    content = exporter.export_verifications()
+                else:
+                    content = exporter.export_summary()
+                self._send_text(content, content_type="text/csv")
+            elif export_format == "dot":
+                exporter = DOTExporter(artifact)
+                content = exporter.export_flow()  # Default to flow view
+                self._send_text(content, content_type="text/vnd.graphviz")
+            elif export_format == "html":
+                exporter = StaticHTMLExporter(artifact)
+                content = exporter.generate()
+                self._send_text(content, content_type="text/html")
+
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "export_debate")}, status=500)
+
+    def _send_text(self, content: str, content_type: str = "text/plain") -> None:
+        """Send plain text response."""
+        data = content.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", len(data))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _health_check(self) -> None:
         """Health check endpoint."""

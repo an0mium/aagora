@@ -167,11 +167,11 @@ class ContinuumMemory:
 
     def _init_db(self):
         """Initialize the continuum memory tables."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Main continuum memory table
-        cursor.execute("""
+            # Main continuum memory table
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS continuum_memory (
                 id TEXT PRIMARY KEY,
                 tier TEXT NOT NULL DEFAULT 'slow',
@@ -188,51 +188,50 @@ class ContinuumMemory:
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT DEFAULT '{}'
             )
-        """)
+            """)
 
-        # Indexes for efficient tier-based retrieval
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_continuum_tier
-            ON continuum_memory(tier)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_continuum_surprise
-            ON continuum_memory(surprise_score DESC)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_continuum_importance
-            ON continuum_memory(importance DESC)
-        """)
+            # Indexes for efficient tier-based retrieval
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_continuum_tier
+                ON continuum_memory(tier)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_continuum_surprise
+                ON continuum_memory(surprise_score DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_continuum_importance
+                ON continuum_memory(importance DESC)
+            """)
 
-        # Meta-learning state table for hyperparameter tracking
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS meta_learning_state (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hyperparams TEXT NOT NULL,
-                learning_efficiency REAL,
-                pattern_retention_rate REAL,
-                forgetting_rate REAL,
-                cycles_evaluated INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Meta-learning state table for hyperparameter tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meta_learning_state (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hyperparams TEXT NOT NULL,
+                    learning_efficiency REAL,
+                    pattern_retention_rate REAL,
+                    forgetting_rate REAL,
+                    cycles_evaluated INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Tier transition history for analysis
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tier_transitions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                memory_id TEXT NOT NULL,
-                from_tier TEXT NOT NULL,
-                to_tier TEXT NOT NULL,
-                reason TEXT,
-                surprise_score REAL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (memory_id) REFERENCES continuum_memory(id)
-            )
-        """)
+            # Tier transition history for analysis
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tier_transitions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id TEXT NOT NULL,
+                    from_tier TEXT NOT NULL,
+                    to_tier TEXT NOT NULL,
+                    reason TEXT,
+                    surprise_score REAL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (memory_id) REFERENCES continuum_memory(id)
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def add(
         self,
@@ -255,22 +254,20 @@ class ContinuumMemory:
         Returns:
             The created memory entry
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
         now = datetime.now().isoformat()
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO continuum_memory
-            (id, tier, content, importance, surprise_score, consolidation_score,
-             update_count, success_count, failure_count, created_at, updated_at, metadata)
-            VALUES (?, ?, ?, ?, 0.0, 0.0, 1, 0, 0, ?, ?, ?)
-            """,
-            (id, tier.value, content, importance, now, now, json.dumps(metadata or {})),
-        )
-
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO continuum_memory
+                (id, tier, content, importance, surprise_score, consolidation_score,
+                 update_count, success_count, failure_count, created_at, updated_at, metadata)
+                VALUES (?, ?, ?, ?, 0.0, 0.0, 1, 0, 0, ?, ?, ?)
+                """,
+                (id, tier.value, content, importance, now, now, json.dumps(metadata or {})),
+            )
+            conn.commit()
 
         return ContinuumMemoryEntry(
             id=id,
@@ -289,20 +286,18 @@ class ContinuumMemory:
 
     def get(self, id: str) -> Optional[ContinuumMemoryEntry]:
         """Get a memory entry by ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT id, tier, content, importance, surprise_score, consolidation_score,
-                   update_count, success_count, failure_count, created_at, updated_at, metadata
-            FROM continuum_memory
-            WHERE id = ?
-            """,
-            (id,),
-        )
-        row = cursor.fetchone()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, tier, content, importance, surprise_score, consolidation_score,
+                       update_count, success_count, failure_count, created_at, updated_at, metadata
+                FROM continuum_memory
+                WHERE id = ?
+                """,
+                (id,),
+            )
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -348,9 +343,6 @@ class ContinuumMemory:
         Returns:
             List of memory entries sorted by retrieval score
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         # Build tier filter
         if tiers is None:
             tiers = list(MemoryTier)
@@ -360,31 +352,36 @@ class ContinuumMemory:
         tier_values = [t.value for t in tiers]
         placeholders = ",".join("?" * len(tier_values))
 
-        # Retrieval query with time-decay scoring
-        # Score = importance * (1 + surprise) * decay_factor
-        cursor.execute(
-            f"""
-            SELECT id, tier, content, importance, surprise_score, consolidation_score,
-                   update_count, success_count, failure_count, created_at, updated_at, metadata,
-                   (importance * (1 + surprise_score) *
-                    (1.0 / (1 + (julianday('now') - julianday(updated_at)) *
-                     CASE tier
-                       WHEN 'fast' THEN 24
-                       WHEN 'medium' THEN 1
-                       WHEN 'slow' THEN 0.14
-                       WHEN 'glacial' THEN 0.03
-                     END))) as score
-            FROM continuum_memory
-            WHERE tier IN ({placeholders})
-              AND importance >= ?
-            ORDER BY score DESC
-            LIMIT ?
-            """,
-            (*tier_values, min_importance, limit * 2),  # Fetch extra for filtering
-        )
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+
+            # Retrieval query with time-decay scoring
+            # Score = importance * (1 + surprise) * decay_factor
+            cursor.execute(
+                f"""
+                SELECT id, tier, content, importance, surprise_score, consolidation_score,
+                       update_count, success_count, failure_count, created_at, updated_at, metadata,
+                       (importance * (1 + surprise_score) *
+                        (1.0 / (1 + (julianday('now') - julianday(updated_at)) *
+                         CASE tier
+                           WHEN 'fast' THEN 24
+                           WHEN 'medium' THEN 1
+                           WHEN 'slow' THEN 0.14
+                           WHEN 'glacial' THEN 0.03
+                         END))) as score
+                FROM continuum_memory
+                WHERE tier IN ({placeholders})
+                  AND importance >= ?
+                ORDER BY score DESC
+                LIMIT ?
+                """,
+                (*tier_values, min_importance, limit * 2),  # Fetch extra for filtering
+            )
+
+            rows = cursor.fetchall()
 
         entries = []
-        for row in cursor.fetchall():
+        for row in rows:
             entry = ContinuumMemoryEntry(
                 id=row[0],
                 tier=MemoryTier(row[1]),
@@ -411,7 +408,6 @@ class ContinuumMemory:
             if len(entries) >= limit:
                 break
 
-        conn.close()
         return entries
 
     def update_outcome(

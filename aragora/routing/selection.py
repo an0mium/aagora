@@ -196,27 +196,44 @@ class AgentSelector:
         elo_score = (agent.elo_rating - 1000) / 1000  # Normalize around 0
         score += elo_score * 0.3
 
-        # Domain expertise
-        primary_exp = agent.expertise.get(requirements.primary_domain, 0.5)
+        # Get dynamic expertise from PersonaManager if available
+        expertise = agent.expertise.copy()
+        traits = agent.traits.copy() if agent.traits else []
+        if self.persona_manager:
+            try:
+                persona = self.persona_manager.get_persona(agent.name)
+                if persona:
+                    # Merge learned expertise (overrides static expertise)
+                    for domain, exp_score in persona.expertise.items():
+                        expertise[domain] = exp_score
+                    # Merge learned traits
+                    for trait in persona.traits:
+                        if trait not in traits:
+                            traits.append(trait)
+            except Exception:
+                pass  # Fall back to static expertise on error
+
+        # Domain expertise (using dynamic expertise)
+        primary_exp = expertise.get(requirements.primary_domain, 0.5)
         score += primary_exp * 0.3
 
         # Domain-specific ELO
         domain_elo = agent.domain_ratings.get(requirements.primary_domain, 1500)
         score += (domain_elo - 1000) / 1000 * 0.2
 
-        # Secondary domains
+        # Secondary domains (using dynamic expertise)
         if requirements.secondary_domains:
             secondary_score = sum(
-                agent.expertise.get(d, 0.3)
+                expertise.get(d, 0.3)
                 for d in requirements.secondary_domains
             ) / len(requirements.secondary_domains)
             score += secondary_score * 0.1
 
-        # Trait matching
+        # Trait matching (using dynamic traits)
         if requirements.required_traits:
             matching_traits = sum(
                 1 for t in requirements.required_traits
-                if t in agent.traits
+                if t in traits
             )
             score += matching_traits / len(requirements.required_traits) * 0.1
 

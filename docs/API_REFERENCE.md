@@ -110,6 +110,37 @@ Start an ad-hoc debate. **Rate limited**.
 }
 ```
 
+#### GET /api/debates/:id/export/:format
+Export a debate in various formats.
+
+**Path Parameters:**
+- `id` (string, required): Debate slug/ID
+- `format` (string, required): Export format - `json`, `csv`, `dot`, or `html`
+
+**Query Parameters:**
+- `table` (string, optional): For CSV format only - `summary` (default), `messages`, `critiques`, `votes`, or `verifications`
+
+**Response (JSON format):**
+```json
+{
+  "artifact_id": "abc123",
+  "debate_id": "debate-slug",
+  "task": "Rate limiter implementation",
+  "consensus_proof": {
+    "reached": true,
+    "confidence": 0.85,
+    "vote_breakdown": {"claude": true, "gemini": true}
+  },
+  "agents": ["claude", "gemini"],
+  "rounds": 3,
+  "content_hash": "sha256:abcd1234"
+}
+```
+
+**Response (CSV format):** Returns text/csv with debate data table
+**Response (DOT format):** Returns text/vnd.graphviz for visualization with GraphViz
+**Response (HTML format):** Returns self-contained HTML viewer with interactive graph
+
 ---
 
 ### History (Supabase)
