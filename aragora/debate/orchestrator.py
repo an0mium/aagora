@@ -865,6 +865,67 @@ class Arena:
             print(f"  [grounding] Error creating grounded verdict: {e}")
             return None
 
+    async def _verify_claims_formally(self, result: "DebateResult") -> None:
+        """Verify decidable claims using Z3 SMT solver.
+
+        For arithmetic, logic, and constraint claims, attempts formal verification
+        to provide machine-verified evidence. Results are stored in the grounded_verdict.
+        """
+        if not result.grounded_verdict or not result.grounded_verdict.claims:
+            return
+
+        try:
+            from aragora.verification.formal import get_formal_verification_manager, FormalProofStatus
+        except ImportError:
+            return  # Formal verification not available
+
+        try:
+            manager = get_formal_verification_manager()
+            status = manager.status_report()
+
+            if not status.get("any_available"):
+                return  # No backends available
+
+            verified_count = 0
+            disproven_count = 0
+
+            for claim in result.grounded_verdict.claims[:5]:  # Verify top 5 claims
+                try:
+                    # Attempt formal verification
+                    proof_result = await manager.attempt_formal_verification(
+                        claim=claim.claim_text,
+                        claim_type="decidable",
+                        context=result.final_answer[:500] if result.final_answer else "",
+                        timeout_seconds=5.0,
+                    )
+
+                    if proof_result and proof_result.status == FormalProofStatus.PROOF_FOUND:
+                        claim.grounding_score = 1.0  # Formally verified
+                        claim.citations.append({
+                            "type": "formal_proof",
+                            "prover": proof_result.language.value,
+                            "verified": True,
+                        })
+                        verified_count += 1
+                    elif proof_result and proof_result.status == FormalProofStatus.PROOF_FAILED:
+                        claim.grounding_score = 0.0  # Disproven
+                        claim.citations.append({
+                            "type": "formal_proof",
+                            "prover": proof_result.language.value,
+                            "verified": False,
+                            "counterexample": proof_result.counterexample,
+                        })
+                        disproven_count += 1
+
+                except Exception as e:
+                    logger.debug(f"Formal verification failed for claim: {e}")
+
+            if verified_count > 0 or disproven_count > 0:
+                logger.info(f"  [formal] Z3 verified {verified_count} claims, disproved {disproven_count}")
+
+        except Exception as e:
+            logger.debug(f"Formal verification error: {e}")
+
     async def _fetch_historical_context(self, task: str, limit: int = 3) -> str:
         """Fetch similar past debates for historical context.
 
@@ -1078,8 +1139,11 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         """
         if self.protocol.timeout_seconds > 0:
             try:
-                async with asyncio.timeout(self.protocol.timeout_seconds):
-                    return await self._run_inner()
+                # Use wait_for for Python 3.10 compatibility (asyncio.timeout is 3.11+)
+                return await asyncio.wait_for(
+                    self._run_inner(),
+                    timeout=self.protocol.timeout_seconds
+                )
             except asyncio.TimeoutError:
                 print(f"\n[TIMEOUT] Debate exceeded {self.protocol.timeout_seconds}s limit")
                 # Return partial result with timeout indicator
@@ -1957,6 +2021,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             if result.grounded_verdict.claims:
                 print(f"  [grounding] {len(result.grounded_verdict.claims)} claims analyzed")
 
+        # === Formal Z3 verification for decidable claims ===
+        await self._verify_claims_formally(result)
+
         print(f"\n{'='*60}")
         print(f"DEBATE COMPLETE in {result.duration_seconds:.1f}s")
         print(f"Consensus: {'Yes' if result.consensus_reached else 'No'} ({result.confidence:.0%})")
@@ -2237,8 +2304,11 @@ Respond with only: CONTINUE or STOP
 
         tasks = [self._generate_with_agent(agent, prompt, context[-5:]) for agent in self.agents]
         try:
-            async with asyncio.timeout(self.protocol.round_timeout_seconds):
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Use wait_for for Python 3.10 compatibility (asyncio.timeout is 3.11+)
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=self.protocol.round_timeout_seconds
+            )
         except asyncio.TimeoutError:
             # Timeout during early stopping check - continue debate (safe default)
             print(f"  [Warning] Early stopping check timed out after {self.protocol.round_timeout_seconds}s")

@@ -1021,14 +1021,24 @@ class AiohttpUnifiedServer:
                     self.active_loops[loop_id].phase = phase
 
     def _cors_headers(self, origin: Optional[str] = None) -> dict:
-        """Generate CORS headers."""
-        allowed_origin = origin if origin in WS_ALLOWED_ORIGINS else WS_ALLOWED_ORIGINS[0]
-        return {
-            "Access-Control-Allow-Origin": allowed_origin,
+        """Generate CORS headers with proper origin validation.
+
+        Only allows origins in the whitelist. Does NOT fallback to first
+        origin for unauthorized requests (that would be a security issue).
+        """
+        headers = {
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
             "Access-Control-Max-Age": "86400",
         }
+        # Only add Allow-Origin for whitelisted origins or same-origin requests
+        if origin and origin in WS_ALLOWED_ORIGINS:
+            headers["Access-Control-Allow-Origin"] = origin
+        elif not origin:
+            # Same-origin request - allow with wildcard
+            headers["Access-Control-Allow-Origin"] = "*"
+        # For unauthorized origins, don't add Allow-Origin (browser will block)
+        return headers
 
     async def _handle_options(self, request) -> 'aiohttp.web.Response':
         """Handle CORS preflight requests."""
@@ -1285,9 +1295,15 @@ class AiohttpUnifiedServer:
         return web.json_response(state, headers=self._cors_headers(origin))
 
     async def _websocket_handler(self, request) -> 'aiohttp.web.WebSocketResponse':
-        """Handle WebSocket connections."""
+        """Handle WebSocket connections with security validation."""
         import aiohttp
         import aiohttp.web as web
+
+        # Validate origin for security (match websockets handler behavior)
+        origin = request.headers.get("Origin", "")
+        if origin and origin not in WS_ALLOWED_ORIGINS:
+            # Reject connection from unauthorized origin
+            return web.Response(status=403, text="Origin not allowed")
 
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -1296,6 +1312,13 @@ class AiohttpUnifiedServer:
         ws_id = id(ws)
         client_id = secrets.token_hex(16)
         self._client_ids[ws_id] = client_id
+
+        # Initialize rate limiter for this client
+        self._rate_limiters[client_id] = TokenBucket(
+            rate_per_minute=10.0,  # 10 messages per minute
+            burst_size=5  # Allow burst of 5
+        )
+        self._rate_limiter_last_access[client_id] = time.time()
 
         logger.info(f"[ws] Client connected: {client_id[:8]}...")
 
@@ -1344,9 +1367,53 @@ class AiohttpUnifiedServer:
                             })
 
                         elif msg_type in ("user_vote", "user_suggestion"):
-                            # Handle audience participation
-                            loop_id = data.get("loop_id")
+                            # Handle audience participation with validation
+                            loop_id = data.get("loop_id", "")
+
+                            # Validate loop_id exists and is active
+                            with self._active_loops_lock:
+                                loop_valid = loop_id and loop_id in self.active_loops
+
+                            if not loop_valid:
+                                await ws.send_json({
+                                    "type": "error",
+                                    "data": {"message": f"Invalid or inactive loop_id: {loop_id}"}
+                                })
+                                continue
+
+                            # Validate payload structure and size (DoS protection)
                             payload = data.get("payload", {})
+                            if not isinstance(payload, dict):
+                                await ws.send_json({
+                                    "type": "error",
+                                    "data": {"message": "Invalid payload format"}
+                                })
+                                continue
+
+                            # Limit payload size to 10KB
+                            try:
+                                payload_str = json.dumps(payload)
+                                if len(payload_str) > 10240:
+                                    await ws.send_json({
+                                        "type": "error",
+                                        "data": {"message": "Payload too large (max 10KB)"}
+                                    })
+                                    continue
+                            except (TypeError, ValueError):
+                                await ws.send_json({
+                                    "type": "error",
+                                    "data": {"message": "Invalid payload structure"}
+                                })
+                                continue
+
+                            # Check rate limit
+                            self._rate_limiter_last_access[client_id] = time.time()
+                            if not self._rate_limiters[client_id].consume(1):
+                                await ws.send_json({
+                                    "type": "error",
+                                    "data": {"message": "Rate limit exceeded, try again later"}
+                                })
+                                continue
 
                             audience_msg = AudienceMessage(
                                 type="vote" if msg_type == "user_vote" else "suggestion",
@@ -1370,6 +1437,9 @@ class AiohttpUnifiedServer:
         finally:
             self.clients.discard(ws)
             self._client_ids.pop(ws_id, None)
+            # Clean up rate limiter for this client
+            self._rate_limiters.pop(client_id, None)
+            self._rate_limiter_last_access.pop(client_id, None)
             logger.info(f"[ws] Client disconnected: {client_id[:8]}...")
 
         return ws

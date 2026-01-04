@@ -968,6 +968,19 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": "Invalid path format"}, status=400)
 
+        # Introspection API (Agent Self-Awareness)
+        elif path == '/api/introspection/all':
+            self._get_all_introspection()
+        elif path == '/api/introspection/leaderboard':
+            limit = self._safe_int(query, 'limit', 10, 50)
+            self._get_introspection_leaderboard(limit)
+        elif path.startswith('/api/introspection/agents/'):
+            agent = path.split('/')[-1]
+            if not agent or not SAFE_ID_PATTERN.match(agent):
+                self._send_json({"error": "Invalid agent name"}, status=400)
+            else:
+                self._get_agent_introspection(agent)
+
         # Calibration Curve API
         elif path.startswith('/api/agent/') and path.endswith('/calibration-curve'):
             agent = self._extract_path_segment(path, 3, "agent")
@@ -2939,6 +2952,132 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 self._send_json({"agent": agent, "score": 0.5, "message": "No reputation data"})
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "agent_reputation")}, status=500)
+
+    def _get_agent_introspection(self, agent: str) -> None:
+        """Get introspection data for a specific agent."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.introspection import get_agent_introspection, IntrospectionSnapshot
+        except ImportError:
+            self._send_json({"error": "Introspection module not available"}, status=503)
+            return
+
+        try:
+            # Get critique store if available
+            memory = None
+            if CRITIQUE_STORE_AVAILABLE:
+                db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+                if db_path and db_path.exists():
+                    memory = CritiqueStore(str(db_path))
+
+            # Get persona manager if available
+            persona_manager = None
+            if PERSONA_MANAGER_AVAILABLE:
+                persona_db = self.nomic_dir / "personas.db" if self.nomic_dir else None
+                if persona_db and persona_db.exists():
+                    from aragora.agents.personas import PersonaManager
+                    persona_manager = PersonaManager(str(persona_db))
+
+            snapshot = get_agent_introspection(agent, memory=memory, persona_manager=persona_manager)
+            self._send_json(snapshot.to_dict())
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "introspection")}, status=500)
+
+    def _get_all_introspection(self) -> None:
+        """Get introspection data for all known agents."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.introspection import get_agent_introspection
+        except ImportError:
+            self._send_json({"error": "Introspection module not available"}, status=503)
+            return
+
+        try:
+            # Get all known agents from reputation store
+            agents = []
+            if CRITIQUE_STORE_AVAILABLE:
+                db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+                if db_path and db_path.exists():
+                    store = CritiqueStore(str(db_path))
+                    reputations = store.get_all_reputations()
+                    agents = [r.agent_name for r in reputations]
+
+            if not agents:
+                # Default agents
+                agents = ["gemini", "claude", "codex", "grok", "deepseek"]
+
+            # Get critique store and persona manager
+            memory = None
+            persona_manager = None
+            if CRITIQUE_STORE_AVAILABLE:
+                db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+                if db_path and db_path.exists():
+                    memory = CritiqueStore(str(db_path))
+            if PERSONA_MANAGER_AVAILABLE:
+                persona_db = self.nomic_dir / "personas.db" if self.nomic_dir else None
+                if persona_db and persona_db.exists():
+                    from aragora.agents.personas import PersonaManager
+                    persona_manager = PersonaManager(str(persona_db))
+
+            snapshots = {}
+            for agent in agents:
+                snapshot = get_agent_introspection(agent, memory=memory, persona_manager=persona_manager)
+                snapshots[agent] = snapshot.to_dict()
+
+            self._send_json({"agents": snapshots, "count": len(snapshots)})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "all_introspection")}, status=500)
+
+    def _get_introspection_leaderboard(self, limit: int) -> None:
+        """Get agents ranked by reputation score."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.introspection import get_agent_introspection
+        except ImportError:
+            self._send_json({"error": "Introspection module not available"}, status=503)
+            return
+
+        try:
+            # Get all known agents from reputation store
+            agents = []
+            memory = None
+            if CRITIQUE_STORE_AVAILABLE:
+                db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+                if db_path and db_path.exists():
+                    memory = CritiqueStore(str(db_path))
+                    reputations = memory.get_all_reputations()
+                    agents = [r.agent_name for r in reputations]
+
+            if not agents:
+                agents = ["gemini", "claude", "codex", "grok", "deepseek"]
+
+            persona_manager = None
+            if PERSONA_MANAGER_AVAILABLE:
+                persona_db = self.nomic_dir / "personas.db" if self.nomic_dir else None
+                if persona_db and persona_db.exists():
+                    from aragora.agents.personas import PersonaManager
+                    persona_manager = PersonaManager(str(persona_db))
+
+            snapshots = []
+            for agent in agents:
+                snapshot = get_agent_introspection(agent, memory=memory, persona_manager=persona_manager)
+                snapshots.append(snapshot.to_dict())
+
+            # Sort by reputation score descending
+            snapshots.sort(key=lambda x: x.get("reputation_score", 0), reverse=True)
+
+            self._send_json({
+                "leaderboard": snapshots[:limit],
+                "total_agents": len(snapshots),
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "introspection_leaderboard")}, status=500)
 
     def _get_ranking_stats(self) -> None:
         """Get ELO ranking system statistics."""
