@@ -67,6 +67,10 @@ ALLOWED_AGENT_TYPES = frozenset({
 # Maximum number of agents per debate (DoS protection)
 MAX_AGENTS_PER_DEBATE = 10
 MAX_MULTIPART_PARTS = 10
+# Maximum content length for POST requests (100MB - DoS protection)
+MAX_CONTENT_LENGTH = 100 * 1024 * 1024
+# Maximum content length for JSON API requests (10MB)
+MAX_JSON_CONTENT_LENGTH = 10 * 1024 * 1024
 
 # Safe ID pattern for path segments (prevent path traversal)
 SAFE_ID_PATTERN = r'^[a-zA-Z0-9_-]+$'
@@ -472,6 +476,30 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": f"Missing {segment_name} in path"}, status=400)
             return None
         return parts[index]
+
+    def _validate_content_length(self, max_size: int = None) -> Optional[int]:
+        """Validate Content-Length header for DoS protection.
+
+        Returns content length if valid, None if invalid (error already sent).
+        """
+        max_size = max_size or MAX_JSON_CONTENT_LENGTH
+
+        try:
+            content_length = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            self._send_json({"error": "Invalid Content-Length header"}, status=400)
+            return None
+
+        if content_length < 0:
+            self._send_json({"error": "Invalid Content-Length: negative value"}, status=400)
+            return None
+
+        if content_length > max_size:
+            size_mb = max_size / (1024 * 1024)
+            self._send_json({"error": f"Content too large. Max: {size_mb:.0f}MB"}, status=413)
+            return None
+
+        return content_length
 
     def _check_rate_limit(self) -> bool:
         """Check auth and rate limit. Returns True if allowed, False if blocked.
@@ -1002,9 +1030,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             # Read body
             body = self.rfile.read(content_length)
 
-            # Parse multipart - simple implementation
+            # Parse multipart - simple implementation with DoS protection
             boundary_bytes = f'--{boundary}'.encode()
             parts = body.split(boundary_bytes)
+
+            # Enforce MAX_MULTIPART_PARTS to prevent DoS
+            if len(parts) > MAX_MULTIPART_PARTS:
+                self._send_json({"error": f"Too many multipart parts. Max: {MAX_MULTIPART_PARTS}"}, status=400)
+                return
 
             file_content = None
             filename = None
@@ -3895,6 +3928,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', len(content))
             self._add_cors_headers()
+            self._add_security_headers()
             self.end_headers()
             self.wfile.write(content)
         except Exception:
@@ -3907,8 +3941,20 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', len(content))
         self._add_cors_headers()
+        self._add_security_headers()
         self.end_headers()
         self.wfile.write(content)
+
+    def _add_security_headers(self) -> None:
+        """Add security headers to prevent common attacks."""
+        # Prevent clickjacking
+        self.send_header('X-Frame-Options', 'DENY')
+        # Prevent MIME type sniffing
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        # Enable XSS filter
+        self.send_header('X-XSS-Protection', '1; mode=block')
+        # Referrer policy - don't leak internal URLs
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
 
     def _add_cors_headers(self) -> None:
         """Add CORS headers with origin validation."""
