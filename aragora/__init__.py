@@ -224,6 +224,29 @@ from aragora.reasoning import (
     CitationStore,
     create_citation_from_url,
 )
+# Belief Propagation (Bayesian reasoning)
+from aragora.reasoning import (
+    BeliefNetwork,
+    BeliefNode,
+    BeliefDistribution,
+    BeliefStatus,
+    BeliefPropagationAnalyzer,
+)
+# Reliability Scoring (evidence quality assessment)
+from aragora.reasoning import (
+    ReliabilityScorer,
+    ReliabilityLevel,
+    ClaimReliability,
+    EvidenceReliability,
+    compute_claim_reliability,
+)
+
+# Integrations (webhooks, external services)
+from aragora.integrations import (
+    WebhookDispatcher,
+    WebhookConfig,
+    AragoraJSONEncoder,
+)
 
 # Modes
 from aragora.modes import RedTeamMode, RedTeamResult, Attack, AttackType
@@ -438,6 +461,22 @@ __all__ = [
     "CitationExtractor",
     "CitationStore",
     "create_citation_from_url",
+    # Belief Propagation (Bayesian reasoning)
+    "BeliefNetwork",
+    "BeliefNode",
+    "BeliefDistribution",
+    "BeliefStatus",
+    "BeliefPropagationAnalyzer",
+    # Reliability Scoring
+    "ReliabilityScorer",
+    "ReliabilityLevel",
+    "ClaimReliability",
+    "EvidenceReliability",
+    "compute_claim_reliability",
+    # Integrations (webhooks)
+    "WebhookDispatcher",
+    "WebhookConfig",
+    "AragoraJSONEncoder",
     # Modes
     "RedTeamMode",
     "RedTeamResult",

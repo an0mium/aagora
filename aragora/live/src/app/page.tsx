@@ -41,7 +41,7 @@ type SiteMode = 'landing' | 'dashboard' | 'loading';
 
 export default function Home() {
   const router = useRouter();
-  const { events, connected, activeLoops, selectedLoopId, selectLoop, sendMessage, onAck, onError } = useNomicStream(WS_URL);
+  const { events, connected, nomicState: wsNomicState, activeLoops, selectedLoopId, selectLoop, sendMessage, onAck, onError } = useNomicStream(WS_URL);
 
   // Domain detection - show landing page on aragora.ai, dashboard on live.aragora.ai
   const [siteMode, setSiteMode] = useState<SiteMode>('loading');
@@ -61,8 +61,18 @@ export default function Home() {
     // Navigate to the dedicated debate viewer page
     router.push(`/debate/${debateId}`);
   }, [router]);
-  const [nomicState, setNomicState] = useState<NomicState | null>(null);
+  // Local state for nomicState, initialized from wsNomicState and updated by events
+  const [localNomicState, setLocalNomicState] = useState<NomicState | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Merge wsNomicState (from WebSocket) with local state - prefer WS state for cycle/phase
+  const nomicState: NomicState | null = wsNomicState || localNomicState ? {
+    ...localNomicState,
+    ...wsNomicState,
+    // Local state can override for things updated by events
+    completed_tasks: localNomicState?.completed_tasks ?? wsNomicState?.completed_tasks,
+    last_success: localNomicState?.last_success ?? wsNomicState?.last_success,
+  } : null;
   const [viewMode, setViewMode] = useState<ViewMode>('tabs');
   const [showCompare, setShowCompare] = useState(false);
   const [showBoot, setShowBoot] = useState(true);
@@ -85,25 +95,10 @@ export default function Home() {
   // Compute effective loop ID - auto-select if only one loop active (fixes race condition)
   const effectiveLoopId = selectedLoopId || (activeLoops.length === 1 ? activeLoops[0].loop_id : null);
 
-  // Fetch initial nomic state on mount
-  useEffect(() => {
-    const fetchState = async () => {
-      try {
-        const response = await fetch(`${API_URL}/api/nomic/state`);
-        if (response.ok) {
-          const data = await response.json();
-          setNomicState(data);
-        }
-      } catch (err) {
-        // API might not be available, that's OK
-        console.log('Could not fetch initial state:', err);
-      }
-    };
+  // Note: Initial state now comes from wsNomicState (via loop_list WebSocket event)
+  // HTTP API fetch removed - api.aragora.ai only serves WebSocket, not HTTP API
 
-    fetchState();
-  }, []);
-
-  // Update nomic state from events
+  // Update local nomic state from events
   useEffect(() => {
     if (events.length === 0) return;
 
@@ -112,7 +107,7 @@ export default function Home() {
     // Update state based on event type
     switch (lastEvent.type) {
       case 'cycle_start':
-        setNomicState((prev) => ({
+        setLocalNomicState((prev) => ({
           ...prev,
           cycle: lastEvent.data.cycle as number,
           phase: 'debate',
@@ -120,19 +115,19 @@ export default function Home() {
         }));
         break;
       case 'phase_start':
-        setNomicState((prev) => ({
+        setLocalNomicState((prev) => ({
           ...prev,
           phase: lastEvent.data.phase as string,
         }));
         break;
       case 'task_complete':
-        setNomicState((prev) => ({
+        setLocalNomicState((prev) => ({
           ...prev,
           completed_tasks: (prev?.completed_tasks || 0) + 1,
         }));
         break;
       case 'cycle_end':
-        setNomicState((prev) => ({
+        setLocalNomicState((prev) => ({
           ...prev,
           last_success: lastEvent.data.success as boolean,
         }));

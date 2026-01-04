@@ -47,6 +47,13 @@ from aragora.reasoning.provenance_enhanced import (
     RevalidationTrigger,
     ProvenanceValidator,
 )
+from aragora.reasoning.reliability import (
+    ReliabilityScorer,
+    ReliabilityLevel,
+    ClaimReliability,
+    EvidenceReliability,
+    compute_claim_reliability,
+)
 
 # Scholarly Citation Grounding (Heavy3-inspired evidence-backed verdicts)
 from aragora.reasoning.citations import (
@@ -108,4 +115,10 @@ __all__ = [
     "CitationExtractor",
     "CitationStore",
     "create_citation_from_url",
+    # Reliability Scoring
+    "ReliabilityScorer",
+    "ReliabilityLevel",
+    "ClaimReliability",
+    "EvidenceReliability",
+    "compute_claim_reliability",
 ]
