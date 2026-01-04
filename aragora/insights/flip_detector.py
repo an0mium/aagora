@@ -126,33 +126,32 @@ class FlipDetector:
 
     def _init_tables(self) -> None:
         """Create flips table if not exists."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS detected_flips (
-                id TEXT PRIMARY KEY,
-                agent_name TEXT NOT NULL,
-                original_claim TEXT NOT NULL,
-                new_claim TEXT NOT NULL,
-                original_confidence REAL,
-                new_confidence REAL,
-                original_debate_id TEXT,
-                new_debate_id TEXT,
-                original_position_id TEXT,
-                new_position_id TEXT,
-                similarity_score REAL,
-                flip_type TEXT,
-                domain TEXT,
-                detected_at TEXT DEFAULT CURRENT_TIMESTAMP
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS detected_flips (
+                    id TEXT PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    original_claim TEXT NOT NULL,
+                    new_claim TEXT NOT NULL,
+                    original_confidence REAL,
+                    new_confidence REAL,
+                    original_debate_id TEXT,
+                    new_debate_id TEXT,
+                    original_position_id TEXT,
+                    new_position_id TEXT,
+                    similarity_score REAL,
+                    flip_type TEXT,
+                    domain TEXT,
+                    detected_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_flips_agent ON detected_flips(agent_name)"
             )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_flips_agent ON detected_flips(agent_name)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_flips_type ON detected_flips(flip_type)"
-        )
-        conn.commit()
-        conn.close()
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_flips_type ON detected_flips(flip_type)"
+            )
+            conn.commit()
 
     def _compute_similarity(self, text1: str, text2: str) -> float:
         """Compute semantic similarity between two texts using sequence matching."""
@@ -228,25 +227,24 @@ class FlipDetector:
         Scans positions marked as reversed in the position ledger
         and classifies them.
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.row_factory = sqlite3.Row
 
-        # Get positions marked as reversed
-        cursor = conn.execute(
-            """
-            SELECT p1.*, p2.claim as new_claim, p2.confidence as new_confidence,
-                   p2.debate_id as new_debate_id, p2.id as new_position_id
-            FROM positions p1
-            LEFT JOIN positions p2 ON p1.reversal_debate_id = p2.debate_id
-                AND p1.agent_name = p2.agent_name
-            WHERE p1.agent_name = ? AND p1.reversed = 1
-            ORDER BY p1.created_at DESC
-            LIMIT ?
-            """,
-            (agent_name, lookback_positions),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            # Get positions marked as reversed
+            cursor = conn.execute(
+                """
+                SELECT p1.*, p2.claim as new_claim, p2.confidence as new_confidence,
+                       p2.debate_id as new_debate_id, p2.id as new_position_id
+                FROM positions p1
+                LEFT JOIN positions p2 ON p1.reversal_debate_id = p2.debate_id
+                    AND p1.agent_name = p2.agent_name
+                WHERE p1.agent_name = ? AND p1.reversed = 1
+                ORDER BY p1.created_at DESC
+                LIMIT ?
+                """,
+                (agent_name, lookback_positions),
+            )
+            rows = cursor.fetchall()
 
         flips = []
         for row in rows:
@@ -285,77 +283,74 @@ class FlipDetector:
 
     def _store_flip(self, flip: FlipEvent) -> None:
         """Store a detected flip in the database."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO detected_flips
-            (id, agent_name, original_claim, new_claim, original_confidence,
-             new_confidence, original_debate_id, new_debate_id,
-             original_position_id, new_position_id, similarity_score,
-             flip_type, domain, detected_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                flip.id,
-                flip.agent_name,
-                flip.original_claim,
-                flip.new_claim,
-                flip.original_confidence,
-                flip.new_confidence,
-                flip.original_debate_id,
-                flip.new_debate_id,
-                flip.original_position_id,
-                flip.new_position_id,
-                flip.similarity_score,
-                flip.flip_type,
-                flip.domain,
-                flip.detected_at,
-            ),
-        )
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO detected_flips
+                (id, agent_name, original_claim, new_claim, original_confidence,
+                 new_confidence, original_debate_id, new_debate_id,
+                 original_position_id, new_position_id, similarity_score,
+                 flip_type, domain, detected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    flip.id,
+                    flip.agent_name,
+                    flip.original_claim,
+                    flip.new_claim,
+                    flip.original_confidence,
+                    flip.new_confidence,
+                    flip.original_debate_id,
+                    flip.new_debate_id,
+                    flip.original_position_id,
+                    flip.new_position_id,
+                    flip.similarity_score,
+                    flip.flip_type,
+                    flip.domain,
+                    flip.detected_at,
+                ),
+            )
+            conn.commit()
 
     def get_agent_consistency(self, agent_name: str) -> AgentConsistencyScore:
         """Get consistency score and metrics for an agent."""
-        conn = sqlite3.connect(self.db_path)
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            # Count total positions
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM positions WHERE agent_name = ?", (agent_name,)
+            )
+            total_positions = cursor.fetchone()[0]
 
-        # Count total positions
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM positions WHERE agent_name = ?", (agent_name,)
-        )
-        total_positions = cursor.fetchone()[0]
+            # Count flips by type
+            cursor = conn.execute(
+                """
+                SELECT flip_type, COUNT(*), AVG(original_confidence)
+                FROM detected_flips
+                WHERE agent_name = ?
+                GROUP BY flip_type
+                """,
+                (agent_name,),
+            )
+            flip_counts = {}
+            avg_conf = 0.0
+            total_flips = 0
+            for row in cursor.fetchall():
+                flip_counts[row[0]] = row[1]
+                total_flips += row[1]
+                avg_conf += row[2] * row[1] if row[2] else 0
 
-        # Count flips by type
-        cursor = conn.execute(
-            """
-            SELECT flip_type, COUNT(*), AVG(original_confidence)
-            FROM detected_flips
-            WHERE agent_name = ?
-            GROUP BY flip_type
-            """,
-            (agent_name,),
-        )
-        flip_counts = {}
-        avg_conf = 0.0
-        total_flips = 0
-        for row in cursor.fetchall():
-            flip_counts[row[0]] = row[1]
-            total_flips += row[1]
-            avg_conf += row[2] * row[1] if row[2] else 0
+            if total_flips > 0:
+                avg_conf /= total_flips
 
-        if total_flips > 0:
-            avg_conf /= total_flips
-
-        # Get domains with flips
-        cursor = conn.execute(
-            """
-            SELECT DISTINCT domain FROM detected_flips
-            WHERE agent_name = ? AND domain IS NOT NULL
-            """,
-            (agent_name,),
-        )
-        domains = [row[0] for row in cursor.fetchall()]
-        conn.close()
+            # Get domains with flips
+            cursor = conn.execute(
+                """
+                SELECT DISTINCT domain FROM detected_flips
+                WHERE agent_name = ? AND domain IS NOT NULL
+                """,
+                (agent_name,),
+            )
+            domains = [row[0] for row in cursor.fetchall()]
 
         return AgentConsistencyScore(
             agent_name=agent_name,

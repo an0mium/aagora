@@ -35,6 +35,13 @@ interface TranscriptMessage {
   timestamp?: number;
 }
 
+interface StreamingMessage {
+  agent: string;
+  content: string;
+  isComplete: boolean;
+  startTime: number;
+}
+
 interface DebateViewerProps {
   debateId: string;
 }
@@ -51,13 +58,14 @@ export function DebateViewer({ debateId }: DebateViewerProps) {
   const [liveTask, setLiveTask] = useState<string>('');
   const [liveAgents, setLiveAgents] = useState<string[]>([]);
   const [liveStatus, setLiveStatus] = useState<'connecting' | 'streaming' | 'complete' | 'error'>('connecting');
+  const [streamingMessages, setStreamingMessages] = useState<Map<string, StreamingMessage>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new messages or streaming updates
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [liveMessages]);
+  }, [liveMessages, streamingMessages]);
 
   useEffect(() => {
     // Check if this is a live/adhoc debate
@@ -112,6 +120,69 @@ export function DebateViewer({ debateId }: DebateViewerProps) {
             }
           } else if (data.type === 'debate_end' && data.data?.debate_id === debateId) {
             setLiveStatus('complete');
+          }
+          // Token streaming events
+          else if (data.type === 'token_start') {
+            const agent = data.agent || data.data?.agent;
+            if (agent) {
+              setStreamingMessages(prev => {
+                const updated = new Map(prev);
+                updated.set(agent, {
+                  agent,
+                  content: '',
+                  isComplete: false,
+                  startTime: Date.now(),
+                });
+                return updated;
+              });
+              // Add agent to list if not already present
+              if (agent && !liveAgents.includes(agent)) {
+                setLiveAgents(prev => prev.includes(agent) ? prev : [...prev, agent]);
+              }
+            }
+          } else if (data.type === 'token_delta') {
+            const agent = data.agent || data.data?.agent;
+            const token = data.data?.token || '';
+            if (agent && token) {
+              setStreamingMessages(prev => {
+                const updated = new Map(prev);
+                const existing = updated.get(agent);
+                if (existing) {
+                  updated.set(agent, {
+                    ...existing,
+                    content: existing.content + token,
+                  });
+                } else {
+                  // Create new if token_start was missed
+                  updated.set(agent, {
+                    agent,
+                    content: token,
+                    isComplete: false,
+                    startTime: Date.now(),
+                  });
+                }
+                return updated;
+              });
+            }
+          } else if (data.type === 'token_end') {
+            const agent = data.agent || data.data?.agent;
+            if (agent) {
+              setStreamingMessages(prev => {
+                const updated = new Map(prev);
+                const existing = updated.get(agent);
+                if (existing && existing.content) {
+                  // Move completed streaming message to live messages
+                  const msg: TranscriptMessage = {
+                    agent,
+                    content: existing.content,
+                    timestamp: Date.now() / 1000,
+                  };
+                  setLiveMessages(prevMsgs => [...prevMsgs, msg]);
+                }
+                updated.delete(agent);
+                return updated;
+              });
+            }
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e);
@@ -279,10 +350,15 @@ export function DebateViewer({ debateId }: DebateViewerProps) {
                   </span>
                   <span className="text-xs font-mono text-text-muted">
                     {liveMessages.length} messages
+                    {streamingMessages.size > 0 && (
+                      <span className="ml-2 text-acid-cyan animate-pulse">
+                        ({streamingMessages.size} streaming)
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
-                  {liveMessages.length === 0 && liveStatus === 'streaming' && (
+                  {liveMessages.length === 0 && streamingMessages.size === 0 && liveStatus === 'streaming' && (
                     <div className="text-center py-8 text-text-muted font-mono">
                       <div className="animate-pulse">Waiting for agents to respond...</div>
                     </div>
@@ -318,6 +394,34 @@ export function DebateViewer({ debateId }: DebateViewerProps) {
                         </div>
                         <div className="text-sm text-text whitespace-pre-wrap">
                           {msg.content}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* Streaming messages (tokens arriving in real-time) */}
+                  {Array.from(streamingMessages.values()).map((streamMsg) => {
+                    const colors = getAgentColors(streamMsg.agent);
+                    return (
+                      <div
+                        key={`streaming-${streamMsg.agent}`}
+                        className={`${colors.bg} border-2 ${colors.border} p-4 animate-pulse`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-mono font-bold text-sm ${colors.text}`}>
+                              {streamMsg.agent.toUpperCase()}
+                            </span>
+                            <span className="text-xs text-acid-cyan border border-acid-cyan/30 px-1 animate-pulse">
+                              STREAMING
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-text-muted font-mono">
+                            {Math.round((Date.now() - streamMsg.startTime) / 1000)}s
+                          </span>
+                        </div>
+                        <div className="text-sm text-text whitespace-pre-wrap">
+                          {streamMsg.content}
+                          <span className="inline-block w-2 h-4 bg-acid-cyan ml-1 animate-pulse">▌</span>
                         </div>
                       </div>
                     );

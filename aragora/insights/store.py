@@ -43,80 +43,79 @@ class InsightStore:
 
     def _init_db(self):
         """Initialize the database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Insights table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS insights (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT,
-                confidence REAL DEFAULT 0.5,
-                debate_id TEXT NOT NULL,
-                agents_involved TEXT,  -- JSON array
-                evidence TEXT,  -- JSON array
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                metadata TEXT  -- JSON object
-            )
-        """)
+            # Insights table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS insights (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    confidence REAL DEFAULT 0.5,
+                    debate_id TEXT NOT NULL,
+                    agents_involved TEXT,  -- JSON array
+                    evidence TEXT,  -- JSON array
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    metadata TEXT  -- JSON object
+                )
+            """)
 
-        # Debate summaries table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS debate_summaries (
-                debate_id TEXT PRIMARY KEY,
-                task TEXT,
-                consensus_reached INTEGER,
-                duration_seconds REAL,
-                total_insights INTEGER,
-                key_takeaway TEXT,
-                agent_performances TEXT,  -- JSON array
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Debate summaries table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS debate_summaries (
+                    debate_id TEXT PRIMARY KEY,
+                    task TEXT,
+                    consensus_reached INTEGER,
+                    duration_seconds REAL,
+                    total_insights INTEGER,
+                    key_takeaway TEXT,
+                    agent_performances TEXT,  -- JSON array
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Agent performance history
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS agent_performance_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_name TEXT NOT NULL,
-                debate_id TEXT NOT NULL,
-                proposals_made INTEGER DEFAULT 0,
-                critiques_given INTEGER DEFAULT 0,
-                critiques_received INTEGER DEFAULT 0,
-                proposal_accepted INTEGER DEFAULT 0,
-                vote_aligned INTEGER DEFAULT 0,
-                avg_critique_severity REAL DEFAULT 0.0,
-                contribution_score REAL DEFAULT 0.5,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (debate_id) REFERENCES debate_summaries(debate_id)
-            )
-        """)
+            # Agent performance history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_performance_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_name TEXT NOT NULL,
+                    debate_id TEXT NOT NULL,
+                    proposals_made INTEGER DEFAULT 0,
+                    critiques_given INTEGER DEFAULT 0,
+                    critiques_received INTEGER DEFAULT 0,
+                    proposal_accepted INTEGER DEFAULT 0,
+                    vote_aligned INTEGER DEFAULT 0,
+                    avg_critique_severity REAL DEFAULT 0.0,
+                    contribution_score REAL DEFAULT 0.5,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (debate_id) REFERENCES debate_summaries(debate_id)
+                )
+            """)
 
-        # Pattern clusters (aggregated from pattern insights)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pattern_clusters (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                pattern_text TEXT NOT NULL,
-                occurrence_count INTEGER DEFAULT 1,
-                avg_severity REAL DEFAULT 0.5,
-                debate_ids TEXT,  -- JSON array
-                first_seen TEXT,
-                last_seen TEXT,
-                UNIQUE(category, pattern_text)
-            )
-        """)
+            # Pattern clusters (aggregated from pattern insights)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pattern_clusters (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,
+                    pattern_text TEXT NOT NULL,
+                    occurrence_count INTEGER DEFAULT 1,
+                    avg_severity REAL DEFAULT 0.5,
+                    debate_ids TEXT,  -- JSON array
+                    first_seen TEXT,
+                    last_seen TEXT,
+                    UNIQUE(category, pattern_text)
+                )
+            """)
 
-        # Create indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_debate ON insights(debate_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_perf_name ON agent_performance_history(agent_name)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_pattern_category ON pattern_clusters(category)")
+            # Create indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_insights_debate ON insights(debate_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_perf_name ON agent_performance_history(agent_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pattern_category ON pattern_clusters(category)")
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     async def store_debate_insights(self, insights: DebateInsights) -> int:
         """
@@ -125,126 +124,123 @@ class InsightStore:
         Returns:
             Number of insights stored
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Store debate summary
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO debate_summaries
-            (debate_id, task, consensus_reached, duration_seconds,
-             total_insights, key_takeaway, agent_performances)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                insights.debate_id,
-                insights.task,
-                1 if insights.consensus_reached else 0,
-                insights.duration_seconds,
-                insights.total_insights,
-                insights.key_takeaway,
-                json.dumps([{
-                    "agent": p.agent_name,
-                    "proposals": p.proposals_made,
-                    "accepted": p.proposal_accepted,
-                    "score": p.contribution_score,
-                } for p in insights.agent_performances]),
+            # Store debate summary
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO debate_summaries
+                (debate_id, task, consensus_reached, duration_seconds,
+                 total_insights, key_takeaway, agent_performances)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    insights.debate_id,
+                    insights.task,
+                    1 if insights.consensus_reached else 0,
+                    insights.duration_seconds,
+                    insights.total_insights,
+                    insights.key_takeaway,
+                    json.dumps([{
+                        "agent": p.agent_name,
+                        "proposals": p.proposals_made,
+                        "accepted": p.proposal_accepted,
+                        "score": p.contribution_score,
+                    } for p in insights.agent_performances]),
+                )
             )
-        )
 
-        # Store each insight
-        stored_count = 0
-        for insight in insights.all_insights():
-            try:
+            # Store each insight
+            stored_count = 0
+            for insight in insights.all_insights():
+                try:
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO insights
+                        (id, type, title, description, confidence, debate_id,
+                         agents_involved, evidence, created_at, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            insight.id,
+                            insight.type.value,
+                            insight.title,
+                            insight.description,
+                            insight.confidence,
+                            insight.debate_id,
+                            json.dumps(insight.agents_involved),
+                            json.dumps(insight.evidence),
+                            insight.created_at,
+                            json.dumps(insight.metadata),
+                        )
+                    )
+                    stored_count += 1
+                except Exception as e:
+                    print(f"Error storing insight {insight.id}: {e}")
+
+            # Store agent performances
+            for perf in insights.agent_performances:
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO insights
-                    (id, type, title, description, confidence, debate_id,
-                     agents_involved, evidence, created_at, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO agent_performance_history
+                    (agent_name, debate_id, proposals_made, critiques_given,
+                     critiques_received, proposal_accepted, vote_aligned,
+                     avg_critique_severity, contribution_score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        insight.id,
-                        insight.type.value,
-                        insight.title,
-                        insight.description,
-                        insight.confidence,
-                        insight.debate_id,
-                        json.dumps(insight.agents_involved),
-                        json.dumps(insight.evidence),
-                        insight.created_at,
-                        json.dumps(insight.metadata),
+                        perf.agent_name,
+                        insights.debate_id,
+                        perf.proposals_made,
+                        perf.critiques_given,
+                        perf.critiques_received,
+                        1 if perf.proposal_accepted else 0,
+                        1 if perf.vote_aligned_with_consensus else 0,
+                        perf.average_critique_severity,
+                        perf.contribution_score,
                     )
                 )
-                stored_count += 1
-            except Exception as e:
-                print(f"Error storing insight {insight.id}: {e}")
 
-        # Store agent performances
-        for perf in insights.agent_performances:
-            cursor.execute(
-                """
-                INSERT INTO agent_performance_history
-                (agent_name, debate_id, proposals_made, critiques_given,
-                 critiques_received, proposal_accepted, vote_aligned,
-                 avg_critique_severity, contribution_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    perf.agent_name,
-                    insights.debate_id,
-                    perf.proposals_made,
-                    perf.critiques_given,
-                    perf.critiques_received,
-                    1 if perf.proposal_accepted else 0,
-                    1 if perf.vote_aligned_with_consensus else 0,
-                    perf.average_critique_severity,
-                    perf.contribution_score,
+            # Update pattern clusters
+            for insight in insights.pattern_insights:
+                category = insight.metadata.get('category', 'general')
+                pattern_text = insight.title
+
+                cursor.execute(
+                    """
+                    INSERT INTO pattern_clusters (category, pattern_text, occurrence_count,
+                        avg_severity, debate_ids, first_seen, last_seen)
+                    VALUES (?, ?, 1, ?, ?, ?, ?)
+                    ON CONFLICT(category, pattern_text) DO UPDATE SET
+                        occurrence_count = occurrence_count + 1,
+                        avg_severity = (avg_severity * occurrence_count + ?) / (occurrence_count + 1),
+                        debate_ids = json_insert(debate_ids, '$[#]', ?),
+                        last_seen = ?
+                    """,
+                    (
+                        category,
+                        pattern_text,
+                        insight.metadata.get('avg_severity', 0.5),
+                        json.dumps([insights.debate_id]),
+                        insight.created_at,
+                        insight.created_at,
+                        insight.metadata.get('avg_severity', 0.5),
+                        insights.debate_id,
+                        insight.created_at,
+                    )
                 )
-            )
 
-        # Update pattern clusters
-        for insight in insights.pattern_insights:
-            category = insight.metadata.get('category', 'general')
-            pattern_text = insight.title
-
-            cursor.execute(
-                """
-                INSERT INTO pattern_clusters (category, pattern_text, occurrence_count,
-                    avg_severity, debate_ids, first_seen, last_seen)
-                VALUES (?, ?, 1, ?, ?, ?, ?)
-                ON CONFLICT(category, pattern_text) DO UPDATE SET
-                    occurrence_count = occurrence_count + 1,
-                    avg_severity = (avg_severity * occurrence_count + ?) / (occurrence_count + 1),
-                    debate_ids = json_insert(debate_ids, '$[#]', ?),
-                    last_seen = ?
-                """,
-                (
-                    category,
-                    pattern_text,
-                    insight.metadata.get('avg_severity', 0.5),
-                    json.dumps([insights.debate_id]),
-                    insight.created_at,
-                    insight.created_at,
-                    insight.metadata.get('avg_severity', 0.5),
-                    insights.debate_id,
-                    insight.created_at,
-                )
-            )
-
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return stored_count
 
     async def get_insight(self, insight_id: str) -> Optional[Insight]:
         """Retrieve a specific insight by ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT * FROM insights WHERE id = ?", (insight_id,))
-        row = cursor.fetchone()
-        conn.close()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM insights WHERE id = ?", (insight_id,))
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -270,30 +266,29 @@ class InsightStore:
         Returns:
             List of matching insights
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        sql = "SELECT * FROM insights WHERE 1=1"
-        params = []
+            sql = "SELECT * FROM insights WHERE 1=1"
+            params = []
 
-        if query:
-            sql += " AND (title LIKE ? OR description LIKE ?)"
-            params.extend([f"%{query}%", f"%{query}%"])
+            if query:
+                sql += " AND (title LIKE ? OR description LIKE ?)"
+                params.extend([f"%{query}%", f"%{query}%"])
 
-        if insight_type:
-            sql += " AND type = ?"
-            params.append(insight_type.value)
+            if insight_type:
+                sql += " AND type = ?"
+                params.append(insight_type.value)
 
-        if agent:
-            sql += " AND agents_involved LIKE ?"
-            params.append(f'%"{agent}"%')
+            if agent:
+                sql += " AND agents_involved LIKE ?"
+                params.append(f'%"{agent}"%')
 
-        sql += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
 
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
 
         return [self._row_to_insight(row) for row in rows]
 
@@ -309,26 +304,25 @@ class InsightStore:
         Returns:
             List of pattern dictionaries with occurrence counts
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        sql = """
-            SELECT category, pattern_text, occurrence_count, avg_severity, last_seen
-            FROM pattern_clusters
-            WHERE occurrence_count >= ?
-        """
-        params = [min_occurrences]
+            sql = """
+                SELECT category, pattern_text, occurrence_count, avg_severity, last_seen
+                FROM pattern_clusters
+                WHERE occurrence_count >= ?
+            """
+            params = [min_occurrences]
 
-        if category:
-            sql += " AND category = ?"
-            params.append(category)
+            if category:
+                sql += " AND category = ?"
+                params.append(category)
 
-        sql += " ORDER BY occurrence_count DESC LIMIT ?"
-        params.append(limit)
+            sql += " ORDER BY occurrence_count DESC LIMIT ?"
+            params.append(limit)
 
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
 
         return [
             {
@@ -348,25 +342,24 @@ class InsightStore:
         Returns:
             Dictionary with performance metrics
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT
-                COUNT(*) as debate_count,
-                SUM(proposals_made) as total_proposals,
-                SUM(proposal_accepted) as proposals_accepted,
-                SUM(critiques_given) as total_critiques,
-                AVG(contribution_score) as avg_contribution,
-                AVG(avg_critique_severity) as avg_severity_received
-            FROM agent_performance_history
-            WHERE agent_name = ?
-            """,
-            (agent_name,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as debate_count,
+                    SUM(proposals_made) as total_proposals,
+                    SUM(proposal_accepted) as proposals_accepted,
+                    SUM(critiques_given) as total_critiques,
+                    AVG(contribution_score) as avg_contribution,
+                    AVG(avg_critique_severity) as avg_severity_received
+                FROM agent_performance_history
+                WHERE agent_name = ?
+                """,
+                (agent_name,)
+            )
+            row = cursor.fetchone()
 
         if not row or row[0] == 0:
             return {"agent": agent_name, "debate_count": 0}
@@ -389,24 +382,23 @@ class InsightStore:
         Returns:
             List of agent stats ordered by contribution score
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT
-                agent_name,
-                COUNT(*) as debate_count,
-                SUM(proposal_accepted) as proposals_accepted,
-                AVG(contribution_score) as avg_contribution
-            FROM agent_performance_history
-            GROUP BY agent_name
-            HAVING debate_count >= 1
-            ORDER BY avg_contribution DESC
-            """
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT
+                    agent_name,
+                    COUNT(*) as debate_count,
+                    SUM(proposal_accepted) as proposals_accepted,
+                    AVG(contribution_score) as avg_contribution
+                FROM agent_performance_history
+                GROUP BY agent_name
+                HAVING debate_count >= 1
+                ORDER BY avg_contribution DESC
+                """
+            )
+            rows = cursor.fetchall()
 
         return [
             {
@@ -420,45 +412,43 @@ class InsightStore:
 
     async def get_recent_insights(self, limit: int = 20) -> list[Insight]:
         """Get most recent insights across all debates."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT * FROM insights ORDER BY created_at DESC LIMIT ?",
-            (limit,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(
+                "SELECT * FROM insights ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
 
         return [self._row_to_insight(row) for row in rows]
 
     async def get_stats(self) -> dict:
         """Get overall statistics about stored insights."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        stats = {}
+            stats = {}
 
-        cursor.execute("SELECT COUNT(*) FROM insights")
-        stats["total_insights"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM insights")
+            stats["total_insights"] = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM debate_summaries")
-        stats["total_debates"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM debate_summaries")
+            stats["total_debates"] = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM debate_summaries WHERE consensus_reached = 1")
-        stats["consensus_debates"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM debate_summaries WHERE consensus_reached = 1")
+            stats["consensus_debates"] = cursor.fetchone()[0]
 
-        cursor.execute("SELECT type, COUNT(*) FROM insights GROUP BY type")
-        stats["insights_by_type"] = dict(cursor.fetchall())
+            cursor.execute("SELECT type, COUNT(*) FROM insights GROUP BY type")
+            stats["insights_by_type"] = dict(cursor.fetchall())
 
-        cursor.execute("SELECT COUNT(DISTINCT agent_name) FROM agent_performance_history")
-        stats["unique_agents"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(DISTINCT agent_name) FROM agent_performance_history")
+            stats["unique_agents"] = cursor.fetchone()[0]
 
-        cursor.execute("SELECT AVG(total_insights) FROM debate_summaries")
-        avg = cursor.fetchone()[0]
-        stats["avg_insights_per_debate"] = avg if avg else 0
+            cursor.execute("SELECT AVG(total_insights) FROM debate_summaries")
+            avg = cursor.fetchone()[0]
+            stats["avg_insights_per_debate"] = avg if avg else 0
 
-        conn.close()
         return stats
 
     def _row_to_insight(self, row) -> Insight:
