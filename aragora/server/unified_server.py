@@ -99,6 +99,23 @@ except ImportError:
     EMBEDDINGS_AVAILABLE = False
     DebateEmbeddingsDatabase = None
 
+# Optional ConsensusMemory for historical consensus data
+try:
+    from aragora.memory.consensus import ConsensusMemory, DissentRetriever
+    CONSENSUS_MEMORY_AVAILABLE = True
+except ImportError:
+    CONSENSUS_MEMORY_AVAILABLE = False
+    ConsensusMemory = None
+    DissentRetriever = None
+
+# Optional CalibrationTracker for agent calibration
+try:
+    from aragora.memory.calibration import CalibrationTracker
+    CALIBRATION_AVAILABLE = True
+except ImportError:
+    CALIBRATION_AVAILABLE = False
+    CalibrationTracker = None
+
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 
@@ -139,6 +156,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         try:
             val = int(query.get(key, [default])[0])
             return min(max(val, 1), max_val)
+        except (ValueError, IndexError, TypeError):
+            return default
+
+    def _safe_float(self, query: dict, key: str, default: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
+        """Safely parse float query param with bounds checking."""
+        try:
+            val = float(query.get(key, [default])[0])
+            return min(max(val, min_val), max_val)
         except (ValueError, IndexError, TypeError):
             return default
 
@@ -255,6 +280,27 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         elif path.startswith('/api/agent/') and path.endswith('/performance'):
             agent = path.split('/')[3]
             self._get_agent_performance(agent)
+
+        # Consensus Memory API (expose underutilized databases)
+        elif path == '/api/consensus/similar':
+            topic = query.get('topic', [''])[0]
+            limit = self._safe_int(query, 'limit', 5, 20)
+            self._get_similar_debates(topic, limit)
+        elif path == '/api/consensus/settled':
+            min_confidence = self._safe_float(query, 'min_confidence', 0.8, 0.0, 1.0)
+            limit = self._safe_int(query, 'limit', 20, 100)
+            self._get_settled_topics(min_confidence, limit)
+        elif path == '/api/consensus/stats':
+            self._get_consensus_stats()
+        elif path.startswith('/api/consensus/domain/'):
+            domain = path.split('/')[-1]
+            limit = self._safe_int(query, 'limit', 50, 200)
+            self._get_domain_history(domain, limit)
+
+        # Combined Agent Profile API
+        elif path.startswith('/api/agent/') and path.endswith('/profile'):
+            agent = path.split('/')[3]
+            self._get_agent_full_profile(agent)
 
         # Static file serving
         elif path in ('/', '/index.html'):
@@ -1092,6 +1138,179 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": str(e)})
+
+    # === Consensus Memory API ===
+
+    def _get_similar_debates(self, topic: str, limit: int) -> None:
+        """Find debates similar to a topic."""
+        if not CONSENSUS_MEMORY_AVAILABLE:
+            self._send_json({"error": "Consensus memory not available"}, status=503)
+            return
+
+        if not topic:
+            self._send_json({"error": "topic parameter required"}, status=400)
+            return
+
+        try:
+            memory = ConsensusMemory()
+            similar = memory.find_similar_debates(topic, limit=limit)
+            self._send_json({
+                "query": topic,
+                "results": [
+                    {
+                        "topic": s.consensus.topic,
+                        "conclusion": s.consensus.conclusion,
+                        "strength": s.consensus.strength.value,
+                        "confidence": s.consensus.confidence,
+                        "similarity": s.similarity_score,
+                        "agents": s.consensus.participating_agents,
+                        "dissent_count": len(s.dissents),
+                        "timestamp": s.consensus.timestamp.isoformat(),
+                    }
+                    for s in similar
+                ],
+                "count": len(similar),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, status=500)
+
+    def _get_settled_topics(self, min_confidence: float, limit: int) -> None:
+        """Get high-confidence settled topics."""
+        if not CONSENSUS_MEMORY_AVAILABLE:
+            self._send_json({"error": "Consensus memory not available"}, status=503)
+            return
+
+        try:
+            memory = ConsensusMemory()
+            # Query for high-confidence topics
+            import sqlite3
+            conn = sqlite3.connect(memory.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT topic, conclusion, confidence, strength, timestamp
+                FROM consensus
+                WHERE confidence >= ?
+                ORDER BY confidence DESC, timestamp DESC
+                LIMIT ?
+            """, (min_confidence, limit))
+            rows = cursor.fetchall()
+            conn.close()
+
+            self._send_json({
+                "min_confidence": min_confidence,
+                "topics": [
+                    {
+                        "topic": row[0],
+                        "conclusion": row[1],
+                        "confidence": row[2],
+                        "strength": row[3],
+                        "timestamp": row[4],
+                    }
+                    for row in rows
+                ],
+                "count": len(rows),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, status=500)
+
+    def _get_consensus_stats(self) -> None:
+        """Get consensus memory statistics."""
+        if not CONSENSUS_MEMORY_AVAILABLE:
+            self._send_json({"error": "Consensus memory not available"}, status=503)
+            return
+
+        try:
+            memory = ConsensusMemory()
+            stats = memory.get_statistics()
+            self._send_json(stats)
+        except Exception as e:
+            self._send_json({"error": str(e)}, status=500)
+
+    def _get_domain_history(self, domain: str, limit: int) -> None:
+        """Get consensus history for a domain."""
+        if not CONSENSUS_MEMORY_AVAILABLE:
+            self._send_json({"error": "Consensus memory not available"}, status=503)
+            return
+
+        try:
+            memory = ConsensusMemory()
+            records = memory.get_domain_consensus_history(domain, limit=limit)
+            self._send_json({
+                "domain": domain,
+                "history": [r.to_dict() for r in records],
+                "count": len(records),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, status=500)
+
+    def _get_agent_full_profile(self, agent: str) -> None:
+        """Get combined profile for an agent (ELO + Persona + Flips + Calibration)."""
+        profile = {"agent": agent}
+
+        # ELO ranking
+        if self.elo_system:
+            try:
+                rating = self.elo_system.get_rating(agent)
+                history = self.elo_system.get_match_history(agent, limit=10)
+                profile["ranking"] = {
+                    "rating": rating,
+                    "recent_matches": len(history),
+                }
+            except Exception:
+                profile["ranking"] = None
+        else:
+            profile["ranking"] = None
+
+        # Persona
+        if self.persona_manager:
+            try:
+                persona = self.persona_manager.get_persona(agent)
+                if persona:
+                    profile["persona"] = {
+                        "type": persona.persona_type.value,
+                        "primary_stance": persona.primary_stance,
+                        "specializations": persona.specializations[:3],
+                        "debate_count": persona.debate_count,
+                    }
+                else:
+                    profile["persona"] = None
+            except Exception:
+                profile["persona"] = None
+        else:
+            profile["persona"] = None
+
+        # Flip/consistency
+        if self.flip_detector:
+            try:
+                consistency = self.flip_detector.get_consistency_score(agent)
+                flips = self.flip_detector.get_agent_flips(agent, limit=5)
+                profile["consistency"] = {
+                    "score": consistency,
+                    "recent_flips": len(flips),
+                }
+            except Exception:
+                profile["consistency"] = None
+        else:
+            profile["consistency"] = None
+
+        # Calibration
+        if CALIBRATION_AVAILABLE:
+            try:
+                tracker = CalibrationTracker()
+                cal = tracker.get_agent_calibration(agent)
+                if cal:
+                    profile["calibration"] = {
+                        "brier_score": cal.get("brier_score"),
+                        "prediction_count": cal.get("prediction_count", 0),
+                    }
+                else:
+                    profile["calibration"] = None
+            except Exception:
+                profile["calibration"] = None
+        else:
+            profile["calibration"] = None
+
+        self._send_json(profile)
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""
