@@ -540,6 +540,61 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e), "history": []})
 
+    def _get_recent_flips(self, limit: int) -> None:
+        """Get recent position flips across all agents."""
+        if not self.flip_detector:
+            self._send_json({"error": "Flip detection not configured", "flips": []})
+            return
+
+        try:
+            flips = self.flip_detector.get_recent_flips(limit=limit)
+            self._send_json({
+                "flips": [format_flip_for_ui(f) for f in flips],
+                "count": len(flips),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "flips": []})
+
+    def _get_flip_summary(self) -> None:
+        """Get summary of all flips for dashboard display."""
+        if not self.flip_detector:
+            self._send_json({"error": "Flip detection not configured", "summary": {}})
+            return
+
+        try:
+            summary = self.flip_detector.get_flip_summary()
+            self._send_json({"summary": summary})
+        except Exception as e:
+            self._send_json({"error": str(e), "summary": {}})
+
+    def _get_agent_consistency(self, agent: str) -> None:
+        """Get consistency score for an agent."""
+        if not self.flip_detector:
+            self._send_json({"error": "Flip detection not configured", "consistency": {}})
+            return
+
+        try:
+            score = self.flip_detector.get_agent_consistency(agent)
+            self._send_json({"consistency": format_consistency_for_ui(score)})
+        except Exception as e:
+            self._send_json({"error": str(e), "consistency": {}})
+
+    def _get_agent_flips(self, agent: str, limit: int) -> None:
+        """Get flips for a specific agent."""
+        if not self.flip_detector:
+            self._send_json({"error": "Flip detection not configured", "flips": []})
+            return
+
+        try:
+            flips = self.flip_detector.detect_flips_for_agent(agent, lookback_positions=limit)
+            self._send_json({
+                "agent": agent,
+                "flips": [format_flip_for_ui(f) for f in flips],
+                "count": len(flips),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "flips": []})
+
     def _serve_file(self, filename: str) -> None:
         """Serve a static file."""
         if not self.static_dir:
@@ -665,6 +720,13 @@ class UnifiedServer:
                 if elo_path.exists():
                     UnifiedHandler.elo_system = EloSystem(str(elo_path))
                     print("[server] EloSystem loaded for leaderboard API")
+
+            # Initialize FlipDetector from nomic directory
+            if FLIP_DETECTOR_AVAILABLE:
+                personas_path = nomic_dir / "aragora_personas.db"
+                if personas_path.exists():
+                    UnifiedHandler.flip_detector = FlipDetector(str(personas_path))
+                    print("[server] FlipDetector loaded for position reversal API")
 
             # Initialize DocumentStore for file uploads
             doc_dir = nomic_dir / "documents"

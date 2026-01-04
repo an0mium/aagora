@@ -19,6 +19,25 @@ interface MemoryRecall {
   timestamp: string;
 }
 
+interface FlipEvent {
+  id: string;
+  agent: string;
+  type: 'contradiction' | 'retraction' | 'qualification' | 'refinement';
+  type_emoji: string;
+  before: { claim: string; confidence: string };
+  after: { claim: string; confidence: string };
+  similarity: string;
+  domain: string | null;
+  timestamp: string;
+}
+
+interface FlipSummary {
+  total_flips: number;
+  by_type: Record<string, number>;
+  by_agent: Record<string, number>;
+  recent_24h: number;
+}
+
 interface InsightsPanelProps {
   wsMessages?: any[];
 }
@@ -26,9 +45,11 @@ interface InsightsPanelProps {
 export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [memoryRecalls, setMemoryRecalls] = useState<MemoryRecall[]>([]);
+  const [flips, setFlips] = useState<FlipEvent[]>([]);
+  const [flipSummary, setFlipSummary] = useState<FlipSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'insights' | 'memory'>('insights');
+  const [activeTab, setActiveTab] = useState<'insights' | 'memory' | 'flips'>('insights');
 
   const fetchInsights = useCallback(async () => {
     try {
@@ -47,9 +68,31 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
     }
   }, []);
 
+  const fetchFlips = useCallback(async () => {
+    try {
+      const [flipsRes, summaryRes] = await Promise.all([
+        fetch('/api/flips/recent?limit=15'),
+        fetch('/api/flips/summary'),
+      ]);
+
+      if (flipsRes.ok) {
+        const flipsData = await flipsRes.json();
+        setFlips(flipsData.flips || []);
+      }
+
+      if (summaryRes.ok) {
+        const summaryData = await summaryRes.json();
+        setFlipSummary(summaryData.summary || null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch flips:', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchInsights();
-  }, [fetchInsights]);
+    fetchFlips();
+  }, [fetchInsights, fetchFlips]);
 
   // Listen for memory_recall WebSocket events
   useEffect(() => {
@@ -89,6 +132,21 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
     return 'text-red-400';
   };
 
+  const getFlipTypeColor = (type: string): string => {
+    switch (type) {
+      case 'contradiction':
+        return 'bg-red-500/20 text-red-400 border-red-500/30';
+      case 'retraction':
+        return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+      case 'qualification':
+        return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+      case 'refinement':
+        return 'bg-green-500/20 text-green-400 border-green-500/30';
+      default:
+        return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+    }
+  };
+
   return (
     <div className="bg-surface border border-border rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
@@ -121,7 +179,17 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
               : 'text-text-muted hover:text-text'
           }`}
         >
-          Memory Recalls ({memoryRecalls.length})
+          Memory ({memoryRecalls.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('flips')}
+          className={`px-3 py-1 rounded text-sm transition-colors flex-1 ${
+            activeTab === 'flips'
+              ? 'bg-accent text-bg font-medium'
+              : 'text-text-muted hover:text-text'
+          }`}
+        >
+          Flips ({flips.length})
         </button>
       </div>
 
@@ -226,6 +294,100 @@ export function InsightsPanel({ wsMessages = [] }: InsightsPanelProps) {
               {recall.count > 3 && (
                 <div className="text-xs text-text-muted mt-1">
                   +{recall.count - 3} more matches
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Flips Tab */}
+      {activeTab === 'flips' && (
+        <div className="space-y-3 max-h-96 overflow-y-auto">
+          {/* Summary Header */}
+          {flipSummary && flipSummary.total_flips > 0 && (
+            <div className="p-3 bg-bg border border-border rounded-lg mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-text">Position Reversals</span>
+                <span className="text-xs text-text-muted">
+                  {flipSummary.recent_24h} in 24h
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                {flipSummary.by_type.contradiction > 0 && (
+                  <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded">
+                    {flipSummary.by_type.contradiction} contradictions
+                  </span>
+                )}
+                {flipSummary.by_type.retraction > 0 && (
+                  <span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded">
+                    {flipSummary.by_type.retraction} retractions
+                  </span>
+                )}
+                {flipSummary.by_type.qualification > 0 && (
+                  <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">
+                    {flipSummary.by_type.qualification} qualifications
+                  </span>
+                )}
+                {flipSummary.by_type.refinement > 0 && (
+                  <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
+                    {flipSummary.by_type.refinement} refinements
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {flips.length === 0 && (
+            <div className="text-center text-text-muted py-4">
+              No position flips detected yet. Flips are tracked when agents reverse their positions.
+            </div>
+          )}
+
+          {flips.map((flip) => (
+            <div
+              key={flip.id}
+              className="p-3 bg-bg border border-border rounded-lg hover:border-accent/50 transition-colors"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-2 py-0.5 text-xs rounded border ${getFlipTypeColor(flip.type)}`}
+                  >
+                    {flip.type_emoji} {flip.type}
+                  </span>
+                  <span className="text-xs text-text-muted font-mono">
+                    {flip.agent}
+                  </span>
+                </div>
+                <span className="text-xs text-text-muted">
+                  {flip.similarity} similar
+                </span>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div className="p-2 bg-red-500/10 border border-red-500/20 rounded">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-red-400 font-medium">Before</span>
+                    <span className="text-text-muted">{flip.before.confidence}</span>
+                  </div>
+                  <p className="text-text-muted">{flip.before.claim}</p>
+                </div>
+
+                <div className="p-2 bg-green-500/10 border border-green-500/20 rounded">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-green-400 font-medium">After</span>
+                    <span className="text-text-muted">{flip.after.confidence}</span>
+                  </div>
+                  <p className="text-text-muted">{flip.after.claim}</p>
+                </div>
+              </div>
+
+              {flip.domain && (
+                <div className="mt-2">
+                  <span className="px-1.5 py-0.5 text-xs bg-surface rounded text-text-muted">
+                    {flip.domain}
+                  </span>
                 </div>
               )}
             </div>
