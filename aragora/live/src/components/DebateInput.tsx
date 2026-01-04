@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 interface DebateInputProps {
   apiBase: string;
@@ -8,12 +8,39 @@ interface DebateInputProps {
   onError?: (error: string) => void;
 }
 
+type ApiStatus = 'checking' | 'online' | 'offline';
+
 export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputProps) {
   const [question, setQuestion] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [agents, setAgents] = useState('claude,openai');
   const [rounds, setRounds] = useState(3);
+  const [apiStatus, setApiStatus] = useState<ApiStatus>('checking');
+
+  // Check API health on mount
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const response = await fetch(`${apiBase}/api/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        setApiStatus(response.ok ? 'online' : 'offline');
+      } catch {
+        setApiStatus('offline');
+      }
+    };
+
+    checkHealth();
+    // Re-check every 30 seconds
+    const interval = setInterval(checkHealth, 30000);
+    return () => clearInterval(interval);
+  }, [apiBase]);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +72,15 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
         onError?.(data.error || 'Failed to start debate');
       }
     } catch (err) {
-      onError?.(err instanceof Error ? err.message : 'Network error');
+      // Provide more helpful error messages
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        onError?.('API server unavailable. The backend may be offline or unreachable.');
+        setApiStatus('offline');
+      } else if (err instanceof Error && err.name === 'AbortError') {
+        onError?.('Request timed out. The server may be overloaded.');
+      } else {
+        onError?.(err instanceof Error ? err.message : 'Network error');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -63,16 +98,32 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
     placeholders[Math.floor(Math.random() * placeholders.length)]
   );
 
+  const isDisabled = isSubmitting || apiStatus === 'offline' || apiStatus === 'checking';
+
   return (
     <div className="w-full max-w-3xl mx-auto">
+      {/* API Status Banner */}
+      {apiStatus === 'offline' && (
+        <div className="mb-4 p-3 bg-warning/10 border border-warning/30 font-mono text-sm">
+          <div className="flex items-center gap-2 text-warning">
+            <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+            <span>API server offline</span>
+          </div>
+          <p className="text-text-muted text-xs mt-1">
+            The debate backend is currently unavailable. Try running locally:
+            <code className="ml-2 bg-bg px-1">python scripts/run_nomic_with_stream.py run</code>
+          </p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Main Input */}
         <div className="relative">
           <textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder={placeholder}
-            disabled={isSubmitting}
+            placeholder={apiStatus === 'offline' ? 'API server offline...' : placeholder}
+            disabled={isDisabled}
             rows={3}
             className="w-full bg-bg border-2 border-acid-green/50 focus:border-acid-green
                        px-4 py-3 font-mono text-lg text-text placeholder-text-muted/50
@@ -102,16 +153,18 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
 
           <button
             type="submit"
-            disabled={!question.trim() || isSubmitting}
+            disabled={!question.trim() || isDisabled}
             className="px-6 py-2 bg-acid-green text-bg font-mono font-bold
                        hover:bg-acid-green/80 transition-colors
                        disabled:bg-text-muted disabled:cursor-not-allowed
                        flex items-center gap-2"
           >
-            {isSubmitting ? (
-              <>
-                <span className="animate-pulse">STARTING...</span>
-              </>
+            {apiStatus === 'checking' ? (
+              <span className="animate-pulse">CONNECTING...</span>
+            ) : apiStatus === 'offline' ? (
+              <span>OFFLINE</span>
+            ) : isSubmitting ? (
+              <span className="animate-pulse">STARTING...</span>
             ) : (
               <>
                 <span>[&gt;]</span>
@@ -173,7 +226,15 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
 
       {/* Hint */}
       <p className="mt-4 text-center text-xs font-mono text-text-muted/60">
-        AI agents will debate your question and reach a consensus
+        {apiStatus === 'online' ? (
+          'AI agents will debate your question and reach a consensus'
+        ) : apiStatus === 'offline' ? (
+          <span className="text-warning/70">
+            Start the local server or wait for the hosted API to come online
+          </span>
+        ) : (
+          'Checking API connection...'
+        )}
       </p>
     </div>
   );

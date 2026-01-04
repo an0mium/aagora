@@ -55,8 +55,13 @@ documents = [
     "pypdf>=3.0",
     "python-docx>=0.8",
 ]
+broadcast = [
+    "edge-tts>=6.1.0",
+    "pydub>=0.25.0",
+    "pyttsx3>=2.90;platform_system=='Darwin' or platform_system=='Windows'",
+]
 all = [
-    "aragora[dev,persistence,documents]",
+    "aragora[dev,persistence,documents,broadcast]",
 ]
 
 [project.scripts]
