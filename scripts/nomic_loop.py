@@ -3992,7 +3992,7 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
                 provider_id="gemini-explorer",
                 model="gemini-3-pro",
                 role="explorer",
-                timeout=1800,  # 30 min for agentic codebase exploration
+                timeout=600,  # 10 min for agentic codebase exploration (reduced from 30 min)
                 mode="architect",
             )
             grok_explorer = KiloCodeAgent(
@@ -4000,7 +4000,7 @@ CRITICAL: Be thorough. Features you miss here may be accidentally proposed for r
                 provider_id="grok-explorer",
                 model="grok-code-fast-1",
                 role="explorer",
-                timeout=1800,  # 30 min for agentic codebase exploration
+                timeout=600,  # 10 min for agentic codebase exploration (reduced from 30 min)
                 mode="architect",
             )
             exploration_tasks.extend([
