@@ -15,9 +15,13 @@ from threading import Thread
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
-from .stream import DebateStreamServer, SyncEventEmitter
+from .stream import DebateStreamServer, SyncEventEmitter, StreamEvent, StreamEventType, create_arena_hooks
 from .storage import DebateStorage
 from .documents import DocumentStore, parse_document, get_supported_formats, SUPPORTED_EXTENSIONS
+
+# For ad-hoc debates
+import threading
+import uuid
 
 # Optional Supabase persistence
 try:
@@ -54,6 +58,38 @@ try:
 except ImportError:
     FLIP_DETECTOR_AVAILABLE = False
     FlipDetector = None
+
+# Optional debate orchestrator for ad-hoc debates
+try:
+    from aragora.debate.orchestrator import Arena, DebateProtocol
+    from aragora.agents.base import create_agent
+    from aragora.core import Environment
+    DEBATE_AVAILABLE = True
+except ImportError:
+    DEBATE_AVAILABLE = False
+    Arena = None
+    DebateProtocol = None
+    create_agent = None
+    Environment = None
+
+# Track active ad-hoc debates
+_active_debates: dict[str, dict] = {}
+
+
+def _run_async(coro):
+    """Run async coroutine in HTTP handler thread (which may not have an event loop)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Can't use run_until_complete if loop is running
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result(timeout=30)
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No event loop in this thread, create one
+        return asyncio.run(coro)
 
 
 class UnifiedHandler(BaseHTTPRequestHandler):
@@ -171,6 +207,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
         if path == '/api/documents/upload':
             self._upload_document()
+        elif path == '/api/debate':
+            self._start_debate()
         else:
             self.send_error(404, f"Unknown POST endpoint: {path}")
 
@@ -281,6 +319,137 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": f"Failed to parse document: {str(e)}"}, status=500)
 
+    def _start_debate(self) -> None:
+        """Start an ad-hoc debate with specified question.
+
+        Accepts JSON body with:
+            question: The topic/question to debate (required)
+            agents: Comma-separated agent list (optional, default: "claude,openai")
+            rounds: Number of debate rounds (optional, default: 3)
+            consensus: Consensus method (optional, default: "majority")
+        """
+        global _active_debates
+
+        if not DEBATE_AVAILABLE:
+            self._send_json({"error": "Debate orchestrator not available"}, status=500)
+            return
+
+        if not self.stream_emitter:
+            self._send_json({"error": "Event streaming not configured"}, status=500)
+            return
+
+        # Parse JSON body
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length == 0:
+            self._send_json({"error": "No content provided"}, status=400)
+            return
+
+        try:
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode('utf-8'))
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, status=400)
+            return
+
+        # Validate required fields
+        question = data.get('question', '').strip()
+        if not question:
+            self._send_json({"error": "question field is required"}, status=400)
+            return
+
+        # Parse optional fields
+        agents_str = data.get('agents', 'claude,openai')
+        rounds = min(max(int(data.get('rounds', 3)), 1), 10)  # Clamp to 1-10
+        consensus = data.get('consensus', 'majority')
+
+        # Generate debate ID
+        debate_id = f"adhoc_{uuid.uuid4().hex[:8]}"
+
+        # Track this debate
+        _active_debates[debate_id] = {
+            "id": debate_id,
+            "question": question,
+            "status": "starting",
+            "agents": agents_str,
+            "rounds": rounds,
+        }
+
+        # Set loop_id on emitter so events are tagged
+        self.stream_emitter.set_loop_id(debate_id)
+
+        # Start debate in background thread
+        def run_debate():
+            import asyncio as _asyncio
+
+            try:
+                # Parse agents
+                agent_specs = []
+                for spec in agents_str.split(","):
+                    spec = spec.strip()
+                    if ":" in spec:
+                        agent_type, role = spec.split(":", 1)
+                    else:
+                        agent_type = spec
+                        role = None
+                    agent_specs.append((agent_type, role))
+
+                # Create agents
+                agents = []
+                for i, (agent_type, role) in enumerate(agent_specs):
+                    if role is None:
+                        if i == 0:
+                            role = "proposer"
+                        elif i == len(agent_specs) - 1:
+                            role = "synthesizer"
+                        else:
+                            role = "critic"
+                    agent = create_agent(
+                        model_type=agent_type,
+                        name=f"{agent_type}_{role}",
+                        role=role,
+                    )
+                    agents.append(agent)
+
+                # Create environment and protocol
+                env = Environment(task=question, context="", max_rounds=rounds)
+                protocol = DebateProtocol(rounds=rounds, consensus=consensus)
+
+                # Create arena with hooks
+                hooks = create_arena_hooks(self.stream_emitter)
+                arena = Arena(env, agents, protocol, event_hooks=hooks)
+
+                # Run debate
+                _active_debates[debate_id]["status"] = "running"
+                result = _asyncio.run(arena.run())
+                _active_debates[debate_id]["status"] = "completed"
+                _active_debates[debate_id]["result"] = {
+                    "final_answer": result.final_answer,
+                    "consensus_reached": result.consensus_reached,
+                    "confidence": result.confidence,
+                }
+            except Exception as e:
+                _active_debates[debate_id]["status"] = "error"
+                _active_debates[debate_id]["error"] = str(e)
+                # Emit error event
+                self.stream_emitter.emit(StreamEvent(
+                    type=StreamEventType.ERROR,
+                    data={"error": str(e), "debate_id": debate_id},
+                ))
+
+        debate_thread = threading.Thread(target=run_debate, daemon=True)
+        debate_thread.start()
+
+        # Return immediately with debate ID
+        self._send_json({
+            "success": True,
+            "debate_id": debate_id,
+            "question": question,
+            "agents": agents_str.split(","),
+            "rounds": rounds,
+            "status": "starting",
+            "message": "Debate started. Connect to WebSocket to receive events.",
+        })
+
     def _list_documents(self) -> None:
         """List all uploaded documents."""
         if not self.document_store:
@@ -378,8 +547,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            import asyncio
-            cycles = asyncio.get_event_loop().run_until_complete(
+            cycles = _run_async(
                 self.persistence.list_cycles(loop_id=loop_id, limit=limit)
             )
             self._send_json({
@@ -400,8 +568,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            import asyncio
-            events = asyncio.get_event_loop().run_until_complete(
+            events = _run_async(
                 self.persistence.get_events(loop_id=loop_id, limit=limit)
             )
             self._send_json({
@@ -418,8 +585,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            import asyncio
-            debates = asyncio.get_event_loop().run_until_complete(
+            debates = _run_async(
                 self.persistence.list_debates(loop_id=loop_id, limit=limit)
             )
             self._send_json({
@@ -440,8 +606,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            import asyncio
-            summary = asyncio.get_event_loop().run_until_complete(
+            summary = _run_async(
                 self.persistence.get_loop_summary(loop_id)
             )
             self._send_json(summary)
@@ -455,8 +620,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            import asyncio
-            insights = asyncio.get_event_loop().run_until_complete(
+            insights = _run_async(
                 self.insight_store.get_recent_insights(limit=limit)
             )
             self._send_json({
