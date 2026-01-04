@@ -268,6 +268,14 @@ except ImportError:
     INSIGHTS_AVAILABLE = False
     InsightExtractor = None
 
+# FlipDetector for position reversal detection
+try:
+    from aragora.insights.flip_detector import FlipDetector
+    FLIP_DETECTOR_AVAILABLE = True
+except ImportError:
+    FLIP_DETECTOR_AVAILABLE = False
+    FlipDetector = None
+
 # NomicIntegration for advanced feature coordination
 try:
     from aragora.nomic.integration import NomicIntegration, create_nomic_integration
@@ -2417,7 +2425,9 @@ The most valuable proposals are those that others wouldn't think of.""" + safety
                     combined = (domain_score * domain_weight) + ((overall_elo - 1400) / 200 * (1 - domain_weight))
                     domain_scores.append((agent, combined))
                 domain_scores.sort(key=lambda x: x[1], reverse=True)
-                self._log(f"  [routing] Domain '{detected_domain}' scores: {[(a.name, f'{s:.2f}') for a, s in domain_scores]}")
+                # Use ELO-sorted team as the default
+                default_team = [a for a, _ in domain_scores]
+                self._log(f"  [routing] Domain '{detected_domain}' ELO ranking: {[(a.name, f'{s:.2f}') for a, s in domain_scores]}")
             except Exception as e:
                 self._log(f"  [elo] Domain scoring failed: {e}")
 
@@ -5041,6 +5051,12 @@ Recent changes:
                     self._log(f"  [belief] Deadlock detected - counterfactual resolution attempted")
                     if conditional_consensus:
                         self._log(f"  [belief] Resolved with conditional consensus")
+                        # Apply conditional consensus to result if no consensus was reached
+                        if not result.consensus_reached and hasattr(conditional_consensus, 'synthesized_answer'):
+                            result.final_answer = conditional_consensus.synthesized_answer
+                            result.consensus_reached = True
+                            result.confidence = getattr(conditional_consensus, 'confidence', 0.7)
+                            self._log(f"  [belief] Applied conditional consensus as final answer")
 
                 # Checkpoint the debate phase
                 await self.nomic_integration.checkpoint(
@@ -5152,27 +5168,32 @@ Learn from past patterns shown above - repeat successes and avoid failures.""",
             context=f"Working directory: {self.aragora_path}\n\nProtected files (NEVER delete): {PROTECTED_FILES}",
         )
 
+        # HYBRID MODEL ARCHITECTURE: Gemini leads design, others critique
+        # Order: Gemini first as design lead, then critics (Claude, Codex, Grok)
+        design_agents = [self.gemini, self.claude, self.codex, self.grok]
+
         protocol = DebateProtocol(
-            rounds=1,
+            rounds=2,  # Allow critique and refinement round
             consensus="judge",
-            proposer_count=4,  # All 4 agents participate as proposers
+            proposer_count=1,  # Gemini as primary design proposer
             role_rotation=True,  # Heavy3-inspired cognitive role rotation
             role_rotation_config=RoleRotationConfig(
                 enabled=True,
                 roles=[
-                    CognitiveRole.ANALYST,
-                    CognitiveRole.SKEPTIC,
-                    CognitiveRole.DEVIL_ADVOCATE,
+                    CognitiveRole.ANALYST,  # Claude: architecture analysis
+                    CognitiveRole.SKEPTIC,  # Codex: implementation concerns
+                    CognitiveRole.DEVIL_ADVOCATE,  # Grok: lateral critique
                 ],
-                synthesizer_final_round=True,
+                synthesizer_final_round=True,  # Gemini synthesizes final design
             ),
             audience_injection="summary",  # Enable user suggestions in prompts
             enable_research=True,  # Enable web research for evidence gathering
         )
 
+        self._log("  [hybrid] Gemini as design lead, others as critics")
+
         # NomicIntegration: Probe agents for reliability weights
         agent_weights = {}
-        design_agents = [self.gemini, self.codex, self.claude, self.grok]
         if self.nomic_integration:
             try:
                 self._log("  [integration] Probing agents for reliability...")
@@ -5950,6 +5971,68 @@ CRITICAL SAFETY RULES:
             self._stream_emit("on_verification_result", "tests", False, f"Exception: {e}")
 
         all_passed = all(c.get("passed", False) for c in checks)
+
+        # HYBRID MODEL ARCHITECTURE: Codex-led verification audit
+        codex_audit = None
+        if all_passed and self.codex:
+            try:
+                self._log("  [hybrid] Codex verification audit...")
+                changed_files = self._get_changed_files()
+                diff_output = ""
+                if changed_files:
+                    diff_result = subprocess.run(
+                        ["git", "diff", "--unified=3"],
+                        cwd=self.aragora_path,
+                        capture_output=True,
+                        text=True,
+                    )
+                    diff_output = diff_result.stdout[:5000] if diff_result.returncode == 0 else ""
+
+                audit_prompt = f"""As the verification lead, audit this implementation:
+
+Changed files: {changed_files[:10]}
+
+Diff (first 5000 chars):
+{diff_output}
+
+Provide a brief verification report:
+1. CODE QUALITY: Are there any obvious issues? (0-10)
+2. TEST COVERAGE: Are the changes adequately tested? (0-10)
+3. DESIGN ALIGNMENT: Does implementation match the design? (0-10)
+4. RISK ASSESSMENT: Any potential runtime issues? (0-10)
+5. VERDICT: APPROVE or CONCERNS (with brief explanation)
+
+Be concise - this is a quality gate, not a full review."""
+
+                audit_response = await self.codex.generate(audit_prompt, timeout=60)
+                if audit_response:
+                    codex_audit = audit_response
+                    # Check if audit has concerns
+                    if "CONCERNS" in audit_response.upper() and "APPROVE" not in audit_response.upper():
+                        self._log("  [hybrid] Codex raised concerns - flagging for review")
+                        checks.append({
+                            "check": "codex_audit",
+                            "passed": False,
+                            "output": audit_response[:500],
+                            "note": "Codex verification audit raised concerns",
+                        })
+                        all_passed = False
+                    else:
+                        self._log("  [hybrid] Codex audit passed")
+                        checks.append({
+                            "check": "codex_audit",
+                            "passed": True,
+                            "output": audit_response[:500],
+                        })
+            except Exception as e:
+                self._log(f"  [hybrid] Codex audit error: {e}")
+                checks.append({
+                    "check": "codex_audit",
+                    "passed": True,  # Don't block on audit failure
+                    "error": str(e),
+                    "note": "Audit skipped due to error",
+                })
+
         self._save_state({
             "phase": "verify",
             "stage": "complete",

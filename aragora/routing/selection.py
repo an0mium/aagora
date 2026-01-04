@@ -326,6 +326,91 @@ class AgentSelector:
 
         return roles
 
+    def assign_hybrid_roles(
+        self,
+        team: list[AgentProfile],
+        phase: str,
+    ) -> dict[str, str]:
+        """
+        Assign phase-specific roles for Hybrid Model Architecture.
+
+        Architecture:
+        - Gemini: Primary planner/designer (leads Phase 2)
+        - Claude: Primary implementer (leads Phase 3)
+        - Codex: Primary verifier (leads Phase 4)
+        - Grok: Lateral thinker/devil's advocate (critiques all phases)
+        """
+        roles = {}
+        agent_map = {a.name.lower(): a for a in team}
+
+        # Helper to find agent by type
+        def find_agent(agent_type: str) -> AgentProfile | None:
+            for agent in team:
+                if agent_type in agent.name.lower() or agent.agent_type == agent_type:
+                    return agent
+            return None
+
+        gemini = find_agent("gemini")
+        claude = find_agent("claude")
+        codex = find_agent("codex")
+        grok = find_agent("grok")
+
+        if phase == "debate":
+            # All agents are proposers in debate phase
+            for agent in team:
+                roles[agent.name] = "proposer"
+
+        elif phase == "design":
+            # Gemini leads design as primary proposer
+            if gemini:
+                roles[gemini.name] = "design_lead"
+            if claude:
+                roles[claude.name] = "architecture_critic"
+            if codex:
+                roles[codex.name] = "implementation_critic"
+            if grok:
+                roles[grok.name] = "devil_advocate"
+            # Fallback for any unassigned
+            for agent in team:
+                if agent.name not in roles:
+                    roles[agent.name] = "critic"
+
+        elif phase == "implement":
+            # Claude leads implementation
+            if claude:
+                roles[claude.name] = "implementer"
+            # Others are advisors
+            for agent in team:
+                if agent.name not in roles:
+                    roles[agent.name] = "advisor"
+
+        elif phase == "verify":
+            # Codex leads verification
+            if codex:
+                roles[codex.name] = "verification_lead"
+            if grok:
+                roles[grok.name] = "quality_auditor"
+            if gemini:
+                roles[gemini.name] = "design_validator"
+            if claude:
+                roles[claude.name] = "implementation_reviewer"
+            # Fallback
+            for agent in team:
+                if agent.name not in roles:
+                    roles[agent.name] = "reviewer"
+
+        elif phase == "commit":
+            # All agents review commit
+            for agent in team:
+                roles[agent.name] = "reviewer"
+
+        else:
+            # Fallback to standard role assignment
+            for agent in team:
+                roles[agent.name] = "participant"
+
+        return roles
+
     def _calculate_diversity(self, team: list[AgentProfile]) -> float:
         """Calculate team diversity score."""
         if len(team) <= 1:
