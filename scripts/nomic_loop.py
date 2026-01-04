@@ -3078,7 +3078,9 @@ Be concise (max 500 words). Focus on actionable guidance."""
                 result = await self._call_agent_with_retry(agent, suggestion_prompt, max_retries=2)
                 if result and not ("[Agent" in result and "failed" in result):
                     self._log(f"    {name}: suggestions received", agent=name)
-                    return (name, result[:1500])
+                    # Emit full suggestion content to stream for dashboard visibility
+                    self._stream_emit("on_log_message", result, level="info", phase="implement", agent=name)
+                    return (name, result)  # Return full result, no truncation
                 else:
                     return (name, "")
             except Exception as e:
@@ -4254,13 +4256,13 @@ Learn from past patterns shown above - repeat successes and avoid failures.""",
                 "last_task": task_id,
                 "last_success": result.success,
             })
-            # Stream task completion event
+            # Stream task completion event (full diff for dashboard visibility)
             self._stream_emit(
                 "on_task_complete",
                 task_id,
                 result.success,
                 result.duration_seconds,
-                result.diff[:500] if result.diff else "",
+                result.diff if result.diff else "",  # Full diff, no truncation
                 result.error if not result.success else None,
             )
 
