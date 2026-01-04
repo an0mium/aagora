@@ -165,6 +165,22 @@ except ImportError:
     broadcast_debate = None
     DebateTrace = None
 
+# Optional RelationshipTracker for agent network analysis
+try:
+    from aragora.agents.grounded import RelationshipTracker
+    RELATIONSHIP_TRACKER_AVAILABLE = True
+except ImportError:
+    RELATIONSHIP_TRACKER_AVAILABLE = False
+    RelationshipTracker = None
+
+# Optional CritiqueStore for pattern retrieval
+try:
+    from aragora.memory.store import CritiqueStore
+    CRITIQUE_STORE_AVAILABLE = True
+except ImportError:
+    CRITIQUE_STORE_AVAILABLE = False
+    CritiqueStore = None
+
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 _active_debates_lock = threading.Lock()  # Thread-safe access to _active_debates
@@ -482,6 +498,44 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             limit = self._safe_int(query, 'limit', 50, 200)
             self._get_agent_positions(agent, limit)
+
+        # Agent Relationship Network API
+        elif path.startswith('/api/agent/') and path.endswith('/network'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            self._get_agent_network(agent)
+        elif path.startswith('/api/agent/') and path.endswith('/rivals'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            limit = self._safe_int(query, 'limit', 5, 20)
+            self._get_agent_rivals(agent, limit)
+        elif path.startswith('/api/agent/') and path.endswith('/allies'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            limit = self._safe_int(query, 'limit', 5, 20)
+            self._get_agent_allies(agent, limit)
+
+        # System Statistics API
+        elif path == '/api/ranking/stats':
+            self._get_ranking_stats()
+        elif path == '/api/memory/stats':
+            self._get_memory_stats()
+        elif path == '/api/critiques/patterns':
+            limit = self._safe_int(query, 'limit', 10, 50)
+            min_success = float(query.get('min_success', ['0.5'])[0])
+            self._get_critique_patterns(limit, min_success)
+
+        # Agent Comparison API
+        elif path == '/api/agent/compare':
+            agent_a = query.get('agent_a', [None])[0]
+            agent_b = query.get('agent_b', [None])[0]
+            if not agent_a or not agent_b:
+                self._send_json({"error": "agent_a and agent_b query params required"}, status=400)
+            else:
+                self._get_agent_comparison(agent_a, agent_b)
 
         # Static file serving
         elif path in ('/', '/index.html'):
@@ -915,10 +969,12 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 state = json.load(f)
             self._send_json(state)
         except Exception as e:
-            self._send_json({"status": "error", "message": str(e)})
+            self._send_json({"status": "error", "message": _safe_error_message(e, "nomic_state")})
 
     def _get_nomic_log(self, lines: int = 100) -> None:
         """Get last N lines of nomic loop log."""
+        if not self._check_rate_limit():
+            return
         if not self.nomic_state_file:
             self._send_json({"lines": []})
             return
@@ -959,7 +1015,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(cycles),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "cycles": []})
+            self._send_json({"error": _safe_error_message(e, "history_cycles"), "cycles": []})
 
     def _get_history_events(self, loop_id: Optional[str], limit: int) -> None:
         """Get stream events from Supabase."""
@@ -980,7 +1036,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(events),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "events": []})
+            self._send_json({"error": _safe_error_message(e, "history_events"), "events": []})
 
     def _get_history_debates(self, loop_id: Optional[str], limit: int) -> None:
         """Get debate artifacts from Supabase."""
@@ -997,7 +1053,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(debates),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "debates": []})
+            self._send_json({"error": _safe_error_message(e, "history_debates"), "debates": []})
 
     def _get_history_summary(self, loop_id: Optional[str]) -> None:
         """Get summary statistics for a loop."""
@@ -1015,7 +1071,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             )
             self._send_json(summary)
         except Exception as e:
-            self._send_json({"error": str(e)})
+            self._send_json({"error": _safe_error_message(e, "history_summary")})
 
     def _get_recent_insights(self, limit: int) -> None:
         """Get recent insights from InsightStore (debate consensus feature)."""
@@ -1043,7 +1099,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(insights),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "insights": []})
+            self._send_json({"error": _safe_error_message(e, "insights"), "insights": []})
 
     def _get_leaderboard(self, limit: int, domain: Optional[str]) -> None:
         """Get agent leaderboard by ELO ranking (debate consensus feature)."""
@@ -1069,7 +1125,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(agents),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "agents": []})
+            self._send_json({"error": _safe_error_message(e, "agents"), "agents": []})
 
     def _get_recent_matches(self, limit: int, loop_id: Optional[str] = None) -> None:
         """Get recent match results (debate consensus feature).
@@ -1090,7 +1146,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 matches = [m for m in matches if m.get('loop_id') == loop_id]
             self._send_json({"matches": matches, "count": len(matches)})
         except Exception as e:
-            self._send_json({"error": str(e), "matches": []})
+            self._send_json({"error": _safe_error_message(e, "matches"), "matches": []})
 
     def _get_agent_history(self, agent: str, limit: int) -> None:
         """Get ELO history for an agent (debate consensus feature)."""
@@ -1106,7 +1162,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(history),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "history": []})
+            self._send_json({"error": _safe_error_message(e, "elo_history"), "history": []})
 
     def _get_calibration_leaderboard(self, limit: int) -> None:
         """Get agents ranked by calibration score (accuracy vs confidence)."""
@@ -1131,7 +1187,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(agents),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "agents": []})
+            self._send_json({"error": _safe_error_message(e, "agents"), "agents": []})
 
     def _get_agent_calibration(self, agent: str, domain: Optional[str] = None) -> None:
         """Get detailed calibration metrics for an agent."""
@@ -1156,7 +1212,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "domain_calibration": domain_calibration,
             })
         except Exception as e:
-            self._send_json({"error": str(e)})
+            self._send_json({"error": _safe_error_message(e, "persona_update")})
 
     def _get_trending_topics(self, limit: int) -> None:
         """Get trending topics from pulse ingestors."""
@@ -1281,7 +1337,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                         })
             self._send_json(sorted(replays, key=lambda x: x["id"], reverse=True))
         except Exception as e:
-            self._send_json({"error": str(e)})
+            self._send_json({"error": _safe_error_message(e, "list_replays")})
 
     def _get_replay(self, replay_id: str) -> None:
         """Get a specific replay with events."""
@@ -1313,7 +1369,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "events": events,
             })
         except Exception as e:
-            self._send_json({"error": str(e)})
+            self._send_json({"error": _safe_error_message(e, "get_replay")})
 
     def _get_learning_evolution(self) -> None:
         """Get learning/evolution data from meta_learning.db."""
@@ -1345,7 +1401,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(patterns),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "patterns": []})
+            self._send_json({"error": _safe_error_message(e, "patterns"), "patterns": []})
 
     def _get_recent_flips(self, limit: int) -> None:
         """Get recent position flips across all agents."""
@@ -1360,7 +1416,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(flips),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "flips": []})
+            self._send_json({"error": _safe_error_message(e, "flips"), "flips": []})
 
     def _get_flip_summary(self) -> None:
         """Get summary of all flips for dashboard display."""
@@ -1372,7 +1428,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             summary = self.flip_detector.get_flip_summary()
             self._send_json({"summary": summary})
         except Exception as e:
-            self._send_json({"error": str(e), "summary": {}})
+            self._send_json({"error": _safe_error_message(e, "flip_summary"), "summary": {}})
 
     def _get_agent_consistency(self, agent: str) -> None:
         """Get consistency score for an agent."""
@@ -1384,7 +1440,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             score = self.flip_detector.get_agent_consistency(agent)
             self._send_json({"consistency": format_consistency_for_ui(score)})
         except Exception as e:
-            self._send_json({"error": str(e), "consistency": {}})
+            self._send_json({"error": _safe_error_message(e, "agent_consistency"), "consistency": {}})
 
     def _get_agent_flips(self, agent: str, limit: int) -> None:
         """Get flips for a specific agent."""
@@ -1400,7 +1456,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(flips),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "flips": []})
+            self._send_json({"error": _safe_error_message(e, "flips"), "flips": []})
 
     def _get_all_personas(self) -> None:
         """Get all agent personas."""
@@ -1425,7 +1481,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "count": len(personas),
             })
         except Exception as e:
-            self._send_json({"error": str(e), "personas": []})
+            self._send_json({"error": _safe_error_message(e, "personas"), "personas": []})
 
     def _get_agent_persona(self, agent: str) -> None:
         """Get persona for a specific agent."""
@@ -1449,7 +1505,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": f"No persona found for agent '{agent}'", "persona": None})
         except Exception as e:
-            self._send_json({"error": str(e)})
+            self._send_json({"error": _safe_error_message(e, "get_persona")})
 
     def _get_agent_performance(self, agent: str) -> None:
         """Get performance summary for an agent."""
@@ -1464,7 +1520,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "performance": summary,
             })
         except Exception as e:
-            self._send_json({"error": str(e)})
+            self._send_json({"error": _safe_error_message(e, "agent_performance")})
 
     # === Consensus Memory API ===
 
@@ -1830,6 +1886,113 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Position tracking module not available"}, status=503)
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "agent_positions")}, status=500)
+
+    def _get_agent_network(self, agent: str) -> None:
+        """Get complete influence/relationship network for an agent."""
+        if not self._check_rate_limit():
+            return
+
+        if not RELATIONSHIP_TRACKER_AVAILABLE:
+            self._send_json({"error": "Relationship tracking not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "grounded_positions.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"agent": agent, "message": "No relationship data"})
+                return
+
+            tracker = RelationshipTracker(str(db_path))
+            network = tracker.get_influence_network(agent)
+            rivals = tracker.get_rivals(agent, limit=5)
+            allies = tracker.get_allies(agent, limit=5)
+
+            self._send_json({
+                "agent": agent,
+                "influences": network.get("influences", []),
+                "influenced_by": network.get("influenced_by", []),
+                "rivals": rivals,
+                "allies": allies,
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "agent_network")}, status=500)
+
+    def _get_agent_rivals(self, agent: str, limit: int) -> None:
+        """Get top rivals for an agent."""
+        if not self._check_rate_limit():
+            return
+
+        if not RELATIONSHIP_TRACKER_AVAILABLE:
+            self._send_json({"error": "Relationship tracking not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "grounded_positions.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"agent": agent, "rivals": []})
+                return
+
+            tracker = RelationshipTracker(str(db_path))
+            rivals = tracker.get_rivals(agent, limit=limit)
+            self._send_json({"agent": agent, "rivals": rivals, "count": len(rivals)})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "agent_rivals")}, status=500)
+
+    def _get_agent_allies(self, agent: str, limit: int) -> None:
+        """Get top allies for an agent."""
+        if not self._check_rate_limit():
+            return
+
+        if not RELATIONSHIP_TRACKER_AVAILABLE:
+            self._send_json({"error": "Relationship tracking not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "grounded_positions.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"agent": agent, "allies": []})
+                return
+
+            tracker = RelationshipTracker(str(db_path))
+            allies = tracker.get_allies(agent, limit=limit)
+            self._send_json({"agent": agent, "allies": allies, "count": len(allies)})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "agent_allies")}, status=500)
+
+    def _get_critique_patterns(self, limit: int, min_success: float) -> None:
+        """Get high-impact critique patterns for learning."""
+        if not self._check_rate_limit():
+            return
+
+        if not CRITIQUE_STORE_AVAILABLE:
+            self._send_json({"error": "Critique store not available"}, status=503)
+            return
+
+        try:
+            db_path = self.nomic_dir / "debates.db" if self.nomic_dir else None
+            if not db_path or not db_path.exists():
+                self._send_json({"patterns": [], "count": 0})
+                return
+
+            store = CritiqueStore(str(db_path))
+            patterns = store.retrieve_patterns(min_success_rate=min_success, limit=limit)
+            stats = store.get_stats()
+
+            self._send_json({
+                "patterns": [
+                    {
+                        "issue_type": p.issue_type,
+                        "pattern": p.pattern_text,
+                        "success_rate": p.success_rate,
+                        "usage_count": p.usage_count,
+                    }
+                    for p in patterns
+                ],
+                "count": len(patterns),
+                "stats": stats,
+            })
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "critique_patterns")}, status=500)
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""
