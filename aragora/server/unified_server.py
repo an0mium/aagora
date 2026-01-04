@@ -242,6 +242,16 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             limit = self._safe_int(query, 'limit', 20, 100)
             self._get_agent_flips(agent, limit)
 
+        # Persona API
+        elif path == '/api/personas':
+            self._get_all_personas()
+        elif path.startswith('/api/agent/') and path.endswith('/persona'):
+            agent = path.split('/')[3]
+            self._get_agent_persona(agent)
+        elif path.startswith('/api/agent/') and path.endswith('/performance'):
+            agent = path.split('/')[3]
+            self._get_agent_performance(agent)
+
         # Static file serving
         elif path in ('/', '/index.html'):
             self._serve_file('index.html')
@@ -989,6 +999,70 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json({"error": str(e), "flips": []})
+
+    def _get_all_personas(self) -> None:
+        """Get all agent personas."""
+        if not self.persona_manager:
+            self._send_json({"error": "Persona management not configured", "personas": []})
+            return
+
+        try:
+            personas = self.persona_manager.get_all_personas()
+            self._send_json({
+                "personas": [
+                    {
+                        "agent_name": p.agent_name,
+                        "description": p.description,
+                        "traits": p.traits,
+                        "expertise": p.expertise,
+                        "created_at": p.created_at,
+                        "updated_at": p.updated_at,
+                    }
+                    for p in personas
+                ],
+                "count": len(personas),
+            })
+        except Exception as e:
+            self._send_json({"error": str(e), "personas": []})
+
+    def _get_agent_persona(self, agent: str) -> None:
+        """Get persona for a specific agent."""
+        if not self.persona_manager:
+            self._send_json({"error": "Persona management not configured"})
+            return
+
+        try:
+            persona = self.persona_manager.get_persona(agent)
+            if persona:
+                self._send_json({
+                    "persona": {
+                        "agent_name": persona.agent_name,
+                        "description": persona.description,
+                        "traits": persona.traits,
+                        "expertise": persona.expertise,
+                        "created_at": persona.created_at,
+                        "updated_at": persona.updated_at,
+                    }
+                })
+            else:
+                self._send_json({"error": f"No persona found for agent '{agent}'", "persona": None})
+        except Exception as e:
+            self._send_json({"error": str(e)})
+
+    def _get_agent_performance(self, agent: str) -> None:
+        """Get performance summary for an agent."""
+        if not self.persona_manager:
+            self._send_json({"error": "Persona management not configured"})
+            return
+
+        try:
+            summary = self.persona_manager.get_performance_summary(agent)
+            self._send_json({
+                "agent": agent,
+                "performance": summary,
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)})
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""

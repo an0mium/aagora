@@ -6,6 +6,7 @@ debate protocols and consensus mechanisms.
 """
 
 import asyncio
+import queue
 import random
 import time
 from dataclasses import dataclass, field
@@ -214,6 +215,7 @@ class Arena:
         elo_system=None,  # Optional EloSystem for relationship tracking
         persona_manager=None,  # Optional PersonaManager for agent specialization
         loop_id: str = "",  # Loop ID for multi-loop scoping
+        strict_loop_scoping: bool = False,  # Drop events without loop_id when True
     ):
         self.env = environment
         self.agents = agents
@@ -231,10 +233,12 @@ class Arena:
         self.elo_system = elo_system  # For relationship tracking
         self.persona_manager = persona_manager  # For agent specialization context
         self.loop_id = loop_id  # Loop ID for scoping events
+        self.strict_loop_scoping = strict_loop_scoping  # Enforce loop_id on all events
 
-        # User participation tracking
-        self.user_votes: list[dict] = []  # List of user vote events
-        self.user_suggestions: list[dict] = []  # List of user suggestion events
+        # User participation tracking (thread-safe mailbox pattern)
+        self._user_event_queue: queue.Queue = queue.Queue()
+        self.user_votes: list[dict] = []  # Populated via _drain_user_events()
+        self.user_suggestions: list[dict] = []  # Populated via _drain_user_events()
 
         # Cognitive role rotation (Heavy3-inspired)
         self.role_rotator: Optional[RoleRotator] = None
@@ -366,17 +370,54 @@ class Arena:
             return [c for c in all_critics if c.name != proposal_agent]
 
     def _handle_user_event(self, event) -> None:
-        """Handle incoming user participation events."""
+        """Handle incoming user participation events (thread-safe).
+
+        Events are enqueued for later processing by _drain_user_events().
+        This method may be called from any thread (e.g., WebSocket server).
+        """
         from aragora.server.stream import StreamEventType
 
         # Ignore events from other loops to prevent cross-contamination
-        if hasattr(event, 'loop_id') and event.loop_id and event.loop_id != self.loop_id:
+        event_loop_id = getattr(event, 'loop_id', None)
+        if event_loop_id and event_loop_id != self.loop_id:
             return
 
-        if event.type == StreamEventType.USER_VOTE:
-            self.user_votes.append(event.data)
-        elif event.type == StreamEventType.USER_SUGGESTION:
-            self.user_suggestions.append(event.data)
+        # In strict scoping mode, drop events without a loop_id
+        if self.strict_loop_scoping and not event_loop_id:
+            return
+
+        # Enqueue for processing (thread-safe)
+        if event.type in (StreamEventType.USER_VOTE, StreamEventType.USER_SUGGESTION):
+            self._user_event_queue.put((event.type, event.data))
+
+    def _drain_user_events(self) -> None:
+        """Drain pending user events from queue into working lists.
+
+        This method should be called at safe points in the debate loop:
+        - Before building prompts that include audience suggestions
+        - Before vote aggregation that includes user votes
+
+        This is the 'digest' phase of the Stadium Mailbox pattern.
+        """
+        from aragora.server.stream import StreamEventType
+
+        drained_count = 0
+        while True:
+            try:
+                event_type, event_data = self._user_event_queue.get_nowait()
+                if event_type == StreamEventType.USER_VOTE:
+                    self.user_votes.append(event_data)
+                elif event_type == StreamEventType.USER_SUGGESTION:
+                    self.user_suggestions.append(event_data)
+                drained_count += 1
+            except queue.Empty:
+                break
+
+        if drained_count > 0:
+            self._notify_spectator(
+                "audience_drain",
+                details=f"Processed {drained_count} audience events",
+            )
 
     def _notify_spectator(self, event_type: str, **kwargs):
         """Helper method to emit spectator events."""
@@ -1217,6 +1258,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     vote_counts[canonical] += vote_weight
                     total_weighted_votes += vote_weight
 
+            # Drain pending user events before processing votes
+            self._drain_user_events()
+
             # Include user votes with configurable weight and conviction-based intensity multiplier
             base_user_weight = getattr(self.protocol, 'user_vote_weight', 0.5)  # Default: users count as half an agent
             for user_vote in self.user_votes:
@@ -1346,6 +1390,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 if not isinstance(v, Exception):
                     canonical = choice_mapping.get(v.choice, v.choice)
                     vote_counts[canonical] += 1
+
+            # Drain pending user events before processing votes
+            self._drain_user_events()
 
             # Include user votes if configured
             user_vote_weight = getattr(self.protocol, 'user_vote_weight', 0.0)  # Default: users don't affect unanimity
@@ -1894,6 +1941,9 @@ and building on others' ideas."""
 
     def _build_proposal_prompt(self, agent: Agent) -> str:
         """Build the initial proposal prompt."""
+        # Drain pending audience events before building prompt
+        self._drain_user_events()
+
         context_str = f"\n\nContext: {self.env.context}" if self.env.context else ""
         stance_str = self._get_stance_guidance(agent)
         stance_section = f"\n\n{stance_str}" if stance_str else ""
@@ -1951,6 +2001,9 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
         self, agent: Agent, original: str, critiques: list[Critique]
     ) -> str:
         """Build the revision prompt including critiques."""
+        # Drain pending audience events before building prompt
+        self._drain_user_events()
+
         critiques_str = "\n\n".join(c.to_prompt() for c in critiques)
         intensity_guidance = self._get_agreement_intensity_guidance()
         stance_str = self._get_stance_guidance(agent)

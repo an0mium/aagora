@@ -15,6 +15,38 @@ from typing import Optional
 from aragora.core import Agent, Critique, Message
 
 
+# Patterns that might contain sensitive data in error messages
+_SENSITIVE_PATTERNS = [
+    (r'sk-[a-zA-Z0-9]{20,}', '<REDACTED_KEY>'),  # OpenAI key pattern
+    (r'AIza[a-zA-Z0-9_-]{35}', '<REDACTED_KEY>'),  # Google API key pattern
+    (r'["\']?api[_-]?key["\']?\s*[:=]\s*["\']?[\w-]+["\']?', 'api_key=<REDACTED>'),
+    (r'["\']?authorization["\']?\s*[:=]\s*["\']?Bearer\s+[\w.-]+["\']?', 'authorization=<REDACTED>'),
+    (r'["\']?token["\']?\s*[:=]\s*["\']?[\w.-]+["\']?', 'token=<REDACTED>'),
+    (r'["\']?secret["\']?\s*[:=]\s*["\']?[\w-]+["\']?', 'secret=<REDACTED>'),
+    (r'x-api-key:\s*[\w-]+', 'x-api-key: <REDACTED>'),
+]
+
+
+def _sanitize_error_message(error_text: str, max_length: int = 500) -> str:
+    """Sanitize error message to remove potential secrets.
+
+    - Redacts patterns that look like API keys or tokens
+    - Truncates to prevent log flooding
+    - Preserves useful diagnostic info (status codes, error types)
+    """
+    sanitized = error_text
+
+    # Apply all redaction patterns
+    for pattern, replacement in _SENSITIVE_PATTERNS:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+
+    # Truncate long messages
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length] + "... [truncated]"
+
+    return sanitized
+
+
 class APIAgent(Agent):
     """Base class for API-based agents."""
 
@@ -161,7 +193,8 @@ class GeminiAgent(APIAgent):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise RuntimeError(f"Gemini API error {response.status}: {error_text}")
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"Gemini API error {response.status}: {sanitized}")
 
                 data = await response.json()
 
@@ -264,7 +297,8 @@ class OllamaAgent(APIAgent):
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        raise RuntimeError(f"Ollama API error {response.status}: {error_text}")
+                        sanitized = _sanitize_error_message(error_text)
+                        raise RuntimeError(f"Ollama API error {response.status}: {sanitized}")
 
                     data = await response.json()
                     return data.get("response", "")
@@ -355,7 +389,8 @@ class AnthropicAPIAgent(APIAgent):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise RuntimeError(f"Anthropic API error {response.status}: {error_text}")
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"Anthropic API error {response.status}: {sanitized}")
 
                 data = await response.json()
 
@@ -438,7 +473,8 @@ class OpenAIAPIAgent(APIAgent):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise RuntimeError(f"OpenAI API error {response.status}: {error_text}")
+                    sanitized = _sanitize_error_message(error_text)
+                    raise RuntimeError(f"OpenAI API error {response.status}: {sanitized}")
 
                 data = await response.json()
 
