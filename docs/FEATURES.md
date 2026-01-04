@@ -703,6 +703,28 @@ system.record_position("claude", "claim-123", 0.85, "debate-456")
 accuracy = system.compute_calibration("claude")
 ```
 
+### CalibrationTracker
+**File:** `aragora/agents/calibration.py`
+
+Tracks prediction accuracy using Brier scoring and ECE (Expected Calibration Error).
+
+```python
+from aragora.agents.calibration import CalibrationTracker
+
+tracker = CalibrationTracker(db_path="calibration.db")
+tracker.record_prediction("claude", confidence=0.85, correct=True, domain="security")
+summary = tracker.get_calibration_summary("claude")
+print(f"Brier score: {summary['brier_score']:.4f}")
+print(f"ECE: {summary['ece']:.4f}")
+curve = tracker.get_calibration_curve("claude")  # For visualization
+```
+
+**Key Metrics:**
+- Brier score (lower is better calibration)
+- ECE (Expected Calibration Error)
+- Per-domain calibration breakdown
+- Calibration curve data for plotting
+
 ### DissentRetriever (Enhanced)
 **File:** `aragora/memory/consensus.py`
 
@@ -747,6 +769,47 @@ staleness = await manager.check_staleness(claims, changed_files)
 if staleness.needs_redebate:
     print(f"Stale claims: {staleness.stale_claims}")
 ```
+
+### BeliefPropagationAnalyzer (Integrated)
+**File:** `aragora/reasoning/belief.py`
+
+Now integrated into Arena for automatic crux identification and evidence suggestions.
+
+```python
+from aragora.reasoning.belief import BeliefNetwork, BeliefPropagationAnalyzer
+
+# Automatically used in Arena after consensus:
+# - result.debate_cruxes: Key claims that drive disagreement
+# - result.evidence_suggestions: Claims needing more evidence
+```
+
+**Crux Analysis:**
+- Identifies claims with high centrality and high uncertainty
+- Suggests evidence targets to reduce debate uncertainty
+- Computes consensus probability
+
+### ContinuumMemory (Integrated)
+**File:** `aragora/memory/continuum.py`
+
+Now integrated into Arena for cross-debate learning context.
+
+```python
+from aragora.memory.continuum import ContinuumMemory, MemoryTier
+
+# Arena uses continuum_memory parameter:
+arena = Arena(
+    environment=env,
+    agents=agents,
+    continuum_memory=ContinuumMemory("continuum.db"),  # NEW
+)
+# Relevant past learnings are automatically injected into agent context
+```
+
+**Memory Tiers:**
+- FAST (1 day half-life) - Recent patterns
+- MEDIUM (1 week) - Recurring patterns
+- SLOW (1 month) - Established patterns
+- GLACIAL (1 year) - Foundational knowledge
 
 ---
 

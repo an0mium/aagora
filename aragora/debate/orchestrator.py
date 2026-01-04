@@ -327,11 +327,50 @@ class Arena:
         # Cache for research context (computed once per debate)
         self._research_context_cache: Optional[str] = None
 
+        # Cache for continuum memory context (retrieved once per debate)
+        self._continuum_context_cache: str = ""
+
         # Citation extraction (Heavy3-inspired evidence grounding)
         self.citation_extractor = None
         ExtractorClass = _get_citation_extractor()
         if ExtractorClass:
             self.citation_extractor = ExtractorClass()
+
+    def _get_continuum_context(self) -> str:
+        """Retrieve relevant memories from ContinuumMemory for debate context.
+
+        Uses the debate task to query for related past learnings.
+        """
+        if self._continuum_context_cache:
+            return self._continuum_context_cache
+
+        if not self.continuum_memory:
+            return ""
+
+        try:
+            # Retrieve top memories related to debate topic
+            memories = self.continuum_memory.retrieve(
+                query=self.env.task[:200],  # Use task as query
+                limit=5,
+                min_importance=0.3,  # Only important memories
+            )
+
+            if not memories:
+                return ""
+
+            # Format memories as context
+            context_parts = ["[Previous learnings relevant to this debate:]"]
+            for mem in memories[:3]:  # Top 3 most relevant
+                content = mem.content[:200] if hasattr(mem, 'content') else str(mem)[:200]
+                tier = mem.tier.value if hasattr(mem, 'tier') else "unknown"
+                context_parts.append(f"- [{tier}] {content}")
+
+            self._continuum_context_cache = "\n".join(context_parts)
+            print(f"  [continuum] Retrieved {len(memories)} relevant memories")
+            return self._continuum_context_cache
+        except Exception as e:
+            print(f"  [continuum] Memory retrieval error: {e}")
+            return ""
 
     def _extract_citation_needs(self, proposals: dict[str, str]) -> dict[str, list[dict]]:
         """Extract claims that need citations from all proposals.
@@ -2263,6 +2302,12 @@ and building on others' ideas."""
             historical = self._historical_context_cache[:800]
             historical_section = f"\n\n{historical}"
 
+        # Include continuum memory context (cross-debate learnings)
+        continuum_section = ""
+        continuum_context = self._get_continuum_context()
+        if continuum_context:
+            continuum_section = f"\n\n{continuum_context}"
+
         # Include historical dissents and minority views (prevents repeating known mistakes)
         dissent_section = ""
         if self.dissent_retriever:
@@ -2301,7 +2346,7 @@ and building on others' ideas."""
                 )
 
         return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}{flip_section}
-{historical_section}{dissent_section}{patterns_section}{audience_section}
+{historical_section}{continuum_section}{dissent_section}{patterns_section}{audience_section}
 Task: {self.env.task}{context_str}
 
 Please provide your best proposal to address this task. Be thorough and specific.
