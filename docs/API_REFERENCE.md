@@ -610,6 +610,62 @@ Get learning evolution patterns.
 
 ---
 
+### Modes
+
+List available debate and operational modes.
+
+#### GET /api/modes
+Get all available modes.
+
+**Response:**
+```json
+{
+  "modes": [
+    {
+      "name": "architect",
+      "description": "High-level design and planning mode",
+      "category": "operational",
+      "tool_groups": ["read", "browser", "mcp"]
+    },
+    {
+      "name": "redteam",
+      "description": "Adversarial red-teaming for security analysis",
+      "category": "debate"
+    }
+  ],
+  "count": 8
+}
+```
+
+---
+
+### Agent Position Tracking
+
+Track agent positions and consistency via truth-grounding system.
+
+#### GET /api/agent/:name/positions
+Get position history for an agent.
+
+**Parameters:**
+- `limit` (int, default=50, max=200): Maximum positions to return
+
+**Response:**
+```json
+{
+  "agent": "claude",
+  "total_positions": 45,
+  "avg_confidence": 0.82,
+  "reversal_count": 3,
+  "consistency_score": 0.93,
+  "positions_by_debate": {
+    "rate-limiter-2026-01-01": 5,
+    "consensus-algo-2026-01-02": 3
+  }
+}
+```
+
+---
+
 ## WebSocket API
 
 Connect to the WebSocket server for real-time streaming:

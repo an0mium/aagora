@@ -471,6 +471,18 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             limit = self._safe_int(query, 'limit', 20, 100)
             self._get_early_stop_signals(limit)
 
+        # Modes API
+        elif path == '/api/modes':
+            self._list_available_modes()
+
+        # Agent Position Tracking API
+        elif path.startswith('/api/agent/') and path.endswith('/positions'):
+            agent = self._extract_path_segment(path, 3, "agent")
+            if agent is None:
+                return
+            limit = self._safe_int(query, 'limit', 50, 200)
+            self._get_agent_positions(agent, limit)
+
         # Static file serving
         elif path in ('/', '/index.html'):
             self._serve_file('index.html')
@@ -677,7 +689,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             return
 
         # Parse optional fields
-        agents_str = data.get('agents', 'claude,openai')
+        agents_str = data.get('agents', 'gemini,anthropic-api')
         rounds = min(max(int(data.get('rounds', 3)), 1), 10)  # Clamp to 1-10
         consensus = data.get('consensus', 'majority')
 
@@ -1744,6 +1756,80 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"early_stops": early_stops, "count": len(early_stops)})
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "early_stops"), "early_stops": []})
+
+    def _list_available_modes(self) -> None:
+        """List available debate and operational modes."""
+        try:
+            from aragora.modes import ModeRegistry
+            from aragora.modes.builtin import register_all_builtins
+
+            # Ensure builtins are registered
+            register_all_builtins()
+
+            modes = []
+            for name, mode_cls in ModeRegistry.list_modes().items():
+                mode_info = {
+                    "name": name,
+                    "description": (getattr(mode_cls, '__doc__', '') or '').strip().split('\n')[0],
+                    "category": "operational",
+                }
+                # Add tool groups if available
+                if hasattr(mode_cls, 'tool_groups'):
+                    mode_info["tool_groups"] = [g.value for g in mode_cls.tool_groups]
+                modes.append(mode_info)
+
+            # Add debate modes
+            debate_modes = [
+                {"name": "redteam", "description": "Adversarial red-teaming for security analysis", "category": "debate"},
+                {"name": "deep_audit", "description": "Heavy3-inspired intensive debate protocol", "category": "debate"},
+                {"name": "capability_probe", "description": "Agent capability and vulnerability probing", "category": "debate"},
+            ]
+            modes.extend(debate_modes)
+
+            self._send_json({"modes": modes, "count": len(modes)})
+        except ImportError:
+            # Modes module not available, return empty list
+            self._send_json({"modes": [], "count": 0, "warning": "Modes module not available"})
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "modes"), "modes": []})
+
+    def _get_agent_positions(self, agent: str, limit: int) -> None:
+        """Get position history for an agent from truth grounding system."""
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.agents.truth_grounding import PositionLedger
+
+            # Try to use existing position ledger or create one
+            if hasattr(self, 'position_ledger') and self.position_ledger:
+                ledger = self.position_ledger
+            else:
+                # Create a temporary ledger instance
+                db_path = self.nomic_dir / "aragora_personas.db" if self.nomic_dir else None
+                if not db_path or not db_path.exists():
+                    self._send_json({"error": "Position tracking not configured"}, status=503)
+                    return
+                ledger = PositionLedger(db_path=str(db_path))
+
+            # Get agent stats
+            stats = ledger.get_agent_stats(agent)
+            if stats:
+                self._send_json({
+                    "agent": agent,
+                    "total_positions": stats.get("total_positions", 0),
+                    "avg_confidence": stats.get("avg_confidence", 0.0),
+                    "reversal_count": stats.get("reversal_count", 0),
+                    "consistency_score": stats.get("consistency_score", 1.0),
+                    "positions_by_debate": stats.get("positions_by_debate", {}),
+                })
+            else:
+                self._send_json({"agent": agent, "total_positions": 0, "message": "No position data"})
+
+        except ImportError:
+            self._send_json({"error": "Position tracking module not available"}, status=503)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "agent_positions")}, status=500)
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""

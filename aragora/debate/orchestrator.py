@@ -214,6 +214,7 @@ class Arena:
         position_ledger=None,  # Optional PositionLedger for grounded personas
         elo_system=None,  # Optional EloSystem for relationship tracking
         persona_manager=None,  # Optional PersonaManager for agent specialization
+        dissent_retriever=None,  # Optional DissentRetriever for historical minority views
         loop_id: str = "",  # Loop ID for multi-loop scoping
         strict_loop_scoping: bool = False,  # Drop events without loop_id when True
     ):
@@ -232,6 +233,7 @@ class Arena:
         self.position_ledger = position_ledger  # Grounded persona position ledger
         self.elo_system = elo_system  # For relationship tracking
         self.persona_manager = persona_manager  # For agent specialization context
+        self.dissent_retriever = dissent_retriever  # For historical minority views in debates
         self.loop_id = loop_id  # Loop ID for scoping events
         self.strict_loop_scoping = strict_loop_scoping  # Enforce loop_id on all events
 
@@ -2045,6 +2047,18 @@ and building on others' ideas."""
             historical = self._historical_context_cache[:800]
             historical_section = f"\n\n{historical}"
 
+        # Include historical dissents and minority views (prevents repeating known mistakes)
+        dissent_section = ""
+        if self.dissent_retriever:
+            try:
+                dissent_context = self.dissent_retriever.get_debate_preparation_context(
+                    topic=self.env.task
+                )
+                if dissent_context:
+                    dissent_section = f"\n\n## Historical Minority Views\n{dissent_context[:600]}"
+            except Exception:
+                pass  # Non-critical, continue without historical dissent
+
         # Include successful patterns from past debates
         patterns_section = ""
         patterns = self._format_successful_patterns(limit=3)
@@ -2071,7 +2085,7 @@ and building on others' ideas."""
                 )
 
         return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}
-{historical_section}{patterns_section}{audience_section}
+{historical_section}{dissent_section}{patterns_section}{audience_section}
 Task: {self.env.task}{context_str}
 
 Please provide your best proposal to address this task. Be thorough and specific.
