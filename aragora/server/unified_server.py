@@ -12,7 +12,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from threading import Thread
-from typing import Optional
+from typing import Optional, Dict
 from urllib.parse import urlparse, parse_qs
 
 from .stream import DebateStreamServer, SyncEventEmitter, StreamEvent, StreamEventType, create_arena_hooks
@@ -430,6 +430,12 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _debate_executor_lock = threading.Lock()  # Lock for thread-safe executor creation
     MAX_CONCURRENT_DEBATES = 10  # Limit concurrent debates to prevent resource exhaustion
 
+    # Upload rate limiting (IP-based, independent of auth)
+    _upload_counts: Dict[str, list] = {}  # IP -> list of upload timestamps
+    _upload_counts_lock = threading.Lock()
+    MAX_UPLOADS_PER_MINUTE = 5  # Maximum uploads per IP per minute
+    MAX_UPLOADS_PER_HOUR = 30  # Maximum uploads per IP per hour
+
     def _safe_int(self, query: dict, key: str, default: int, max_val: int = 100) -> int:
         """Safely parse integer query param with bounds checking."""
         try:
@@ -536,6 +542,57 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("X-RateLimit-Remaining", str(remaining))
             self.send_header("X-RateLimit-Limit", str(auth_config.rate_limit_per_minute))
+
+        return True
+
+    def _check_upload_rate_limit(self) -> bool:
+        """Check IP-based upload rate limit. Returns True if allowed, False if blocked.
+
+        Uses sliding window rate limiting per IP address.
+        """
+        import time
+
+        # Get client IP (handle proxy headers)
+        client_ip = self.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+        if not client_ip:
+            client_ip = self.client_address[0] if hasattr(self, 'client_address') else 'unknown'
+
+        now = time.time()
+        one_minute_ago = now - 60
+        one_hour_ago = now - 3600
+
+        with UnifiedHandler._upload_counts_lock:
+            # Get or create upload history for this IP
+            if client_ip not in UnifiedHandler._upload_counts:
+                UnifiedHandler._upload_counts[client_ip] = []
+
+            # Clean up old entries
+            UnifiedHandler._upload_counts[client_ip] = [
+                ts for ts in UnifiedHandler._upload_counts[client_ip]
+                if ts > one_hour_ago
+            ]
+
+            timestamps = UnifiedHandler._upload_counts[client_ip]
+
+            # Check per-minute limit
+            recent_minute = sum(1 for ts in timestamps if ts > one_minute_ago)
+            if recent_minute >= UnifiedHandler.MAX_UPLOADS_PER_MINUTE:
+                self._send_json({
+                    "error": f"Upload rate limit exceeded. Max {UnifiedHandler.MAX_UPLOADS_PER_MINUTE} uploads per minute.",
+                    "retry_after": 60
+                }, status=429)
+                return False
+
+            # Check per-hour limit
+            if len(timestamps) >= UnifiedHandler.MAX_UPLOADS_PER_HOUR:
+                self._send_json({
+                    "error": f"Upload rate limit exceeded. Max {UnifiedHandler.MAX_UPLOADS_PER_HOUR} uploads per hour.",
+                    "retry_after": 3600
+                }, status=429)
+                return False
+
+            # Record this upload
+            UnifiedHandler._upload_counts[client_ip].append(now)
 
         return True
 
@@ -987,9 +1044,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self.send_error(404, f"Unknown POST endpoint: {path}")
 
     def _upload_document(self) -> None:
-        """Handle document upload. Rate limited when auth enabled."""
-        # Rate limit uploads
+        """Handle document upload. Rate limited by auth and IP-based limits."""
+        # Rate limit uploads (auth-based when enabled)
         if not self._check_rate_limit():
+            return
+
+        # IP-based upload rate limiting (always active, prevents DoS)
+        if not self._check_upload_rate_limit():
             return
 
         if not self.document_store:

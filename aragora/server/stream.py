@@ -10,11 +10,12 @@ import json
 import logging
 import os
 import queue
+import secrets
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Optional, Any
+from typing import Callable, Optional, Any, Dict
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -392,6 +393,8 @@ class DebateStreamServer:
         self._rate_limiter_cleanup_counter = 0  # Counter for periodic cleanup
         self._RATE_LIMITER_TTL = 3600  # 1 hour TTL for rate limiters
         self._CLEANUP_INTERVAL = 100  # Cleanup every N accesses
+        # Secure client ID mapping (cryptographically random, not memory address)
+        self._client_ids: Dict[int, str] = {}  # websocket id -> secure client_id
 
         # Subscribe to emitter to maintain debate states
         self._emitter.subscribe(self._update_debate_state)
@@ -572,6 +575,11 @@ class DebateStreamServer:
             await websocket.close(4003, "Origin not allowed")
             return
 
+        # Generate cryptographically secure client ID (not predictable memory address)
+        ws_id = id(websocket)
+        client_id = secrets.token_urlsafe(16)
+        self._client_ids[ws_id] = client_id
+
         self.clients.add(websocket)
         try:
             # Send list of active loops
@@ -594,7 +602,25 @@ class DebateStreamServer:
             async for message in websocket:
                 # Handle client requests (e.g., switch active loop view)
                 try:
-                    data = json.loads(message)
+                    # Validate message size before parsing (DoS protection)
+                    if len(message) > WS_MAX_MESSAGE_SIZE:
+                        logger.warning(f"[ws] Message too large from client: {len(message)} bytes")
+                        await websocket.send(json.dumps({
+                            "type": "error",
+                            "data": {"message": "Message too large"}
+                        }))
+                        continue
+
+                    # Parse JSON with timeout protection (prevents CPU-bound DoS)
+                    try:
+                        data = await asyncio.wait_for(
+                            asyncio.get_event_loop().run_in_executor(None, json.loads, message),
+                            timeout=5.0  # 5 second timeout for JSON parsing
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("[ws] JSON parsing timed out - possible DoS attempt")
+                        continue
+
                     msg_type = data.get("type")
 
                     if msg_type == "get_loops":
@@ -607,8 +633,8 @@ class DebateStreamServer:
                         }))
 
                     elif msg_type in ("user_vote", "user_suggestion"):
-                        # Handle audience participation
-                        client_id = str(id(websocket))
+                        # Handle audience participation using secure client ID
+                        stored_client_id = self._client_ids.get(ws_id, secrets.token_urlsafe(16))
                         loop_id = data.get("loop_id", "")
 
                         # Validate loop_id exists and is active
@@ -619,15 +645,32 @@ class DebateStreamServer:
                             }))
                             continue
 
+                        # Validate payload structure and size (DoS protection)
+                        payload = data.get("payload", {})
+                        if not isinstance(payload, dict):
+                            await websocket.send(json.dumps({
+                                "type": "error",
+                                "data": {"message": "Invalid payload format"}
+                            }))
+                            continue
+                        # Limit payload size to 10KB
+                        payload_str = json.dumps(payload)
+                        if len(payload_str) > 10240:
+                            await websocket.send(json.dumps({
+                                "type": "error",
+                                "data": {"message": "Payload too large (max 10KB)"}
+                            }))
+                            continue
+
                         # Get or create rate limiter for this client
-                        if client_id not in self._rate_limiters:
-                            self._rate_limiters[client_id] = TokenBucket(
+                        if stored_client_id not in self._rate_limiters:
+                            self._rate_limiters[stored_client_id] = TokenBucket(
                                 rate_per_minute=10.0,  # 10 messages per minute
                                 burst_size=5  # Allow burst of 5
                             )
 
                         # Track access time for TTL-based cleanup
-                        self._rate_limiter_last_access[client_id] = time.time()
+                        self._rate_limiter_last_access[stored_client_id] = time.time()
 
                         # Periodic cleanup to prevent memory leak
                         self._rate_limiter_cleanup_counter += 1
@@ -636,7 +679,7 @@ class DebateStreamServer:
                             self._cleanup_stale_rate_limiters()
 
                         # Check rate limit
-                        if not self._rate_limiters[client_id].consume(1):
+                        if not self._rate_limiters[stored_client_id].consume(1):
                             await websocket.send(json.dumps({
                                 "type": "error",
                                 "data": {"message": "Rate limited. Please wait before submitting again."}
@@ -647,8 +690,8 @@ class DebateStreamServer:
                         audience_msg = AudienceMessage(
                             type="vote" if msg_type == "user_vote" else "suggestion",
                             loop_id=loop_id,
-                            payload=data.get("payload", {}),
-                            user_id=client_id,
+                            payload=payload,
+                            user_id=stored_client_id,
                         )
                         self.audience_inbox.put(audience_msg)
 
@@ -677,11 +720,18 @@ class DebateStreamServer:
 
                 except json.JSONDecodeError as e:
                     logger.warning(f"[ws] Invalid JSON from client: {e}")
-        except Exception:
-            # Connection closed errors are normal during shutdown - don't log
-            pass
+        except Exception as e:
+            # Connection closed errors are normal during shutdown
+            error_name = type(e).__name__
+            if "ConnectionClosed" in error_name or "ConnectionClosedOK" in error_name:
+                logger.debug(f"[ws] Client {client_id[:8]}... disconnected normally")
+            else:
+                # Log unexpected errors for debugging (but don't expose to client)
+                logger.error(f"[ws] Unexpected error for client {client_id[:8]}...: {error_name}: {e}")
         finally:
             self.clients.discard(websocket)
+            # Clean up secure client ID mapping
+            self._client_ids.pop(ws_id, None)
 
     async def start(self) -> None:
         """Start the WebSocket server."""

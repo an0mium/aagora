@@ -3136,25 +3136,21 @@ The most valuable proposals combine deep analysis with actionable implementation
         if not CHECKPOINT_AVAILABLE or not self.checkpoint_manager:
             return ""
         try:
-            import uuid
-            checkpoint_id = f"ckpt_{uuid.uuid4().hex[:8]}"
-            checkpoint = DebateCheckpoint(
-                checkpoint_id=checkpoint_id,
+            # Call create_checkpoint with individual parameters (it's async and creates the checkpoint internally)
+            checkpoint = await self.checkpoint_manager.create_checkpoint(
                 debate_id=debate_id,
                 task=task,
                 current_round=round_num,
                 total_rounds=5,  # Default max rounds
                 phase="debate",
-                messages=[m.__dict__ if hasattr(m, '__dict__') else m for m in messages],
+                messages=messages,  # Pass Message objects directly
                 critiques=[],
                 votes=[],
-                agent_states=[],  # AgentState list not available in this context
+                agents=agents,
                 current_consensus=consensus.get("consensus") if consensus else None,
-                consensus_confidence=consensus.get("confidence", 0.0) if consensus else 0.0,
             )
-            self.checkpoint_manager.create_checkpoint(checkpoint)
-            self._log(f"  [checkpoint] Created: {checkpoint_id[:8]}")
-            return checkpoint_id
+            self._log(f"  [checkpoint] Created: {checkpoint.checkpoint_id[:8]}")
+            return checkpoint.checkpoint_id
         except Exception as e:
             self._log(f"  [checkpoint] Create error: {e}")
             return ""
