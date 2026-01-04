@@ -180,35 +180,57 @@ class SemanticRetriever:
         self._init_tables()
 
     def _auto_detect_provider(self) -> EmbeddingProvider:
-        """Auto-detect best available embedding provider."""
+        """Auto-detect best available embedding provider.
+
+        Falls back gracefully to hash-based embeddings if no API keys
+        are available and Ollama is not running.
+        """
         if os.environ.get("OPENAI_API_KEY"):
             return OpenAIEmbedding()
         elif os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
             return GeminiEmbedding()
         else:
-            # Try Ollama as fallback
-            return OllamaEmbedding()
+            # Try Ollama, but fall back to hash-based if not available
+            try:
+                import socket
+                ollama = OllamaEmbedding()
+                # Quick connectivity check (non-blocking)
+                host = ollama.base_url.replace("http://", "").replace("https://", "")
+                if ":" in host:
+                    host, port = host.split(":")
+                    port = int(port)
+                else:
+                    port = 11434
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.5)
+                result = sock.connect_ex((host, port))
+                sock.close()
+                if result == 0:
+                    return ollama
+            except Exception:
+                pass
+            # Fall back to hash-based embeddings (always works, no API needed)
+            return EmbeddingProvider(dimension=256)
 
     def _init_tables(self):
         """Initialize embedding tables."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS embeddings (
-                id TEXT PRIMARY KEY,
-                text_hash TEXT UNIQUE,
-                text TEXT,
-                embedding BLOB,
-                provider TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    id TEXT PRIMARY KEY,
+                    text_hash TEXT UNIQUE,
+                    text TEXT,
+                    embedding BLOB,
+                    provider TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON embeddings(text_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON embeddings(text_hash)")
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def _text_hash(self, text: str) -> str:
         """Generate hash for text deduplication."""
@@ -218,30 +240,28 @@ class SemanticRetriever:
         """Embed text and store in database."""
         text_hash = self._text_hash(text)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        # Check if already embedded
-        cursor.execute("SELECT embedding FROM embeddings WHERE text_hash = ?", (text_hash,))
-        row = cursor.fetchone()
-        if row:
-            conn.close()
-            return unpack_embedding(row[0])
+            # Check if already embedded
+            cursor.execute("SELECT embedding FROM embeddings WHERE text_hash = ?", (text_hash,))
+            row = cursor.fetchone()
+            if row:
+                return unpack_embedding(row[0])
 
-        # Generate embedding
-        embedding = await self.provider.embed(text)
+            # Generate embedding
+            embedding = await self.provider.embed(text)
 
-        # Store
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO embeddings (id, text_hash, text, embedding, provider)
-            VALUES (?, ?, ?, ?, ?)
-        """,
-            (id, text_hash, text[:1000], pack_embedding(embedding), type(self.provider).__name__),
-        )
+            # Store
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO embeddings (id, text_hash, text, embedding, provider)
+                VALUES (?, ?, ?, ?, ?)
+            """,
+                (id, text_hash, text[:1000], pack_embedding(embedding), type(self.provider).__name__),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return embedding
 
@@ -258,12 +278,11 @@ class SemanticRetriever:
         """
         query_embedding = await self.provider.embed(query)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT id, text, embedding FROM embeddings")
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute("SELECT id, text, embedding FROM embeddings")
+            rows = cursor.fetchall()
 
         if not rows:
             return []
@@ -283,16 +302,14 @@ class SemanticRetriever:
 
     def get_stats(self) -> dict:
         """Get embedding statistics."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM embeddings")
-        total = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM embeddings")
+            total = cursor.fetchone()[0]
 
-        cursor.execute("SELECT provider, COUNT(*) FROM embeddings GROUP BY provider")
-        by_provider = dict(cursor.fetchall())
-
-        conn.close()
+            cursor.execute("SELECT provider, COUNT(*) FROM embeddings GROUP BY provider")
+            by_provider = dict(cursor.fetchall())
 
         return {
             "total_embeddings": total,

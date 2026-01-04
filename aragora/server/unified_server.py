@@ -1649,6 +1649,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
     def _get_disagreement_report(self, limit: int) -> None:
         """Get report of debates with significant disagreements."""
+        # Rate limit analytics queries
+        if not self._check_rate_limit():
+            return
         if not self.storage:
             self._send_json({"error": "Storage not configured", "disagreements": []})
             return
@@ -1676,6 +1679,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
     def _get_role_rotation_report(self, limit: int) -> None:
         """Get report of agent role assignments across debates."""
+        # Rate limit analytics queries
+        if not self._check_rate_limit():
+            return
         if not self.storage:
             self._send_json({"error": "Storage not configured", "rotations": []})
             return
@@ -1708,6 +1714,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
     def _get_early_stop_signals(self, limit: int) -> None:
         """Get debates that were terminated early (before all rounds completed)."""
+        # Rate limit analytics queries
+        if not self._check_rate_limit():
+            return
         if not self.storage:
             self._send_json({"error": "Storage not configured", "early_stops": []})
             return
