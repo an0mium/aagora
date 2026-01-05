@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { AgentMomentsModal } from './AgentMomentsModal';
 
 interface AgentRanking {
@@ -321,13 +322,13 @@ export function LeaderboardPanel({ wsMessages = [], loopId, apiBase = DEFAULT_AP
               {/* Agent Info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSelectedAgent(agent.name)}
+                  <Link
+                    href={`/agent/${encodeURIComponent(agent.name)}/`}
                     className="text-sm font-medium text-text hover:text-accent transition-colors cursor-pointer"
-                    title="View agent timeline"
+                    title="View agent profile"
                   >
                     {agent.name}
-                  </button>
+                  </Link>
                   <span className={`text-sm font-mono font-bold ${getEloColor(agent.elo)}`}>
                     {agent.elo}
                   </span>
@@ -428,12 +429,13 @@ export function LeaderboardPanel({ wsMessages = [], loopId, apiBase = DEFAULT_AP
               {/* Agent Info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSelectedAgent(rep.agent)}
+                  <Link
+                    href={`/agent/${encodeURIComponent(rep.agent)}/`}
                     className="text-sm font-medium text-text hover:text-accent transition-colors cursor-pointer"
+                    title="View agent profile"
                   >
                     {rep.agent}
-                  </button>
+                  </Link>
                   <span className={`text-sm font-mono font-bold ${rep.score >= 0.7 ? 'text-green-400' : rep.score >= 0.4 ? 'text-yellow-400' : 'text-red-400'}`}>
                     {(rep.score * 100).toFixed(0)}%
                   </span>
@@ -489,14 +491,14 @@ export function LeaderboardPanel({ wsMessages = [], loopId, apiBase = DEFAULT_AP
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   {team.agents.map((agent, i) => (
-                    <button
+                    <Link
                       key={agent}
-                      onClick={() => setSelectedAgent(agent)}
+                      href={`/agent/${encodeURIComponent(agent)}/`}
                       className="text-sm font-medium text-text hover:text-accent transition-colors cursor-pointer"
-                      title="View agent timeline"
+                      title="View agent profile"
                     >
                       {agent}{i < team.agents.length - 1 && <span className="text-text-muted ml-1">+</span>}
-                    </button>
+                    </Link>
                   ))}
                 </div>
                 <div className="text-xs text-text-muted">
