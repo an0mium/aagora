@@ -388,11 +388,14 @@ Task: Create a refined version of the prompt that:
 Return ONLY the refined prompt, no explanations."""
 
         try:
-            if os.environ.get("ANTHROPIC_API_KEY"):
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+            openai_key = os.environ.get("OPENAI_API_KEY")
+
+            if anthropic_key:
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
-                        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                        "x-api-key": anthropic_key,
                         "anthropic-version": "2023-06-01",
                         "content-type": "application/json",
                     },
@@ -405,11 +408,11 @@ Return ONLY the refined prompt, no explanations."""
                 )
                 if response.status_code == 200:
                     return response.json()["content"][0]["text"].strip()
-            else:
+            elif openai_key:
                 response = requests.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                        "Authorization": f"Bearer {openai_key}",
                         "Content-Type": "application/json",
                     },
                     json={
@@ -421,6 +424,7 @@ Return ONLY the refined prompt, no explanations."""
                 )
                 if response.status_code == 200:
                     return response.json()["choices"][0]["message"]["content"].strip()
+            # No API key available - fall through to append fallback
 
         except Exception:
             pass

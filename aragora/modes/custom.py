@@ -97,7 +97,25 @@ class CustomModeLoader:
           Focus on OWASP Top 10 vulnerabilities.
         ```
         """
-        with open(path) as f:
+        # Security: Validate path is within allowed directories
+        resolved_path = Path(path).resolve()
+        allowed = False
+        for search_path in self.search_paths:
+            try:
+                allowed_dir = Path(search_path).resolve()
+                resolved_path.relative_to(allowed_dir)
+                allowed = True
+                break
+            except ValueError:
+                continue
+
+        if not allowed:
+            raise PermissionError(
+                f"Access denied: '{path}' is outside allowed mode directories. "
+                f"Allowed: {self.search_paths}"
+            )
+
+        with open(resolved_path) as f:
             config = yaml.safe_load(f)
 
         return self._parse_config(config)

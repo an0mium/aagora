@@ -424,48 +424,42 @@ def cmd_improve(args):
 def cmd_serve(args):
     """Handle 'serve' command - run live debate server."""
     import asyncio
-    import threading
     from pathlib import Path
 
     try:
-        from aragora.server.stream import DebateStreamServer
-        from aragora.server.api import run_api_server
-        from aragora.server.storage import DebateStorage
+        from aragora.server.unified_server import run_unified_server
     except ImportError as e:
         print(f"Error importing server modules: {e}")
-        print("Make sure websockets is installed: pip install websockets")
+        print("Make sure websockets and aiohttp are installed: pip install websockets aiohttp")
         return
 
-    # Setup storage and static directory
-    storage = DebateStorage(args.db if hasattr(args, 'db') else "aragora_debates.db")
-    docs_dir = Path(__file__).parent.parent.parent / "docs"
+    # Determine static directory (Live Dashboard)
+    static_dir = None
+    live_dir = Path(__file__).parent.parent / "live" / "dist"
+    if live_dir.exists():
+        static_dir = live_dir
+    else:
+        # Fall back to docs directory for viewer.html
+        docs_dir = Path(__file__).parent.parent.parent / "docs"
+        if docs_dir.exists():
+            static_dir = docs_dir
 
     print("\n" + "=" * 60)
     print("ARAGORA LIVE DEBATE SERVER")
     print("=" * 60)
     print(f"\nWebSocket: ws://{args.host}:{args.ws_port}")
-    print(f"API:       http://{args.host}:{args.api_port}")
-    print(f"Viewer:    http://{args.host}:{args.api_port}/viewer.html?live=true")
+    print(f"HTTP API:  http://{args.host}:{args.api_port}")
+    if static_dir:
+        print(f"Dashboard: http://{args.host}:{args.api_port}/")
     print(f"\nPress Ctrl+C to stop\n")
     print("=" * 60 + "\n")
 
-    # Create stream server
-    stream_server = DebateStreamServer(host=args.host, port=args.ws_port)
-
-    async def run_servers():
-        # Start API server in background thread
-        api_thread = threading.Thread(
-            target=run_api_server,
-            args=(storage, args.api_port, docs_dir, args.host),
-            daemon=True,
-        )
-        api_thread.start()
-
-        # Run WebSocket server in main async loop
-        await stream_server.start()
-
     try:
-        asyncio.run(run_servers())
+        asyncio.run(run_unified_server(
+            http_port=args.api_port,
+            ws_port=args.ws_port,
+            static_dir=static_dir,
+        ))
     except KeyboardInterrupt:
         print("\n\nServer stopped.")
 

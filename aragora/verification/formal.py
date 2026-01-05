@@ -226,10 +226,13 @@ Return ONLY the Lean 4 code, no explanations. Example:
 theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
 
         try:
-            if os.environ.get("ANTHROPIC_API_KEY"):
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+            openai_key = os.environ.get("OPENAI_API_KEY")
+
+            if anthropic_key:
                 url = "https://api.anthropic.com/v1/messages"
                 headers = {
-                    "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                    "x-api-key": anthropic_key,
                     "anthropic-version": "2023-06-01",
                     "content-type": "application/json",
                 }
@@ -238,10 +241,10 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
                     "max_tokens": 1024,
                     "messages": [{"role": "user", "content": prompt}],
                 }
-            else:
+            elif openai_key:
                 url = "https://api.openai.com/v1/chat/completions"
                 headers = {
-                    "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                    "Authorization": f"Bearer {openai_key}",
                     "Content-Type": "application/json",
                 }
                 payload = {
@@ -249,6 +252,9 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
                     "max_tokens": 1024,
                     "messages": [{"role": "user", "content": prompt}],
                 }
+            else:
+                # No API key available for LLM translation
+                return None
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:

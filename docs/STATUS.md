@@ -1,6 +1,6 @@
 # Aragora Project Status
 
-*Last updated: January 4, 2026 (21:30 UTC)*
+*Last updated: January 5, 2026 (02:00 UTC)*
 
 ## Current State
 
@@ -97,10 +97,14 @@
 - **NEW**: Added /api/agent/{name}/consistency endpoint for FlipDetector scores
 - **NEW**: Added /api/agent/{name}/network endpoint for relationship data (rivals, allies)
 - **NEW**: Emit MATCH_RECORDED WebSocket event after ELO match recording in orchestrator
+- **NEW**: Fixed security: path traversal protection in custom.py (CustomModeLoader)
+- **NEW**: Fixed security: environment variable bracket access in formal.py and evolver.py
+- **NEW**: Updated CLI serve command to use unified server (aragora serve)
+- **NEW**: Added crux cache clearing at cycle start (prevents context bleeding between cycles)
 
 ## Feature Integration Status
 
-### Fully Integrated (32)
+### Fully Integrated (35)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -109,7 +113,7 @@
 | FlipDetector + Vote Weight | Active | `aragora/insights/flip_detector.py` (→ orchestrator.py:1423-1433) |
 | Position Ledger | Active | `aragora/agents/grounded.py` |
 | Calibration Tracking | Active | `aragora/agents/calibration.py` |
-| Convergence Detection | Active | `aragora/debate/convergence.py` |
+| Convergence Detection + Early Exit | Active | `aragora/debate/convergence.py` + `orchestrator.py:1635` |
 | Role Rotation | Active | `aragora/debate/roles.py` |
 | PersonaSynthesizer | Active | `aragora/agents/grounded.py` |
 | MomentDetector | Active | `aragora/agents/grounded.py` |
@@ -135,6 +139,9 @@
 | Agent Consistency API | Active | `aragora/server/stream.py` (/api/agent/{name}/consistency) |
 | Agent Network API | Active | `aragora/server/stream.py` (/api/agent/{name}/network) |
 | MATCH_RECORDED Event | Active | `aragora/debate/orchestrator.py` (WebSocket emission) |
+| Custom Mode Security | Active | `aragora/modes/custom.py` (path traversal protection) |
+| Crux Cache Lifecycle | Active | `scripts/nomic_loop.py:run_cycle()` (cleared at cycle start) |
+| Unified Serve CLI | Active | `aragora/cli/main.py:cmd_serve()` (unified server integration) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |

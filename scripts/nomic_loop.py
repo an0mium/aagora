@@ -6730,6 +6730,9 @@ Be concise - this is a quality gate, not a full review."""
         # Update circuit breaker cooldowns at cycle start
         self.circuit_breaker.start_new_cycle()
 
+        # Clear crux cache at cycle start to prevent context bleeding between cycles
+        self._cached_cruxes = []
+
         self._log("\n" + "=" * 70)
         self._log(f"NOMIC CYCLE {self.cycle_count}")
         self._log(f"Started: {cycle_start.isoformat()}")
