@@ -40,6 +40,7 @@ from .memory import MemoryHandler
 from .leaderboard import LeaderboardViewHandler
 from .relationship import RelationshipHandler
 from .moments import MomentsHandler
+from .documents import DocumentHandler
 
 __all__ = [
     # Base utilities
@@ -64,4 +65,5 @@ __all__ = [
     "LeaderboardViewHandler",
     "RelationshipHandler",
     "MomentsHandler",
+    "DocumentHandler",
 ]
