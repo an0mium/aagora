@@ -125,7 +125,7 @@ class FlipDetector:
         self._init_tables()
 
     def _init_tables(self) -> None:
-        """Create flips table if not exists."""
+        """Create flips and positions tables if not exist."""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS detected_flips (
@@ -150,6 +150,27 @@ class FlipDetector:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_flips_type ON detected_flips(flip_type)"
+            )
+            # Also create positions table (shared with PositionLedger)
+            # This ensures get_agent_consistency() works even without PositionLedger
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS positions (
+                    id TEXT PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    claim TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    debate_id TEXT NOT NULL,
+                    round_num INTEGER NOT NULL,
+                    outcome TEXT DEFAULT 'pending',
+                    reversed INTEGER DEFAULT 0,
+                    reversal_debate_id TEXT,
+                    domain TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TEXT
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_positions_agent ON positions(agent_name)"
             )
             conn.commit()
 
