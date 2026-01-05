@@ -1,12 +1,12 @@
 # Aragora Project Status
 
-*Last updated: January 4, 2026 (20:15 UTC)*
+*Last updated: January 4, 2026 (21:30 UTC)*
 
 ## Current State
 
 ### Nomic Loop
 - **Cycle**: 1
-- **Phase**: context (gathering - running with Python 3.10 fix)
+- **Phase**: debate (Round 1 - Live Position Flip Telemetry proposal)
 - **Last Proposal**: Claude's "Persona Laboratory v2" (won 2/3 consensus)
 - **Implementation**: Failed on verification (timeout issues)
 - **Blocking Issues FIXED**:
@@ -90,10 +90,17 @@
 - **NEW**: Exported 50+ new classes to main __init__.py (modes, spectate, pipeline, visualization, replay, introspection)
 - **NEW**: Connected belief network cruxes to fix guidance prompts (targeted fixing)
 - **NEW**: Added ELO confidence weighting from probe results (low-confidence debates = reduced ELO impact)
+- **NEW**: Added TournamentManager class for reading tournament SQLite databases
+- **NEW**: Wired /api/tournaments with real tournament data from nomic_dir
+- **NEW**: Added /api/tournaments/{tournament_id} endpoint for tournament details
+- **NEW**: Added TOKEN_START, TOKEN_DELTA, TOKEN_END event mapping to SpectatorStream bridge
+- **NEW**: Added /api/agent/{name}/consistency endpoint for FlipDetector scores
+- **NEW**: Added /api/agent/{name}/network endpoint for relationship data (rivals, allies)
+- **NEW**: Emit MATCH_RECORDED WebSocket event after ELO match recording in orchestrator
 
 ## Feature Integration Status
 
-### Fully Integrated (29)
+### Fully Integrated (32)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -125,6 +132,9 @@
 | Crux → Fix Guidance | Active | `scripts/nomic_loop.py` (belief network → fix prompts) |
 | Probe → ELO Weighting | Active | `aragora/ranking/elo.py` (confidence_weight parameter) |
 | Path Traversal Protection | Active | `aragora/tools/code.py` (_resolve_path validation) |
+| Agent Consistency API | Active | `aragora/server/stream.py` (/api/agent/{name}/consistency) |
+| Agent Network API | Active | `aragora/server/stream.py` (/api/agent/{name}/network) |
+| MATCH_RECORDED Event | Active | `aragora/debate/orchestrator.py` (WebSocket emission) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |
