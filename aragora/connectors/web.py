@@ -122,6 +122,7 @@ class WebConnector(BaseConnector):
         self.max_content_length = max_content_length
         self.rate_limit_delay = rate_limit_delay
         self._last_request_time = 0.0
+        self._http_client: Optional["httpx.AsyncClient"] = None
 
         # Initialize cache
         self.cache_dir = Path(cache_dir)
@@ -142,6 +143,22 @@ class WebConnector(BaseConnector):
     @property
     def name(self) -> str:
         return "Web Search"
+
+    async def _get_http_client(self) -> "httpx.AsyncClient":
+        """Get or create shared HTTP client with connection pooling."""
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+            )
+        return self._http_client
+
+    async def cleanup(self) -> None:
+        """Clean up HTTP client on shutdown."""
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def search(
         self,
@@ -307,48 +324,48 @@ class WebConnector(BaseConnector):
         await self._rate_limit()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                response = await client.get(
-                    url,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; AragoraBot/1.0; +https://aragora.ai)"
-                    }
-                )
-                response.raise_for_status()
+            client = await self._get_http_client()
+            response = await client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; AragoraBot/1.0; +https://aragora.ai)"
+                }
+            )
+            response.raise_for_status()
 
-                content_type = response.headers.get("content-type", "")
+            content_type = response.headers.get("content-type", "")
 
-                if "text/html" in content_type:
-                    content, title = self._parse_html(response.text)
-                elif "application/json" in content_type:
-                    content = response.text[:self.max_content_length]
-                    title = "JSON Response"
-                elif "text/" in content_type:
-                    content = response.text[:self.max_content_length]
-                    title = "Text Content"
-                else:
-                    return self._create_error_evidence(f"Unsupported content type: {content_type}")
+            if "text/html" in content_type:
+                content, title = self._parse_html(response.text)
+            elif "application/json" in content_type:
+                content = response.text[:self.max_content_length]
+                title = "JSON Response"
+            elif "text/" in content_type:
+                content = response.text[:self.max_content_length]
+                title = "Text Content"
+            else:
+                return self._create_error_evidence(f"Unsupported content type: {content_type}")
 
-                evidence_id = hashlib.sha256(url.encode()).hexdigest()[:16]
-                domain = urlparse(url).netloc
+            evidence_id = hashlib.sha256(url.encode()).hexdigest()[:16]
+            domain = urlparse(url).netloc
 
-                evidence = Evidence(
-                    id=evidence_id,
-                    source_type=SourceType.WEB_SEARCH,
-                    source_id=url,
-                    content=content,
-                    title=title,
-                    url=url,
-                    author=domain,
-                    created_at=datetime.now().isoformat(),
-                    confidence=self.default_confidence,
-                    authority=self._get_domain_authority(domain),
-                    freshness=1.0,  # Just fetched
-                    metadata={"fetched_at": datetime.now().isoformat()},
-                )
+            evidence = Evidence(
+                id=evidence_id,
+                source_type=SourceType.WEB_SEARCH,
+                source_id=url,
+                content=content,
+                title=title,
+                url=url,
+                author=domain,
+                created_at=datetime.now().isoformat(),
+                confidence=self.default_confidence,
+                authority=self._get_domain_authority(domain),
+                freshness=1.0,  # Just fetched
+                metadata={"fetched_at": datetime.now().isoformat()},
+            )
 
-                self._cache_put(evidence_id, evidence)
-                return evidence
+            self._cache_put(evidence_id, evidence)
+            return evidence
 
         except httpx.TimeoutException:
             return self._create_error_evidence(f"Timeout fetching {url}")

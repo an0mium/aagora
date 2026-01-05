@@ -280,7 +280,7 @@ class PersonaLaboratory:
         success: bool,
     ):
         """Record a trial result for an experiment."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.cursor()
 
             if is_variant:
@@ -429,52 +429,50 @@ class PersonaLaboratory:
 
     def _save_emergent_trait(self, trait: EmergentTrait):
         """Save emergent trait to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO emergent_traits (trait_name, source_agents, supporting_evidence, confidence)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                trait.trait_name,
-                json.dumps(trait.source_agents),
-                json.dumps(trait.supporting_evidence),
-                trait.confidence,
-            ),
-        )
+            cursor.execute(
+                """
+                INSERT INTO emergent_traits (trait_name, source_agents, supporting_evidence, confidence)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    trait.trait_name,
+                    json.dumps(trait.source_agents),
+                    json.dumps(trait.supporting_evidence),
+                    trait.confidence,
+                ),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_emergent_traits(self, min_confidence: float = 0.5) -> list[EmergentTrait]:
         """Get detected emergent traits above confidence threshold."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT trait_name, source_agents, supporting_evidence, confidence, first_detected
-            FROM emergent_traits
-            WHERE confidence >= ?
-            ORDER BY confidence DESC
-            """,
-            (min_confidence,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
-
-        return [
-            EmergentTrait(
-                trait_name=row[0],
-                source_agents=json.loads(row[1]),
-                supporting_evidence=json.loads(row[2]) if row[2] else [],
-                confidence=row[3],
-                first_detected=row[4],
+            cursor.execute(
+                """
+                SELECT trait_name, source_agents, supporting_evidence, confidence, first_detected
+                FROM emergent_traits
+                WHERE confidence >= ?
+                ORDER BY confidence DESC
+                """,
+                (min_confidence,),
             )
-            for row in rows
-        ]
+            rows = cursor.fetchall()
+
+            return [
+                EmergentTrait(
+                    trait_name=row[0],
+                    source_agents=json.loads(row[1]),
+                    supporting_evidence=json.loads(row[2]) if row[2] else [],
+                    confidence=row[3],
+                    first_detected=row[4],
+                )
+                for row in rows
+            ]
 
     # =========================================================================
     # Cross-Pollination
@@ -546,29 +544,28 @@ class PersonaLaboratory:
 
     def _save_transfer(self, transfer: TraitTransfer):
         """Save trait transfer to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO trait_transfers (
-                from_agent, to_agent, trait, expertise_domain,
-                success_rate_before, success_rate_after, transferred_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                transfer.from_agent,
-                transfer.to_agent,
-                transfer.trait,
-                transfer.expertise_domain,
-                transfer.success_rate_before,
-                transfer.success_rate_after,
-                transfer.transferred_at,
-            ),
-        )
+            cursor.execute(
+                """
+                INSERT INTO trait_transfers (
+                    from_agent, to_agent, trait, expertise_domain,
+                    success_rate_before, success_rate_after, transferred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    transfer.from_agent,
+                    transfer.to_agent,
+                    transfer.trait,
+                    transfer.expertise_domain,
+                    transfer.success_rate_before,
+                    transfer.success_rate_after,
+                    transfer.transferred_at,
+                ),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def suggest_cross_pollinations(self, target_agent: str) -> list[tuple[str, str, str]]:
         """
@@ -679,54 +676,52 @@ class PersonaLaboratory:
         reason: str,
     ):
         """Record evolution history."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO evolution_history (agent_name, mutation_type, before_state, after_state, reason)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                agent_name,
-                mutation_type,
-                json.dumps({"traits": before.traits, "expertise": before.expertise}),
-                json.dumps({"traits": after.traits, "expertise": after.expertise}),
-                reason,
-            ),
-        )
+            cursor.execute(
+                """
+                INSERT INTO evolution_history (agent_name, mutation_type, before_state, after_state, reason)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_name,
+                    mutation_type,
+                    json.dumps({"traits": before.traits, "expertise": before.expertise}),
+                    json.dumps({"traits": after.traits, "expertise": after.expertise}),
+                    reason,
+                ),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_evolution_history(self, agent_name: str, limit: int = 20) -> list[dict]:
         """Get evolution history for an agent."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT mutation_type, before_state, after_state, reason, created_at
-            FROM evolution_history
-            WHERE agent_name = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (agent_name, limit),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT mutation_type, before_state, after_state, reason, created_at
+                FROM evolution_history
+                WHERE agent_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (agent_name, limit),
+            )
+            rows = cursor.fetchall()
 
-        return [
-            {
-                "mutation_type": row[0],
-                "before": json.loads(row[1]),
-                "after": json.loads(row[2]),
-                "reason": row[3],
-                "created_at": row[4],
-            }
-            for row in rows
-        ]
+            return [
+                {
+                    "mutation_type": row[0],
+                    "before": json.loads(row[1]),
+                    "after": json.loads(row[2]),
+                    "reason": row[3],
+                    "created_at": row[4],
+                }
+                for row in rows
+            ]
 
     # =========================================================================
     # Laboratory Statistics
@@ -734,27 +729,25 @@ class PersonaLaboratory:
 
     def get_lab_stats(self) -> dict:
         """Get laboratory statistics."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*), SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) FROM experiments")
-        exp_row = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*), SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) FROM experiments")
+            exp_row = cursor.fetchone()
 
-        cursor.execute("SELECT COUNT(*) FROM emergent_traits WHERE confidence >= 0.5")
-        trait_row = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*) FROM emergent_traits WHERE confidence >= 0.5")
+            trait_row = cursor.fetchone()
 
-        cursor.execute("SELECT COUNT(*) FROM trait_transfers")
-        transfer_row = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*) FROM trait_transfers")
+            transfer_row = cursor.fetchone()
 
-        cursor.execute("SELECT COUNT(*) FROM evolution_history")
-        evolution_row = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*) FROM evolution_history")
+            evolution_row = cursor.fetchone()
 
-        conn.close()
-
-        return {
-            "total_experiments": exp_row[0] or 0,
-            "completed_experiments": exp_row[1] or 0,
-            "emergent_traits_detected": trait_row[0] or 0,
-            "trait_transfers": transfer_row[0] or 0,
-            "total_evolutions": evolution_row[0] or 0,
-        }
+            return {
+                "total_experiments": exp_row[0] or 0,
+                "completed_experiments": exp_row[1] or 0,
+                "emergent_traits_detected": trait_row[0] or 0,
+                "trait_transfers": transfer_row[0] or 0,
+                "total_evolutions": evolution_row[0] or 0,
+            }
