@@ -409,6 +409,9 @@ try:
         LeaderboardViewHandler,
         DocumentHandler,
         VerificationHandler,
+        AuditingHandler,
+        RelationshipHandler,
+        MomentsHandler,
         HandlerResult,
     )
     HANDLERS_AVAILABLE = True
@@ -430,11 +433,24 @@ except ImportError:
     LeaderboardViewHandler = None
     DocumentHandler = None
     VerificationHandler = None
+    AuditingHandler = None
+    RelationshipHandler = None
+    MomentsHandler = None
     HandlerResult = None
 
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 _active_debates_lock = threading.Lock()  # Thread-safe access to _active_debates
+
+
+def _update_debate_status(debate_id: str, status: str, **kwargs) -> None:
+    """Atomic debate status update with consistent locking."""
+    with _active_debates_lock:
+        if debate_id in _active_debates:
+            _active_debates[debate_id]["status"] = status
+            for key, value in kwargs.items():
+                _active_debates[debate_id][key] = value
+
 
 # Server startup time for uptime tracking
 _server_start_time: float = time.time()
@@ -572,6 +588,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _leaderboard_handler: Optional["LeaderboardViewHandler"] = None
     _document_handler: Optional["DocumentHandler"] = None
     _verification_handler: Optional["VerificationHandler"] = None
+    _auditing_handler: Optional["AuditingHandler"] = None
+    _relationship_handler: Optional["RelationshipHandler"] = None
+    _moments_handler: Optional["MomentsHandler"] = None
     _handlers_initialized: bool = False
 
     # Thread pool for debate execution (prevents unbounded thread creation)
@@ -719,8 +738,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         cls._leaderboard_handler = LeaderboardViewHandler(ctx)
         cls._document_handler = DocumentHandler(ctx)
         cls._verification_handler = VerificationHandler(ctx)
+        cls._auditing_handler = AuditingHandler(ctx)
+        cls._relationship_handler = RelationshipHandler(ctx)
+        cls._moments_handler = MomentsHandler(ctx)
         cls._handlers_initialized = True
-        logger.info("[handlers] Modular handlers initialized (16 handlers)")
+        logger.info("[handlers] Modular handlers initialized (19 handlers)")
 
     def _try_modular_handler(self, path: str, query: dict) -> bool:
         """Try to handle request via modular handlers.
@@ -754,6 +776,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._leaderboard_handler,
             self._document_handler,
             self._verification_handler,
+            self._auditing_handler,
+            self._relationship_handler,
+            self._moments_handler,
         ]
 
         for handler in handlers:
@@ -1058,39 +1083,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         # /api/calibration/leaderboard, /api/agent/*/calibration
         # are now handled by AgentsHandler
 
-        # Pulse API (trending topics)
-        elif path == '/api/pulse/trending':
-            limit = self._safe_int(query, 'limit', 10, 50)
-            self._get_trending_topics(limit)
-
-        # Document API
-        elif path == '/api/documents':
-            self._list_documents()
-        elif path == '/api/documents/formats':
-            self._send_json(get_supported_formats())
-        elif path.startswith('/api/documents/'):
-            doc_id = self._extract_path_segment(path, 3, "document_id")
-            if doc_id is None:
-                return
-            self._get_document(doc_id)
-
-        # Replay API - now handled by ReplaysHandler
-
-        # Learning Evolution API - now handled by ReplaysHandler
-
-        # Flip Detection API
-        # Note: /api/agent/*/consistency is handled by AgentsHandler
-        elif path == '/api/flips/recent':
-            limit = self._safe_int(query, 'limit', 20, 100)
-            self._get_recent_flips(limit)
-        elif path == '/api/flips/summary':
-            self._get_flip_summary()
-        elif path.startswith('/api/agent/') and path.endswith('/flips'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            limit = self._safe_int(query, 'limit', 20, 100)
-            self._get_agent_flips(agent, limit)
+        # Pulse API - NOW HANDLED BY PulseHandler
+        # Document API - NOW HANDLED BY DocumentHandler
+        # Replay API - NOW HANDLED BY ReplaysHandler
+        # Flip Detection API - NOW HANDLED BY AgentsHandler
 
         # Persona API
         elif path == '/api/personas':
@@ -1130,148 +1126,26 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             self._get_agent_accuracy(agent)
 
-        # Consensus Memory API (expose underutilized databases)
-        elif path == '/api/consensus/similar':
-            topic = query.get('topic', [''])[0]
-            # Validate topic parameter
-            if not topic or len(topic) > 500:
-                self._send_json({"error": "Topic required (max 500 chars)"}, status=400)
-                return
-            topic = topic.strip()[:500]  # Sanitize
-            limit = self._safe_int(query, 'limit', 5, 20)
-            self._get_similar_debates(topic, limit)
-        elif path == '/api/consensus/settled':
-            min_confidence = self._safe_float(query, 'min_confidence', 0.8, 0.0, 1.0)
-            limit = self._safe_int(query, 'limit', 20, 100)
-            self._get_settled_topics(min_confidence, limit)
-        elif path == '/api/consensus/stats':
-            self._get_consensus_stats()
-        elif path == '/api/consensus/dissents':
-            # Topic is optional - if not provided, get recent dissents globally
-            topic = query.get('topic', [''])[0]
-            if topic and len(topic) > 500:
-                topic = topic[:500]
-            domain = query.get('domain', [None])[0]
-            limit = self._safe_int(query, 'limit', 10, 50)
-            self._get_recent_dissents(topic.strip() if topic else None, domain, limit)
-        elif path == '/api/consensus/contrarian-views':
-            # Topic is optional - if not provided, get recent contrarian views globally
-            topic = query.get('topic', [''])[0]
-            if topic and len(topic) > 500:
-                topic = topic[:500]
-            domain = query.get('domain', [None])[0]
-            limit = self._safe_int(query, 'limit', 10, 50)
-            self._get_contrarian_views(topic.strip() if topic else None, domain, limit)
-        elif path == '/api/consensus/risk-warnings':
-            # Topic is optional - if not provided, get recent risk warnings globally
-            topic = query.get('topic', [''])[0]
-            if topic and len(topic) > 500:
-                topic = topic[:500]
-            domain = query.get('domain', [None])[0]
-            limit = self._safe_int(query, 'limit', 10, 50)
-            self._get_risk_warnings(topic.strip() if topic else None, domain, limit)
-        elif path.startswith('/api/consensus/domain/'):
-            domain = self._extract_path_segment(path, 4, "domain")
-            if domain is None:
-                return
-            limit = self._safe_int(query, 'limit', 50, 200)
-            self._get_domain_history(domain, limit)
+        # Consensus Memory API - NOW HANDLED BY ConsensusHandler
+        # Combined Agent Profile API - NOW HANDLED BY AgentsHandler
 
-        # Combined Agent Profile API
-        elif path.startswith('/api/agent/') and path.endswith('/profile'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            self._get_agent_full_profile(agent)
-
-        # Debate Analytics API
-        elif path == '/api/analytics/disagreements':
-            limit = self._safe_int(query, 'limit', 20, 100)
-            self._get_disagreement_report(limit)
-        elif path == '/api/analytics/role-rotation':
-            limit = self._safe_int(query, 'limit', 50, 200)
-            self._get_role_rotation_report(limit)
-        elif path == '/api/analytics/early-stops':
-            limit = self._safe_int(query, 'limit', 20, 100)
-            self._get_early_stop_signals(limit)
-
-        # Modes API
-        elif path == '/api/modes':
-            self._list_available_modes()
-
-        # Agent Position Tracking API
-        elif path.startswith('/api/agent/') and path.endswith('/positions'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            limit = self._safe_int(query, 'limit', 50, 200)
-            self._get_agent_positions(agent, limit)
-
-        # Agent Relationship Network API
-        elif path.startswith('/api/agent/') and path.endswith('/network'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            self._get_agent_network(agent)
-        elif path.startswith('/api/agent/') and path.endswith('/rivals'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            limit = self._safe_int(query, 'limit', 5, 20)
-            self._get_agent_rivals(agent, limit)
-        elif path.startswith('/api/agent/') and path.endswith('/allies'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            limit = self._safe_int(query, 'limit', 5, 20)
-            self._get_agent_allies(agent, limit)
-
-        # Agent Moments API (significant achievements timeline)
-        elif path.startswith('/api/agent/') and path.endswith('/moments'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            limit = self._safe_int(query, 'limit', 10, 50)
-            self._get_agent_moments(agent, limit)
+        # Debate Analytics API - NOW HANDLED BY AnalyticsHandler
+        # Modes API - NOW HANDLED BY SystemHandler
+        # Agent Position Tracking API - NOW HANDLED BY AgentsHandler
+        # Agent Relationship Network API - NOW HANDLED BY AgentsHandler
+        # Agent Moments API - NOW HANDLED BY AgentsHandler
 
         # System Statistics API
         elif path == '/api/ranking/stats':
             self._get_ranking_stats()
         elif path == '/api/memory/stats' or path == '/api/memory/tier-stats':
             self._get_memory_stats()
-        elif path == '/api/critiques/patterns':
-            limit = self._safe_int(query, 'limit', 10, 50)
-            min_success = self._safe_float(query, 'min_success', 0.5, 0.0, 1.0)
-            self._get_critique_patterns(limit, min_success)
-        elif path == '/api/critiques/archive':
-            self._get_archive_stats()
-        elif path == '/api/reputation/all':
-            self._get_all_reputations()
-        elif path.startswith('/api/agent/') and path.endswith('/reputation'):
-            agent = self._extract_path_segment(path, 3, "agent")
-            if agent is None:
-                return
-            self._get_agent_reputation(agent)
+        # Critiques/Reputation API - NOW HANDLED BY CritiqueHandler
 
-        # Agent Comparison API
-        elif path == '/api/agent/compare':
-            agent_a = query.get('agent_a', [None])[0]
-            agent_b = query.get('agent_b', [None])[0]
-            if not agent_a or not agent_b:
-                self._send_json({"error": "agent_a and agent_b query params required"}, status=400)
-            else:
-                self._get_agent_comparison(agent_a, agent_b)
+        # Agent Comparison API - NOW HANDLED BY AgentsHandler
+        # Head-to-Head API - NOW HANDLED BY AgentsHandler
 
-        # Head-to-Head & Opponent Briefing API
-        elif '/head-to-head/' in path and path.startswith('/api/agent/'):
-            # Pattern: /api/agent/{agent}/head-to-head/{opponent}
-            parts = path.split('/')
-            if len(parts) >= 6:
-                agent = parts[3]
-                opponent = parts[5]
-                self._get_head_to_head(agent, opponent)
-            else:
-                self._send_json({"error": "Invalid path format"}, status=400)
+        # Opponent Briefing API (still needs migration to AgentsHandler)
         elif '/opponent-briefing/' in path and path.startswith('/api/agent/'):
             # Pattern: /api/agent/{agent}/opponent-briefing/{opponent}
             parts = path.split('/')
@@ -1318,32 +1192,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             self._get_debate_graph_stats(debate_id)
 
-        # Laboratory API - Emergent Traits
-        elif path == '/api/laboratory/emergent-traits':
-            min_confidence = self._safe_float(query, 'min_confidence', 0.5, 0.0, 1.0)
-            limit = self._safe_int(query, 'limit', 10, 50)
-            self._get_emergent_traits(min_confidence, limit)
-
-        # Belief Network API - Debate Cruxes
-        elif path.startswith('/api/belief-network/') and path.endswith('/cruxes'):
-            debate_id = self._extract_path_segment(path, 3, "debate_id")
-            if debate_id is None:
-                return
-            top_k = self._safe_int(query, 'top_k', 3, 10)
-            self._get_debate_cruxes(debate_id, top_k)
-
-        # Provenance API - Claim Support
-        elif '/claims/' in path and path.endswith('/support'):
-            # Pattern: /api/provenance/:debate_id/claims/:claim_id/support
-            parts = path.split('/')
-            if len(parts) >= 6:
-                debate_id = parts[3]
-                claim_id = parts[5]
-                self._get_claim_support(debate_id, claim_id)
-            else:
-                self._send_json({"error": "Invalid path format"}, status=400)
-
-        # Tournament API - now handled by TournamentHandler
+        # Laboratory/Belief Network APIs - NOW HANDLED BY BeliefHandler
+        # Tournament API - NOW HANDLED BY TournamentHandler
 
         # Best Team Combinations API
         elif path == '/api/routing/best-teams':
@@ -1359,13 +1209,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             limit = self._safe_int(query, 'limit', 10, 50)
             self._get_evolution_history(agent, limit)
 
-        # Load-Bearing Claims API
-        elif path.startswith('/api/belief-network/') and path.endswith('/load-bearing-claims'):
-            debate_id = self._extract_path_segment(path, 3, "debate_id")
-            if debate_id is None:
-                return
-            limit = self._safe_int(query, 'limit', 5, 20)
-            self._get_load_bearing_claims(debate_id, limit)
+        # Load-Bearing Claims API - NOW HANDLED BY BeliefHandler
 
         # Calibration Summary API
         elif path.startswith('/api/agent/') and path.endswith('/calibration-summary'):
@@ -1375,11 +1219,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             domain = query.get('domain', [None])[0]
             self._get_calibration_summary(agent, domain)
 
-        # Continuum Memory API - now handled by MemoryHandler
-
-        # Formal Verification Status API
-        elif path == '/api/verification/status':
-            self._formal_verification_status()
+        # Continuum Memory API - NOW HANDLED BY MemoryHandler
+        # Formal Verification Status API - NOW HANDLED BY VerificationHandler
 
         # Plugins API
         elif path == '/api/plugins':
@@ -1391,25 +1232,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             else:
                 self._get_plugin(plugin_name)
 
-        # Genesis API (Evolution Visibility)
-        elif path == '/api/genesis/stats':
-            self._get_genesis_stats()
-        elif path == '/api/genesis/events':
-            limit = self._safe_int(query, 'limit', 20, 100)
-            event_type = query.get('event_type', [None])[0]
-            self._get_genesis_events(limit, event_type)
-        elif path.startswith('/api/genesis/lineage/'):
-            genome_id = path.split('/')[-1]
-            if not genome_id or not re.match(SAFE_ID_PATTERN, genome_id):
-                self._send_json({"error": "Invalid genome ID"}, status=400)
-            else:
-                self._get_genome_lineage(genome_id)
-        elif path.startswith('/api/genesis/tree/'):
-            debate_id = path.split('/')[-1]
-            if not debate_id or not re.match(SAFE_ID_PATTERN, debate_id):
-                self._send_json({"error": "Invalid debate ID"}, status=400)
-            else:
-                self._get_debate_tree(debate_id)
+        # Genesis API - NOW HANDLED BY GenesisHandler
 
         # Static file serving
         elif path in ('/', '/index.html'):
@@ -1448,6 +1271,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
     def _do_POST_internal(self, path: str) -> None:
         """Internal POST handler with actual routing logic."""
+        # Try modular handlers first (gradual migration)
+        if path.startswith('/api/'):
+            if self._try_modular_handler(path, {}):
+                return
+
         if path == '/api/documents/upload':
             self._upload_document()
         elif path == '/api/debate':
@@ -1469,12 +1297,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._extract_detailed_insights()
         elif path == '/api/probes/run':
             self._run_capability_probe()
-        elif path == '/api/debates/deep-audit':
-            self._run_deep_audit()
-        elif path.startswith('/api/debates/') and path.endswith('/red-team'):
-            debate_id = self._extract_path_segment(path, 3, "debate_id")
-            if debate_id:
-                self._run_red_team_analysis(debate_id)
+        # Deep-audit and red-team routes are NOW HANDLED BY AuditingHandler
         elif path.startswith('/api/debates/') and path.endswith('/verify'):
             debate_id = self._extract_path_segment(path, 3, "debate_id")
             if debate_id:
@@ -1732,14 +1555,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 # Parse agents with bounds check
                 agent_list = [s.strip() for s in agents_str.split(",") if s.strip()]
                 if len(agent_list) > MAX_AGENTS_PER_DEBATE:
-                    with _active_debates_lock:
-                        _active_debates[debate_id]["status"] = "error"
-                        _active_debates[debate_id]["error"] = f"Too many agents. Maximum: {MAX_AGENTS_PER_DEBATE}"
+                    _update_debate_status(debate_id, "error", error=f"Too many agents. Maximum: {MAX_AGENTS_PER_DEBATE}")
                     return
                 if len(agent_list) < 2:
-                    with _active_debates_lock:
-                        _active_debates[debate_id]["status"] = "error"
-                        _active_debates[debate_id]["error"] = "At least 2 agents required for a debate"
+                    _update_debate_status(debate_id, "error", error="At least 2 agents required for a debate")
                     return
 
                 agent_specs = []
@@ -1790,9 +1609,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 if len(agents) < 2:
                     error_msg = f"Only {len(agents)} agents initialized (need at least 2). Failed: {', '.join(a for a, _ in failed_agents)}"
                     logger.error(error_msg)
-                    with _active_debates_lock:
-                        _active_debates[debate_id]["status"] = "error"
-                        _active_debates[debate_id]["error"] = error_msg
+                    _update_debate_status(debate_id, "error", error=error_msg)
                     self.stream_emitter.emit(StreamEvent(
                         type=StreamEventType.ERROR,
                         data={"error": error_msg, "failed_agents": [a for a, _ in failed_agents]},
@@ -1837,19 +1654,16 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                         arena.circuit_breaker.reset_all()
 
                 # Run debate with timeout protection (10 minutes max)
-                with _active_debates_lock:
-                    _active_debates[debate_id]["status"] = "running"
+                _update_debate_status(debate_id, "running")
                 async def run_with_timeout():
                     return await _asyncio.wait_for(arena.run(), timeout=600)
                 result = _asyncio.run(run_with_timeout())
-                with _active_debates_lock:
-                    _active_debates[debate_id]["status"] = "completed"
-                    _active_debates[debate_id]["result"] = {
-                        "final_answer": result.final_answer,
-                        "consensus_reached": result.consensus_reached,
-                        "confidence": result.confidence,
-                        "grounded_verdict": result.grounded_verdict.to_dict() if result.grounded_verdict else None,
-                    }
+                _update_debate_status(debate_id, "completed", result={
+                    "final_answer": result.final_answer,
+                    "consensus_reached": result.consensus_reached,
+                    "confidence": result.confidence,
+                    "grounded_verdict": result.grounded_verdict.to_dict() if result.grounded_verdict else None,
+                })
 
                 # Emit LEADERBOARD_UPDATE after debate completes (if ELO system available)
                 if self.elo_system:
@@ -1873,9 +1687,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 # Use safe error message for client, keep full trace server-side
                 safe_msg = _safe_error_message(e, "debate_execution")
                 error_trace = traceback.format_exc()
-                with _active_debates_lock:
-                    _active_debates[debate_id]["status"] = "error"
-                    _active_debates[debate_id]["error"] = safe_msg
+                _update_debate_status(debate_id, "error", error=safe_msg)
                 # Log full traceback so thread failures aren't silent
                 logger.error(f"[debate] Thread error in {debate_id}: {str(e)}\n{error_trace}")
                 # Emit sanitized error event to client
@@ -3935,13 +3747,19 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
             events = []
             for row in cursor.fetchall():
+                # Handle potentially malformed JSON in data column
+                try:
+                    data = json.loads(row[5]) if row[5] else {}
+                except json.JSONDecodeError:
+                    logger.warning(f"Malformed JSON in genesis event {row[0]}: {row[5][:100] if row[5] else 'None'}")
+                    data = {}
                 events.append({
                     "event_id": row[0],
                     "event_type": row[1],
                     "timestamp": row[2],
                     "parent_event_id": row[3],
                     "content_hash": row[4][:16] + "...",
-                    "data": json.loads(row[5]) if row[5] else {},
+                    "data": data,
                 })
 
             conn.close()
@@ -4241,9 +4059,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                     cartographer = ArgumentCartographer()
                     cartographer.set_debate_context(debate_id, "")
                     with replay_path.open() as f:
-                        for line in f:
+                        for line_num, line in enumerate(f, 1):
                             if line.strip():
-                                event = json.loads(line)
+                                try:
+                                    event = json.loads(line)
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Skipping malformed JSONL line {line_num}: {line[:100]}")
+                                    continue
                                 if event.get("type") == "agent_message":
                                     cartographer.update_from_message(
                                         agent=event.get("agent", "unknown"),
