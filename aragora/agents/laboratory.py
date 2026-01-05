@@ -13,10 +13,11 @@ Inspired by Project Sid's emergent civilization dynamics.
 import json
 import random
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 
 from aragora.agents.personas import (
     Persona,
@@ -117,70 +118,78 @@ class PersonaLaboratory:
         self.db_path = Path(db_path)
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self):
         """Initialize laboratory database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Experiments table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS experiments (
-                experiment_id TEXT PRIMARY KEY,
-                agent_name TEXT NOT NULL,
-                control_persona TEXT NOT NULL,
-                variant_persona TEXT NOT NULL,
-                hypothesis TEXT,
-                status TEXT DEFAULT 'running',
-                control_successes INTEGER DEFAULT 0,
-                control_trials INTEGER DEFAULT 0,
-                variant_successes INTEGER DEFAULT 0,
-                variant_trials INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                completed_at TEXT
-            )
-        """)
+            # Experiments table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS experiments (
+                    experiment_id TEXT PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    control_persona TEXT NOT NULL,
+                    variant_persona TEXT NOT NULL,
+                    hypothesis TEXT,
+                    status TEXT DEFAULT 'running',
+                    control_successes INTEGER DEFAULT 0,
+                    control_trials INTEGER DEFAULT 0,
+                    variant_successes INTEGER DEFAULT 0,
+                    variant_trials INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT
+                )
+            """)
 
-        # Emergent traits table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS emergent_traits (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trait_name TEXT NOT NULL,
-                source_agents TEXT NOT NULL,
-                supporting_evidence TEXT,
-                confidence REAL DEFAULT 0.5,
-                first_detected TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Emergent traits table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS emergent_traits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trait_name TEXT NOT NULL,
+                    source_agents TEXT NOT NULL,
+                    supporting_evidence TEXT,
+                    confidence REAL DEFAULT 0.5,
+                    first_detected TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Trait transfers table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS trait_transfers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_agent TEXT NOT NULL,
-                to_agent TEXT NOT NULL,
-                trait TEXT NOT NULL,
-                expertise_domain TEXT,
-                success_rate_before REAL,
-                success_rate_after REAL,
-                transferred_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Trait transfers table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trait_transfers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    from_agent TEXT NOT NULL,
+                    to_agent TEXT NOT NULL,
+                    trait TEXT NOT NULL,
+                    expertise_domain TEXT,
+                    success_rate_before REAL,
+                    success_rate_after REAL,
+                    transferred_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Evolution history
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS evolution_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_name TEXT NOT NULL,
-                mutation_type TEXT NOT NULL,
-                before_state TEXT NOT NULL,
-                after_state TEXT NOT NULL,
-                reason TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Evolution history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS evolution_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_name TEXT NOT NULL,
+                    mutation_type TEXT NOT NULL,
+                    before_state TEXT NOT NULL,
+                    after_state TEXT NOT NULL,
+                    reason TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     # =========================================================================
     # A/B Experiments
@@ -229,41 +238,40 @@ class PersonaLaboratory:
 
     def _save_experiment(self, exp: PersonaExperiment):
         """Save experiment to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO experiments (
-                experiment_id, agent_name, control_persona, variant_persona,
-                hypothesis, status, control_successes, control_trials,
-                variant_successes, variant_trials, created_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                exp.experiment_id,
-                exp.agent_name,
-                json.dumps({
-                    "traits": exp.control_persona.traits,
-                    "expertise": exp.control_persona.expertise,
-                }),
-                json.dumps({
-                    "traits": exp.variant_persona.traits,
-                    "expertise": exp.variant_persona.expertise,
-                }),
-                exp.hypothesis,
-                exp.status,
-                exp.control_successes,
-                exp.control_trials,
-                exp.variant_successes,
-                exp.variant_trials,
-                exp.created_at,
-                exp.completed_at,
-            ),
-        )
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO experiments (
+                    experiment_id, agent_name, control_persona, variant_persona,
+                    hypothesis, status, control_successes, control_trials,
+                    variant_successes, variant_trials, created_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    exp.experiment_id,
+                    exp.agent_name,
+                    json.dumps({
+                        "traits": exp.control_persona.traits,
+                        "expertise": exp.control_persona.expertise,
+                    }),
+                    json.dumps({
+                        "traits": exp.variant_persona.traits,
+                        "expertise": exp.variant_persona.expertise,
+                    }),
+                    exp.hypothesis,
+                    exp.status,
+                    exp.control_successes,
+                    exp.control_trials,
+                    exp.variant_successes,
+                    exp.variant_trials,
+                    exp.created_at,
+                    exp.completed_at,
+                ),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def record_experiment_result(
         self,
@@ -303,17 +311,16 @@ class PersonaLaboratory:
 
         If variant is significantly better, updates the agent's persona.
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM experiments WHERE experiment_id = ?", (experiment_id,))
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute("SELECT * FROM experiments WHERE experiment_id = ?", (experiment_id,))
+            row = cursor.fetchone()
 
-        if not row:
-            return None
+            if not row:
+                return None
 
-        exp = self._row_to_experiment(row)
+            exp = self._row_to_experiment(row)
 
         if exp.is_significant and exp.variant_rate > exp.control_rate:
             # Apply variant as new persona
@@ -367,14 +374,13 @@ class PersonaLaboratory:
 
     def get_running_experiments(self) -> list[PersonaExperiment]:
         """Get all running experiments."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM experiments WHERE status = 'running'")
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute("SELECT * FROM experiments WHERE status = 'running'")
+            rows = cursor.fetchall()
 
-        return [self._row_to_experiment(row) for row in rows]
+            return [self._row_to_experiment(row) for row in rows]
 
     # =========================================================================
     # Emergent Trait Detection

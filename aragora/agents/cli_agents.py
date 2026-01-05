@@ -58,8 +58,10 @@ class CLIAgent(Agent):
                 stderr=asyncio.subprocess.PIPE,
             )
 
+            # Also sanitize stdin input (used by ClaudeAgent)
+            sanitized_input = self._sanitize_cli_arg(input_text) if input_text else None
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=input_text.encode() if input_text else None),
+                proc.communicate(input=sanitized_input.encode() if sanitized_input else None),
                 timeout=self.timeout,
             )
 
@@ -90,7 +92,8 @@ class CLIAgent(Agent):
         total_chars = 0
 
         for m in context[-10:]:  # Last 10 messages
-            content = m.content
+            # Sanitize content to remove null bytes that cause CLI failures
+            content = self._sanitize_cli_arg(m.content)
             # Truncate individual messages that are too long
             if len(content) > MAX_MESSAGE_CHARS:
                 # Keep start and end, truncate middle
