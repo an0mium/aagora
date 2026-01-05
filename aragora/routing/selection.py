@@ -173,6 +173,32 @@ class AgentSelector:
                 profile.probe_score = 1.0
                 profile.has_critical_probes = False
 
+    def refresh_from_elo_system(self, elo_system: Optional[Any] = None):
+        """
+        Sync domain ratings from EloSystem for all agents in the pool.
+
+        Updates each agent's elo_rating, domain_ratings, and success_rate
+        from the EloSystem's current state. Call this periodically or
+        before team selection to ensure ratings are current.
+
+        Args:
+            elo_system: EloSystem instance to sync from (uses self.elo_system if None)
+        """
+        elo = elo_system or self.elo_system
+        if not elo:
+            return
+
+        for agent_name, profile in self.agent_pool.items():
+            try:
+                rating = elo.get_rating(agent_name)
+                if rating:
+                    profile.elo_rating = rating.elo
+                    profile.domain_ratings = rating.domain_elos.copy() if rating.domain_elos else {}
+                    profile.success_rate = rating.win_rate
+            except Exception:
+                # Agent not in ELO system - keep existing values
+                pass
+
     def get_probe_adjusted_score(self, agent_name: str, base_score: float) -> float:
         """
         Adjust a score based on agent's probe reliability.

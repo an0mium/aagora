@@ -16,6 +16,7 @@ from unittest.mock import Mock, MagicMock, patch
 from aragora.server.handlers import (
     ConsensusHandler,
     BeliefHandler,
+    ReplaysHandler,
     HandlerResult,
     json_response,
     error_response,
@@ -147,6 +148,76 @@ class TestBoundedTTLCache:
         stats = cache.stats
         assert stats["hits"] == 1
         assert stats["misses"] == 1
+
+
+class TestPathValidation:
+    """Tests for path validation utilities."""
+
+    def test_validate_agent_name_valid(self):
+        """Test valid agent names."""
+        from aragora.server.handlers.base import validate_agent_name
+
+        is_valid, err = validate_agent_name("claude-3-opus")
+        assert is_valid is True
+        assert err is None
+
+        is_valid, err = validate_agent_name("agent_123")
+        assert is_valid is True
+        assert err is None
+
+    def test_validate_agent_name_invalid_chars(self):
+        """Test invalid characters in agent name."""
+        from aragora.server.handlers.base import validate_agent_name
+
+        is_valid, err = validate_agent_name("agent$bad")
+        assert is_valid is False
+        assert "format" in err.lower()
+
+    def test_validate_agent_name_path_traversal(self):
+        """Test path traversal in agent name."""
+        from aragora.server.handlers.base import validate_agent_name
+
+        is_valid, err = validate_agent_name("../etc/passwd")
+        assert is_valid is False
+        assert "traversal" in err.lower()
+
+    def test_validate_agent_name_too_long(self):
+        """Test agent name too long (max 32 chars)."""
+        from aragora.server.handlers.base import validate_agent_name
+
+        is_valid, err = validate_agent_name("a" * 33)
+        assert is_valid is False
+        assert "format" in err.lower()
+
+    def test_validate_agent_name_empty(self):
+        """Test empty agent name."""
+        from aragora.server.handlers.base import validate_agent_name
+
+        is_valid, err = validate_agent_name("")
+        assert is_valid is False
+        assert "missing" in err.lower()
+
+    def test_validate_debate_id_valid(self):
+        """Test valid debate IDs."""
+        from aragora.server.handlers.base import validate_debate_id
+
+        is_valid, err = validate_debate_id("debate-2024-01-15-abc123")
+        assert is_valid is True
+        assert err is None
+
+    def test_validate_debate_id_invalid(self):
+        """Test invalid debate IDs."""
+        from aragora.server.handlers.base import validate_debate_id
+
+        is_valid, err = validate_debate_id("debate/with/slashes")
+        assert is_valid is False
+
+    def test_validate_debate_id_too_long(self):
+        """Test debate ID too long (max 128 chars)."""
+        from aragora.server.handlers.base import validate_debate_id
+
+        is_valid, err = validate_debate_id("a" * 129)
+        assert is_valid is False
 
 
 class TestJsonResponse:
@@ -443,6 +514,279 @@ class TestErrorHandling:
 # CritiqueHandler Tests
 # ============================================================================
 
+# ============================================================================
+# AgentsHandler Tests
+# ============================================================================
+
+class TestAgentsHandler:
+    """Tests for AgentsHandler."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create handler with mock context."""
+        from aragora.server.handlers import AgentsHandler
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()
+        ctx = {
+            "storage": Mock(),
+            "elo_system": Mock(),
+            "nomic_dir": Path("/tmp/test"),
+        }
+        return AgentsHandler(ctx)
+
+    def test_can_handle_leaderboard(self, handler):
+        """Test can_handle for leaderboard endpoint."""
+        assert handler.can_handle("/api/leaderboard") is True
+        assert handler.can_handle("/api/rankings") is True
+
+    def test_can_handle_calibration(self, handler):
+        """Test can_handle for calibration endpoint."""
+        assert handler.can_handle("/api/calibration/leaderboard") is True
+
+    def test_can_handle_matches(self, handler):
+        """Test can_handle for matches endpoint."""
+        assert handler.can_handle("/api/matches/recent") is True
+
+    def test_can_handle_agent_profile(self, handler):
+        """Test can_handle for agent profile endpoint."""
+        assert handler.can_handle("/api/agent/claude/profile") is True
+        assert handler.can_handle("/api/agent/gpt-4/profile") is True
+
+    def test_can_handle_agent_history(self, handler):
+        """Test can_handle for agent history endpoint."""
+        assert handler.can_handle("/api/agent/claude/history") is True
+
+    def test_can_handle_head_to_head(self, handler):
+        """Test can_handle for head-to-head endpoint."""
+        assert handler.can_handle("/api/agent/claude/head-to-head/gpt-4") is True
+
+    def test_can_handle_compare(self, handler):
+        """Test can_handle for compare endpoint."""
+        assert handler.can_handle("/api/agent/compare") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/consensus/stats") is False
+        assert handler.can_handle("/api/debates") is False
+
+    def test_leaderboard_returns_503_when_no_elo(self):
+        """Test returns 503 when ELO system unavailable."""
+        from aragora.server.handlers import AgentsHandler
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()
+        ctx = {"storage": None, "elo_system": None, "nomic_dir": None}
+        handler = AgentsHandler(ctx)
+        result = handler.handle("/api/leaderboard", {}, Mock())
+        assert result.status_code == 503
+
+    def test_compare_requires_two_agents(self, handler):
+        """Test compare requires at least 2 agents."""
+        result = handler.handle("/api/agent/compare", {"agents": ["claude"]}, Mock())
+        assert result.status_code == 400
+
+
+# ============================================================================
+# AnalyticsHandler Tests
+# ============================================================================
+
+class TestAnalyticsHandler:
+    """Tests for AnalyticsHandler."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create handler with mock context."""
+        from aragora.server.handlers import AnalyticsHandler
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()
+        ctx = {
+            "storage": Mock(),
+            "elo_system": Mock(),
+            "nomic_dir": Path("/tmp/test"),
+        }
+        return AnalyticsHandler(ctx)
+
+    def test_can_handle_disagreements(self, handler):
+        """Test can_handle for disagreements endpoint."""
+        assert handler.can_handle("/api/analytics/disagreements") is True
+
+    def test_can_handle_role_rotation(self, handler):
+        """Test can_handle for role-rotation endpoint."""
+        assert handler.can_handle("/api/analytics/role-rotation") is True
+
+    def test_can_handle_early_stops(self, handler):
+        """Test can_handle for early-stops endpoint."""
+        assert handler.can_handle("/api/analytics/early-stops") is True
+
+    def test_can_handle_ranking_stats(self, handler):
+        """Test can_handle for ranking stats endpoint."""
+        assert handler.can_handle("/api/ranking/stats") is True
+
+    def test_can_handle_memory_stats(self, handler):
+        """Test can_handle for memory stats endpoint."""
+        assert handler.can_handle("/api/memory/stats") is True
+        assert handler.can_handle("/api/memory/tier-stats") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/consensus/stats") is False
+        assert handler.can_handle("/api/debates") is False
+
+
+# ============================================================================
+# DebatesHandler Tests
+# ============================================================================
+
+class TestDebatesHandler:
+    """Tests for DebatesHandler."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create handler with mock context."""
+        from aragora.server.handlers import DebatesHandler
+        ctx = {
+            "storage": Mock(),
+            "nomic_dir": Path("/tmp/test"),
+        }
+        return DebatesHandler(ctx)
+
+    def test_can_handle_debates_list(self, handler):
+        """Test can_handle for debates list endpoint."""
+        assert handler.can_handle("/api/debates") is True
+
+    def test_can_handle_debate_by_slug(self, handler):
+        """Test can_handle for debate by slug endpoint."""
+        assert handler.can_handle("/api/debates/test-debate-123") is True
+
+    def test_can_handle_export(self, handler):
+        """Test can_handle for export endpoint."""
+        assert handler.can_handle("/api/debates/test-debate/export") is True
+
+    def test_can_handle_impasse(self, handler):
+        """Test can_handle for impasse endpoint."""
+        assert handler.can_handle("/api/debates/test-debate/impasse") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/consensus/stats") is False
+        assert handler.can_handle("/api/agents") is False
+
+
+# ============================================================================
+# SystemHandler Tests
+# ============================================================================
+
+class TestSystemHandler:
+    """Tests for SystemHandler."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create handler with mock context."""
+        from aragora.server.handlers import SystemHandler
+        ctx = {
+            "storage": Mock(),
+            "nomic_dir": Path("/tmp/test"),
+        }
+        return SystemHandler(ctx)
+
+    def test_can_handle_health(self, handler):
+        """Test can_handle for health endpoint."""
+        assert handler.can_handle("/api/health") is True
+
+    def test_can_handle_nomic_state(self, handler):
+        """Test can_handle for nomic state endpoint."""
+        assert handler.can_handle("/api/nomic/state") is True
+
+    def test_can_handle_modes(self, handler):
+        """Test can_handle for modes endpoint."""
+        assert handler.can_handle("/api/modes") is True
+
+    def test_can_handle_history(self, handler):
+        """Test can_handle for history endpoints."""
+        assert handler.can_handle("/api/history/cycles") is True
+        assert handler.can_handle("/api/history/events") is True
+        assert handler.can_handle("/api/history/debates") is True
+        assert handler.can_handle("/api/history/summary") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/consensus/stats") is False
+        assert handler.can_handle("/api/debates") is False
+
+
+# ============================================================================
+# PulseHandler Tests
+# ============================================================================
+
+class TestPulseHandler:
+    """Tests for PulseHandler."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create handler with mock context."""
+        from aragora.server.handlers import PulseHandler
+        ctx = {
+            "nomic_dir": Path("/tmp/test"),
+        }
+        return PulseHandler(ctx)
+
+    def test_can_handle_trending(self, handler):
+        """Test can_handle for trending endpoint."""
+        assert handler.can_handle("/api/pulse/trending") is True
+
+    def test_can_handle_suggest(self, handler):
+        """Test can_handle for suggest endpoint."""
+        assert handler.can_handle("/api/pulse/suggest") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/consensus/stats") is False
+        assert handler.can_handle("/api/debates") is False
+
+
+# ============================================================================
+# MetricsHandler Tests
+# ============================================================================
+
+class TestMetricsHandler:
+    """Tests for MetricsHandler."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create handler with mock context."""
+        from aragora.server.handlers import MetricsHandler
+        ctx = {
+            "storage": Mock(),
+            "elo_system": Mock(),
+            "nomic_dir": Path("/tmp/test"),
+        }
+        return MetricsHandler(ctx)
+
+    def test_can_handle_metrics(self, handler):
+        """Test can_handle for metrics endpoint."""
+        assert handler.can_handle("/api/metrics") is True
+
+    def test_can_handle_health(self, handler):
+        """Test can_handle for health endpoint."""
+        assert handler.can_handle("/api/metrics/health") is True
+
+    def test_can_handle_cache_stats(self, handler):
+        """Test can_handle for cache stats endpoint."""
+        assert handler.can_handle("/api/metrics/cache") is True
+
+    def test_can_handle_system_info(self, handler):
+        """Test can_handle for system info endpoint."""
+        assert handler.can_handle("/api/metrics/system") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/consensus/stats") is False
+        assert handler.can_handle("/api/debates") is False
+
+
+# ============================================================================
+# CritiqueHandler Tests
+# ============================================================================
+
 class TestCritiqueHandler:
     """Tests for CritiqueHandler."""
 
@@ -553,3 +897,158 @@ class TestGenesisHandler:
         # Invalid debate ID
         result = handler.handle("/api/genesis/tree/../etc/passwd", {}, Mock())
         assert result.status_code == 400
+
+
+# ============================================================================
+# ReplaysHandler Tests
+# ============================================================================
+
+class TestReplaysHandler:
+    """Tests for ReplaysHandler."""
+
+    @pytest.fixture
+    def handler(self, tmp_path):
+        """Create a ReplaysHandler with test directory."""
+        ctx = {"nomic_dir": tmp_path}
+        return ReplaysHandler(ctx)
+
+    @pytest.fixture
+    def handler_no_nomic(self):
+        """Create a ReplaysHandler without nomic_dir."""
+        ctx = {"nomic_dir": None}
+        return ReplaysHandler(ctx)
+
+    def test_can_handle_replays_list(self, handler):
+        """Test can_handle for replays list endpoint."""
+        assert handler.can_handle("/api/replays") is True
+
+    def test_can_handle_replay_detail(self, handler):
+        """Test can_handle for specific replay endpoint."""
+        assert handler.can_handle("/api/replays/replay-123") is True
+        assert handler.can_handle("/api/replays/my_replay") is True
+
+    def test_can_handle_learning_evolution(self, handler):
+        """Test can_handle for learning evolution endpoint."""
+        assert handler.can_handle("/api/learning/evolution") is True
+
+    def test_cannot_handle_unrelated(self, handler):
+        """Test rejects unrelated endpoints."""
+        assert handler.can_handle("/api/debates") is False
+        assert handler.can_handle("/api/agents") is False
+        assert handler.can_handle("/api/replays/foo/bar/baz") is False  # Too deep
+
+    def test_list_replays_empty(self, handler, tmp_path):
+        """Test listing replays when no replays exist."""
+        result = handler.handle("/api/replays", {}, Mock())
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data == []
+
+    def test_list_replays_with_data(self, handler, tmp_path):
+        """Test listing replays with actual replay data."""
+        # Create replays directory with test data
+        replays_dir = tmp_path / "replays"
+        replays_dir.mkdir()
+
+        # Create a replay
+        replay_dir = replays_dir / "test-replay-001"
+        replay_dir.mkdir()
+        meta = {
+            "topic": "Test Topic",
+            "agents": [{"name": "Agent1"}, {"name": "Agent2"}],
+            "schema_version": "2.0"
+        }
+        (replay_dir / "meta.json").write_text(json.dumps(meta))
+
+        # Need to clear cache to get fresh results
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()
+
+        result = handler.handle("/api/replays", {}, Mock())
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert len(data) == 1
+        assert data[0]["id"] == "test-replay-001"
+        assert data[0]["topic"] == "Test Topic"
+        assert data[0]["agents"] == ["Agent1", "Agent2"]
+
+    def test_list_replays_no_nomic_dir(self, handler_no_nomic):
+        """Test listing replays without nomic_dir configured."""
+        result = handler_no_nomic.handle("/api/replays", {}, Mock())
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data == []
+
+    def test_get_replay_not_found(self, handler, tmp_path):
+        """Test getting non-existent replay."""
+        (tmp_path / "replays").mkdir()
+        result = handler.handle("/api/replays/nonexistent", {}, Mock())
+        assert result.status_code == 404
+
+    def test_get_replay_with_events(self, handler, tmp_path):
+        """Test getting replay with events."""
+        # Create replay with events
+        replays_dir = tmp_path / "replays"
+        replays_dir.mkdir()
+        replay_dir = replays_dir / "test-replay"
+        replay_dir.mkdir()
+
+        meta = {"topic": "Test", "agents": []}
+        (replay_dir / "meta.json").write_text(json.dumps(meta))
+
+        events = [
+            {"type": "start", "timestamp": 0},
+            {"type": "argument", "content": "Hello"},
+            {"type": "end", "timestamp": 100}
+        ]
+        (replay_dir / "events.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in events)
+        )
+
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()
+
+        result = handler.handle("/api/replays/test-replay", {}, Mock())
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["id"] == "test-replay"
+        assert data["event_count"] == 3
+        assert len(data["events"]) == 3
+
+    def test_get_replay_no_nomic_dir(self, handler_no_nomic):
+        """Test getting replay without nomic_dir configured."""
+        result = handler_no_nomic.handle("/api/replays/any-id", {}, Mock())
+        assert result.status_code == 503
+
+    def test_replay_id_path_traversal_blocked(self, handler):
+        """Test path traversal is blocked in replay ID."""
+        result = handler.handle("/api/replays/../etc/passwd", {}, Mock())
+        assert result.status_code == 400
+
+    def test_replay_id_invalid_chars_blocked(self, handler):
+        """Test invalid characters in replay ID are blocked."""
+        result = handler.handle("/api/replays/foo$bar", {}, Mock())
+        assert result.status_code == 400
+        result = handler.handle("/api/replays/foo/bar", {}, Mock())
+        # This would be caught by can_handle returning False
+        assert handler.can_handle("/api/replays/foo/bar") is False
+
+    def test_learning_evolution_no_db(self, handler, tmp_path):
+        """Test learning evolution when no database exists."""
+        result = handler.handle("/api/learning/evolution", {}, Mock())
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["patterns"] == []
+        assert data["count"] == 0
+
+    def test_learning_evolution_no_nomic_dir(self, handler_no_nomic):
+        """Test learning evolution without nomic_dir."""
+        result = handler_no_nomic.handle("/api/learning/evolution", {}, Mock())
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["patterns"] == []
+
+    def test_learning_evolution_with_limit(self, handler):
+        """Test learning evolution respects limit parameter."""
+        result = handler.handle("/api/learning/evolution", {"limit": "5"}, Mock())
+        assert result.status_code == 200

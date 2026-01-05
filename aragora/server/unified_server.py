@@ -403,6 +403,7 @@ try:
         BeliefHandler,
         CritiqueHandler,
         GenesisHandler,
+        ReplaysHandler,
         HandlerResult,
     )
     HANDLERS_AVAILABLE = True
@@ -418,6 +419,7 @@ except ImportError:
     BeliefHandler = None
     CritiqueHandler = None
     GenesisHandler = None
+    ReplaysHandler = None
     HandlerResult = None
 
 # Track active ad-hoc debates
@@ -554,6 +556,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _belief_handler: Optional["BeliefHandler"] = None
     _critique_handler: Optional["CritiqueHandler"] = None
     _genesis_handler: Optional["GenesisHandler"] = None
+    _replays_handler: Optional["ReplaysHandler"] = None
     _handlers_initialized: bool = False
 
     # Thread pool for debate execution (prevents unbounded thread creation)
@@ -649,8 +652,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         cls._belief_handler = BeliefHandler(ctx)
         cls._critique_handler = CritiqueHandler(ctx)
         cls._genesis_handler = GenesisHandler(ctx)
+        cls._replays_handler = ReplaysHandler(ctx)
         cls._handlers_initialized = True
-        logger.info("[handlers] Modular handlers initialized (10 handlers)")
+        logger.info("[handlers] Modular handlers initialized (11 handlers)")
 
     def _try_modular_handler(self, path: str, query: dict) -> bool:
         """Try to handle request via modular handlers.
@@ -678,6 +682,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._belief_handler,
             self._critique_handler,
             self._genesis_handler,
+            self._replays_handler,
         ]
 
         for handler in handlers:
@@ -976,18 +981,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
             self._get_document(doc_id)
 
-        # Replay API
-        elif path == '/api/replays':
-            self._list_replays()
-        elif path.startswith('/api/replays/') and not path.endswith('/fork'):
-            replay_id = self._extract_path_segment(path, 3, "replay_id")
-            if replay_id is None:
-                return
-            self._get_replay(replay_id)
+        # Replay API - now handled by ReplaysHandler
 
-        # Learning Evolution API
-        elif path == '/api/learning/evolution':
-            self._get_learning_evolution()
+        # Learning Evolution API - now handled by ReplaysHandler
 
         # Flip Detection API
         # Note: /api/agent/*/consistency is handled by AgentsHandler
@@ -2397,101 +2393,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "broadcast_generation")}, status=500)
 
-    def _list_replays(self) -> None:
-        """List available replay directories."""
-        if not self.nomic_state_file:
-            self._send_json([])
-            return
-
-        try:
-            replays_dir = self.nomic_state_file.parent / "replays"
-            if not replays_dir.exists():
-                self._send_json([])
-                return
-
-            replays = []
-            for replay_path in replays_dir.iterdir():
-                if replay_path.is_dir():
-                    meta_file = replay_path / "meta.json"
-                    if meta_file.exists():
-                        meta = json.loads(meta_file.read_text())
-                        replays.append({
-                            "id": replay_path.name,
-                            "topic": meta.get("topic", replay_path.name),
-                            "agents": [a.get("name") for a in meta.get("agents", [])],
-                            "schema_version": meta.get("schema_version", "1.0"),
-                        })
-            self._send_json(sorted(replays, key=lambda x: x["id"], reverse=True))
-        except Exception as e:
-            self._send_json({"error": _safe_error_message(e, "list_replays")})
-
-    def _get_replay(self, replay_id: str) -> None:
-        """Get a specific replay with events."""
-        if not self.nomic_state_file:
-            self._send_json({"error": "Replays not configured"})
-            return
-
-        # Validate replay_id to prevent path traversal
-        if not re.match(SAFE_ID_PATTERN, replay_id):
-            self._send_json({"error": "Invalid replay ID format"}, status=400)
-            return
-
-        try:
-            replay_dir = self.nomic_state_file.parent / "replays" / replay_id
-            if not replay_dir.exists():
-                self._send_json({"error": f"Replay not found: {replay_id}"})
-                return
-
-            # Load meta
-            meta_file = replay_dir / "meta.json"
-            meta = json.loads(meta_file.read_text()) if meta_file.exists() else {}
-
-            # Load events
-            events_file = replay_dir / "events.jsonl"
-            events = []
-            if events_file.exists():
-                for line in events_file.read_text().strip().split("\n"):
-                    if line:
-                        events.append(json.loads(line))
-
-            self._send_json({
-                "id": replay_id,
-                "meta": meta,
-                "events": events,
-            })
-        except Exception as e:
-            self._send_json({"error": _safe_error_message(e, "get_replay")})
-
-    def _get_learning_evolution(self) -> None:
-        """Get learning/evolution data from meta_learning.db."""
-        if not self.nomic_state_file:
-            self._send_json({"error": "Learning data not configured", "patterns": []})
-            return
-
-        try:
-            import sqlite3
-            db_path = self.nomic_state_file.parent / "meta_learning.db"
-            if not db_path.exists():
-                self._send_json({"patterns": [], "count": 0})
-                return
-
-            with sqlite3.connect(str(db_path), timeout=30.0) as conn:
-                conn.row_factory = sqlite3.Row
-
-                # Get recent patterns
-                cursor = conn.execute("""
-                    SELECT * FROM meta_patterns
-                    ORDER BY created_at DESC
-                    LIMIT 20
-                """)
-                patterns = [dict(row) for row in cursor.fetchall()]
-
-            self._send_json({
-                "patterns": patterns,
-                "count": len(patterns),
-            })
-        except Exception as e:
-            self._send_json({"error": _safe_error_message(e, "patterns"), "patterns": []})
+    # Note: _list_replays, _get_replay, _get_learning_evolution moved to ReplaysHandler
 
     def _get_recent_flips(self, limit: int) -> None:
         """Get recent position flips across all agents."""

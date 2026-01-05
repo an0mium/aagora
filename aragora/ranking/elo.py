@@ -623,6 +623,18 @@ class EloSystem:
 
         return ratings
 
+    def get_top_agents_for_domain(self, domain: str, limit: int = 5) -> list[AgentRating]:
+        """Get agents ranked by domain-specific performance.
+
+        Args:
+            domain: Domain to rank by (e.g., 'security', 'performance', 'architecture')
+            limit: Maximum number of agents to return
+
+        Returns:
+            List of AgentRating sorted by domain-specific ELO (highest first)
+        """
+        return self.get_leaderboard(limit=limit, domain=domain)
+
     def get_elo_history(self, agent_name: str, limit: int = 50) -> list[tuple[str, float]]:
         """Get ELO history for an agent."""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:

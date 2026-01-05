@@ -591,6 +591,9 @@ class TestAnalyticsHandlerE2E:
     def analytics_handler_no_storage(self, temp_nomic_dir):
         """Create AnalyticsHandler without storage."""
         from aragora.server.handlers import AnalyticsHandler
+        from aragora.server.handlers.base import clear_cache
+        # Clear cache to avoid stale results from previous tests
+        clear_cache()
         ctx = {"storage": None, "elo_system": None, "nomic_dir": temp_nomic_dir}
         return AnalyticsHandler(ctx)
 
@@ -837,7 +840,7 @@ class TestTTLCache:
         clear_cache()
         call_count = 0
 
-        @ttl_cache(ttl_seconds=60)
+        @ttl_cache(ttl_seconds=60, skip_first=False)  # Standalone function
         def expensive_func(x):
             nonlocal call_count
             call_count += 1
@@ -857,7 +860,7 @@ class TestTTLCache:
         clear_cache()
         call_count = 0
 
-        @ttl_cache(ttl_seconds=60)
+        @ttl_cache(ttl_seconds=60, skip_first=False)  # Standalone function
         def expensive_func(x):
             nonlocal call_count
             call_count += 1
@@ -877,11 +880,11 @@ class TestTTLCache:
         # Clear first to get a clean state
         clear_cache()
 
-        @ttl_cache(ttl_seconds=60, key_prefix="test_all")
+        @ttl_cache(ttl_seconds=60, key_prefix="test_all", skip_first=False)
         def func1():
             return 1
 
-        @ttl_cache(ttl_seconds=60, key_prefix="other_all")
+        @ttl_cache(ttl_seconds=60, key_prefix="other_all", skip_first=False)
         def func2():
             return 2
 
@@ -898,11 +901,11 @@ class TestTTLCache:
 
         clear_cache()
 
-        @ttl_cache(ttl_seconds=60, key_prefix="prefix_x")
+        @ttl_cache(ttl_seconds=60, key_prefix="prefix_x", skip_first=False)
         def func_a():
             return 1
 
-        @ttl_cache(ttl_seconds=60, key_prefix="prefix_y")
+        @ttl_cache(ttl_seconds=60, key_prefix="prefix_y", skip_first=False)
         def func_b():
             return 2
 

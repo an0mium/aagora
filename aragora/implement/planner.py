@@ -7,6 +7,7 @@ with complexity scoring and dependency tracking.
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,9 @@ from typing import Optional
 from aragora.agents.cli_agents import GeminiCLIAgent
 
 from .types import ImplementPlan, ImplementTask
+
+# Feature flag for task decomposition (default OFF until tested)
+DECOMPOSE_FAILED = os.environ.get("IMPL_DECOMPOSE_FAILED", "0") == "1"
 
 
 PLAN_PROMPT_TEMPLATE = """Analyze this implementation design and create a detailed execution plan.
@@ -194,6 +198,128 @@ async def generate_implement_plan(
         print(f"    - [{task.complexity}] {task.id}: {task.description[:50]}...")
 
     return ImplementPlan(design_hash=design_hash, tasks=tasks)
+
+
+DECOMPOSE_PROMPT_TEMPLATE = """A complex implementation task failed. Break it into smaller subtasks.
+
+## Original Task
+ID: {task_id}
+Description: {description}
+Files: {files}
+Original Complexity: {complexity}
+
+## Error
+{error}
+
+## Instructions
+Split this into 2-3 smaller tasks, each handling a subset of files.
+Each subtask should:
+1. Be completable independently
+2. Handle 1-2 files max
+3. Have complexity "simple" or "moderate"
+
+## Output Format
+Output ONLY valid JSON:
+{{
+  "subtasks": [
+    {{
+      "id": "{task_id}-a",
+      "description": "First part of the original task",
+      "files": ["file1.py"],
+      "complexity": "simple",
+      "dependencies": []
+    }},
+    {{
+      "id": "{task_id}-b",
+      "description": "Second part of the original task",
+      "files": ["file2.py"],
+      "complexity": "simple",
+      "dependencies": ["{task_id}-a"]
+    }}
+  ]
+}}
+
+Output ONLY the JSON, no explanation.
+"""
+
+
+async def decompose_failed_task(
+    task: ImplementTask,
+    error: str,
+    repo_path: Path,
+    gemini_model: str = "gemini-2.0-flash",
+) -> list[ImplementTask]:
+    """
+    Decompose a failed complex task into smaller subtasks.
+
+    Uses DECOMPOSE_FAILED feature flag (default OFF).
+    Only decomposes tasks that are complex and have more than 2 files.
+
+    Args:
+        task: The failed task to decompose
+        error: Error message from the failure
+        repo_path: Path to the repository
+        gemini_model: Gemini model to use for decomposition
+
+    Returns:
+        List of subtasks (or original task if not worth decomposing)
+    """
+    if not DECOMPOSE_FAILED:
+        return [task]
+
+    # Only decompose complex tasks with many files
+    if task.complexity != "complex" or len(task.files) <= 2:
+        print(f"    Task {task.id} not suitable for decomposition")
+        return [task]
+
+    print(f"    Decomposing failed task {task.id} into subtasks...")
+
+    gemini = GeminiCLIAgent(
+        name="task-decomposer",
+        model=gemini_model,
+        role="decomposer",
+        timeout=120,
+    )
+
+    prompt = DECOMPOSE_PROMPT_TEMPLATE.format(
+        task_id=task.id,
+        description=task.description,
+        files=", ".join(task.files),
+        complexity=task.complexity,
+        error=error[:500] if error else "Unknown error",
+    )
+
+    try:
+        response = await gemini.generate(prompt)
+        json_str = extract_json(response)
+        data = json.loads(json_str)
+
+        if "subtasks" not in data or not data["subtasks"]:
+            print(f"    No subtasks generated, keeping original")
+            return [task]
+
+        subtasks = []
+        for st in data["subtasks"]:
+            # Inherit dependencies from original task
+            deps = list(task.dependencies) + st.get("dependencies", [])
+            subtask = ImplementTask(
+                id=st["id"],
+                description=st["description"],
+                files=st.get("files", []),
+                complexity=st.get("complexity", "moderate"),
+                dependencies=deps,
+            )
+            subtasks.append(subtask)
+
+        print(f"    Decomposed into {len(subtasks)} subtasks:")
+        for st in subtasks:
+            print(f"      - [{st.complexity}] {st.id}: {st.description[:40]}...")
+
+        return subtasks
+
+    except Exception as e:
+        print(f"    Decomposition failed: {e}, keeping original task")
+        return [task]
 
 
 def create_single_task_plan(design: str, repo_path: Path) -> ImplementPlan:

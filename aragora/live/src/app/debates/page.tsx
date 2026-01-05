@@ -73,15 +73,8 @@ export default function DebatesPage() {
       await navigator.clipboard.writeText(url);
       setCopiedId(debateId);
       setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      const textArea = document.createElement('textarea');
-      textArea.value = url;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setCopiedId(debateId);
-      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy link:', err);
     }
   };
 

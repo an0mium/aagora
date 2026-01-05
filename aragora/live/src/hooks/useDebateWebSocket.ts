@@ -107,6 +107,13 @@ export function useDebateWebSocket({
     return () => clearInterval(interval);
   }, []);
 
+  // Clear deduplication set when debate ends to prevent memory leak
+  useEffect(() => {
+    if (status === 'complete' || status === 'error') {
+      seenMessagesRef.current.clear();
+    }
+  }, [status]);
+
   // Send vote to server
   const sendVote = useCallback((choice: string, intensity?: number) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

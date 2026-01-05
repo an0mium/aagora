@@ -140,7 +140,7 @@ class ConsensusHandler(BaseHandler):
 
         return None
 
-    @ttl_cache(ttl_seconds=240, key_prefix="consensus_similar")
+    @ttl_cache(ttl_seconds=240, key_prefix="consensus_similar", skip_first=True)
     def _get_similar_debates(self, topic: str, limit: int) -> HandlerResult:
         """Find debates similar to a topic."""
         if not CONSENSUS_MEMORY_AVAILABLE:
@@ -172,7 +172,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "similar_topics"), 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="consensus_settled")
+    @ttl_cache(ttl_seconds=600, key_prefix="consensus_settled", skip_first=True)
     def _get_settled_topics(self, min_confidence: float, limit: int) -> HandlerResult:
         """Get high-confidence settled topics."""
         if not CONSENSUS_MEMORY_AVAILABLE:
@@ -208,7 +208,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "settled_topics"), 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="consensus_stats")
+    @ttl_cache(ttl_seconds=600, key_prefix="consensus_stats", skip_first=True)
     def _get_consensus_stats(self) -> HandlerResult:
         """Get consensus memory statistics."""
         if not CONSENSUS_MEMORY_AVAILABLE:

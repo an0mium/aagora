@@ -48,7 +48,7 @@ class AnalyticsHandler(BaseHandler):
 
         return None
 
-    @ttl_cache(ttl_seconds=600, key_prefix="analytics_disagreement")
+    @ttl_cache(ttl_seconds=600, key_prefix="analytics_disagreement", skip_first=True)
     def _get_disagreement_stats(self) -> HandlerResult:
         """Get statistics about debate disagreements."""
         storage = self.get_storage()
@@ -81,7 +81,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get disagreement stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="analytics_roles")
+    @ttl_cache(ttl_seconds=600, key_prefix="analytics_roles", skip_first=True)
     def _get_role_rotation_stats(self) -> HandlerResult:
         """Get statistics about cognitive role rotation."""
         storage = self.get_storage()
@@ -107,7 +107,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get role rotation stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="analytics_early_stop")
+    @ttl_cache(ttl_seconds=600, key_prefix="analytics_early_stop", skip_first=True)
     def _get_early_stop_stats(self) -> HandlerResult:
         """Get statistics about early debate stopping."""
         storage = self.get_storage()
@@ -142,7 +142,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get early stop stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="analytics_ranking")
+    @ttl_cache(ttl_seconds=300, key_prefix="analytics_ranking", skip_first=True)
     def _get_ranking_stats(self) -> HandlerResult:
         """Get ranking system statistics."""
         elo = self.get_elo_system()
@@ -167,7 +167,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get ranking stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=1800, key_prefix="analytics_memory")
+    @ttl_cache(ttl_seconds=1800, key_prefix="analytics_memory", skip_first=True)
     def _get_memory_stats(self) -> HandlerResult:
         """Get memory system statistics."""
         try:

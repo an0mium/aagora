@@ -34,6 +34,7 @@ from .consensus import ConsensusHandler
 from .belief import BeliefHandler
 from .critique import CritiqueHandler
 from .genesis import GenesisHandler
+from .replays import ReplaysHandler
 
 __all__ = [
     # Base utilities
@@ -52,4 +53,5 @@ __all__ = [
     "BeliefHandler",
     "CritiqueHandler",
     "GenesisHandler",
+    "ReplaysHandler",
 ]

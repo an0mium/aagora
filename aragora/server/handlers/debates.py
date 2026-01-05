@@ -12,7 +12,14 @@ Endpoints:
 """
 
 from typing import Optional
-from .base import BaseHandler, HandlerResult, json_response, error_response, get_int_param
+from .base import (
+    BaseHandler,
+    HandlerResult,
+    json_response,
+    error_response,
+    get_int_param,
+    validate_debate_id,
+)
 
 
 class DebatesHandler(BaseHandler):
@@ -54,17 +61,23 @@ class DebatesHandler(BaseHandler):
             return self._get_debate_by_slug(handler, slug)
 
         if path.endswith("/impasse"):
-            debate_id = self._extract_debate_id(path)
+            debate_id, err = self._extract_debate_id(path)
+            if err:
+                return error_response(err, 400)
             if debate_id:
                 return self._get_impasse(handler, debate_id)
 
         if path.endswith("/convergence"):
-            debate_id = self._extract_debate_id(path)
+            debate_id, err = self._extract_debate_id(path)
+            if err:
+                return error_response(err, 400)
             if debate_id:
                 return self._get_convergence(handler, debate_id)
 
         if path.endswith("/citations"):
-            debate_id = self._extract_debate_id(path)
+            debate_id, err = self._extract_debate_id(path)
+            if err:
+                return error_response(err, 400)
             if debate_id:
                 return self._get_citations(handler, debate_id)
 
@@ -72,6 +85,10 @@ class DebatesHandler(BaseHandler):
             parts = path.split("/")
             if len(parts) >= 6:
                 debate_id = parts[3]
+                # Validate debate ID for export
+                is_valid, err = validate_debate_id(debate_id)
+                if not is_valid:
+                    return error_response(err, 400)
                 export_format = parts[5]
                 table = query_params.get('table', 'summary')
                 return self._export_debate(handler, debate_id, export_format, table)
@@ -84,12 +101,22 @@ class DebatesHandler(BaseHandler):
 
         return None
 
-    def _extract_debate_id(self, path: str) -> Optional[str]:
-        """Extract debate ID from path like /api/debates/{id}/impasse."""
+    def _extract_debate_id(self, path: str) -> tuple[Optional[str], Optional[str]]:
+        """Extract and validate debate ID from path like /api/debates/{id}/impasse.
+
+        Returns:
+            Tuple of (debate_id, error_message). If error_message is set, debate_id is None.
+        """
         parts = path.split("/")
-        if len(parts) >= 4:
-            return parts[3]
-        return None
+        if len(parts) < 4:
+            return None, "Invalid path"
+
+        debate_id = parts[3]
+        is_valid, err = validate_debate_id(debate_id)
+        if not is_valid:
+            return None, err
+
+        return debate_id, None
 
     def _list_debates(self, handler, limit: int) -> HandlerResult:
         """List recent debates."""

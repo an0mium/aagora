@@ -959,8 +959,14 @@ class AgentCircuitBreaker:
         self.task_cooldowns: dict[str, dict[str, int]] = {}  # agent -> task_type -> cooldown
 
     def record_success(self, agent_name: str) -> None:
-        """Reset failure count on success."""
+        """Reset failure count and reduce cooldown on success."""
         self.failures[agent_name] = 0
+        # If agent was in cooldown but succeeded (half-open state), reduce or close circuit
+        if agent_name in self.cooldowns and self.cooldowns[agent_name] > 0:
+            self.cooldowns[agent_name] = max(0, self.cooldowns[agent_name] - 1)
+            if self.cooldowns[agent_name] == 0:
+                del self.cooldowns[agent_name]
+                logging.info(f"[circuit-breaker] {agent_name} recovered after success")
 
     def record_failure(self, agent_name: str) -> bool:
         """
@@ -1101,7 +1107,7 @@ class NomicLoop:
         use_genesis: bool = False,
         enable_persistence: bool = True,
         disable_rollback: bool = False,  # Disable rollback on verification failure
-        max_cycle_seconds: int = 7200,  # 2 hour cycle timeout
+        max_cycle_seconds: int = 3600,  # 1 hour cycle timeout (prevents multi-hour hangs)
     ):
         self.aragora_path = Path(aragora_path or Path(__file__).parent.parent)
         self.max_cycles = max_cycles
@@ -5450,7 +5456,14 @@ Respond with ONLY the complete design specification (no preamble).
 Start directly with "## 1. FILE CHANGES" or similar."""
 
             self._log("  [arbitration] Judge evaluating proposals...")
-            response = await judge.generate(arbitration_prompt)
+            try:
+                response = await asyncio.wait_for(
+                    judge.generate(arbitration_prompt),
+                    timeout=180  # 3 minute max for judge arbitration
+                )
+            except asyncio.TimeoutError:
+                self._log("  [arbitration] Judge timeout - using highest-voted proposal")
+                return None
 
             if response and len(response) > 200:
                 return response
@@ -6629,6 +6642,15 @@ Your design will be evaluated on:
 - **Specificity**: Could an engineer implement this without asking questions?
 - **Safety**: Does it preserve all existing functionality?
 
+## REQUIRED: Viability Checklist
+Your design MUST include ALL of the following to be considered viable:
+- [ ] At least 3 specific file changes with estimated line counts
+- [ ] At least 2 function/class signatures with parameters
+- [ ] At least 1 integration point showing how components connect
+- [ ] 1 concrete example of how to use the feature
+
+Designs missing any of these will be automatically rejected as non-viable.
+
 ## IMPORTANT
 - Focus on MINIMAL viable implementation
 - Avoid over-engineering or unnecessary abstractions
@@ -6649,6 +6671,9 @@ Your design will be evaluated on:
             consensus="judge",
             judge_selection="elo_ranked",  # Use highest-ELO agent as judge
             proposer_count=1,  # Gemini as primary design proposer
+            early_stopping=True,  # Enable early exit on consensus
+            early_stop_threshold=0.66,  # 66% agreement triggers early stop
+            min_rounds_before_early_stop=1,  # At least 1 round before stopping
             role_rotation=True,  # Heavy3-inspired cognitive role rotation
             role_rotation_config=RoleRotationConfig(
                 enabled=True,
@@ -6703,6 +6728,27 @@ Your design will be evaluated on:
             continuum_memory=self.continuum,
         )
         result = await self._run_arena_with_logging(arena, "design")
+
+        # === Fast-Track Judge Arbitration on Low Time Budget ===
+        # When time is critical and no consensus, skip complex deadlock resolution
+        # and immediately invoke judge arbitration
+        if not result.consensus_reached:
+            elapsed = (datetime.now() - phase_start).total_seconds()
+            remaining = self.max_cycle_seconds - elapsed
+            if remaining < 600:  # Less than 10 min left in cycle
+                self._log(f"  [fast-track] Time budget critical ({remaining:.0f}s left) - invoking judge immediately")
+                # Extract individual proposals for arbitration
+                fast_proposals = {}
+                for msg in result.messages:
+                    if msg.role == "proposer" and msg.content:
+                        fast_proposals[msg.agent] = msg.content
+                if len(fast_proposals) >= 2:
+                    arbitrated = await self._arbitrate_design(fast_proposals, improvement)
+                    if arbitrated:
+                        result.final_answer = arbitrated
+                        result.consensus_reached = True
+                        result.confidence = 0.7  # Moderate confidence for arbitrated design
+                        self._log(f"  [fast-track] Judge selected design ({len(arbitrated)} chars)")
 
         # === Deadlock Resolution via Counterfactual Branching ===
         # When design consensus fails, use belief analysis to identify crux claims
@@ -7832,13 +7878,16 @@ Be concise - this is a quality gate, not a full review."""
             )
             cycle_result["phases"]["context"] = context_result
             codebase_context = context_result.get("context", "")
+            self.phase_recovery.record_success("context")
         except PhaseError as e:
             self._log(f"PHASE TIMEOUT: Context gathering exceeded time limit: {e}")
+            self.phase_recovery.record_failure("context", e)
             cycle_result["outcome"] = "context_timeout"
             cycle_result["error"] = str(e)
             return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Context gathering failed: {e}")
+            self.phase_recovery.record_failure("context", e)
             cycle_result["outcome"] = "context_crashed"
             cycle_result["error"] = str(e)
             return cycle_result
@@ -7856,13 +7905,16 @@ Be concise - this is a quality gate, not a full review."""
                 self.phase_debate(codebase_context=codebase_context)
             )
             cycle_result["phases"]["debate"] = debate_result
+            self.phase_recovery.record_success("debate")
         except PhaseError as e:
             self._log(f"PHASE TIMEOUT: Debate exceeded time limit: {e}")
+            self.phase_recovery.record_failure("debate", e)
             cycle_result["outcome"] = "debate_timeout"
             cycle_result["error"] = str(e)
             return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Debate phase failed: {e}")
+            self.phase_recovery.record_failure("debate", e)
             cycle_result["outcome"] = "debate_crashed"
             cycle_result["error"] = str(e)
             return cycle_result
@@ -7890,13 +7942,16 @@ Be concise - this is a quality gate, not a full review."""
                 self.phase_design(improvement, belief_analysis=belief_analysis)
             )
             cycle_result["phases"]["design"] = design_result
+            self.phase_recovery.record_success("design")
         except PhaseError as e:
             self._log(f"PHASE TIMEOUT: Design exceeded time limit: {e}")
+            self.phase_recovery.record_failure("design", e)
             cycle_result["outcome"] = "design_timeout"
             cycle_result["error"] = str(e)
             return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Design phase failed: {e}")
+            self.phase_recovery.record_failure("design", e)
             cycle_result["outcome"] = "design_crashed"
             cycle_result["error"] = str(e)
             return cycle_result
@@ -7979,20 +8034,27 @@ Be concise - this is a quality gate, not a full review."""
             cycle_result["timeout_phase"] = "design"
             return cycle_result
 
-        # Phase 3: Implement
+        # Phase 3: Implement (with circuit breaker integration)
         try:
             impl_result = await self._run_with_phase_timeout(
                 "implement",
                 self.phase_implement(design)
             )
             cycle_result["phases"]["implement"] = impl_result
+            self.phase_recovery.record_success("implement")
+            # Track success for primary implementation agent
+            self.circuit_breaker.record_task_success("claude", "implement")
         except PhaseError as e:
             self._log(f"PHASE TIMEOUT: Implementation exceeded time limit: {e}")
+            self.phase_recovery.record_failure("implement", e)
+            self.circuit_breaker.record_task_failure("claude", "implement")
             cycle_result["outcome"] = "implement_timeout"
             cycle_result["error"] = str(e)
             return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Implementation phase failed: {e}")
+            self.phase_recovery.record_failure("implement", e)
+            self.circuit_breaker.record_task_failure("claude", "implement")
             cycle_result["outcome"] = "implement_crashed"
             cycle_result["error"] = str(e)
             return cycle_result
@@ -8085,15 +8147,26 @@ Be concise - this is a quality gate, not a full review."""
                         cycle_result["best_test_score"] = best_test_score
                     break
 
-            # Phase 4: Verify
+            # Phase 4: Verify (with timeout and recovery)
             try:
-                verify_result = await self.phase_verify()
+                # Use phase timeout to prevent indefinite hangs
+                verify_result = await self._run_with_phase_timeout(
+                    "verify",
+                    self.phase_verify()
+                )
                 cycle_result["phases"]["verify"] = verify_result
+                self.phase_recovery.record_success("verify")
+            except PhaseError as e:
+                self._log(f"PHASE TIMEOUT: Verification phase exceeded timeout: {e}")
+                verify_result = {"all_passed": False, "checks": [], "error": str(e)}
+                cycle_result["phases"]["verify"] = verify_result
+                self.phase_recovery.record_failure("verify", e)
             except Exception as e:
                 self._log(f"PHASE CRASH: Verification phase failed: {e}")
                 # Treat as failed verification, continue to next fix iteration
                 verify_result = {"all_passed": False, "checks": [], "error": str(e)}
                 cycle_result["phases"]["verify"] = verify_result
+                self.phase_recovery.record_failure("verify", e)
 
             if verify_result.get("all_passed"):
                 self._log(f"\nVerification passed!")
@@ -8366,15 +8439,17 @@ Working directory: {self.aragora_path}
 
         self._log(f"\nVerification passed")
 
-        # Phase 5: Commit
+        # Phase 5: Commit (with recovery tracking)
         try:
             commit_result = await self._run_with_phase_timeout(
                 "commit",
                 self.phase_commit(improvement)
             )
             cycle_result["phases"]["commit"] = commit_result
+            self.phase_recovery.record_success("commit")
         except PhaseError as e:
             self._log(f"PHASE TIMEOUT: Commit exceeded time limit: {e}")
+            self.phase_recovery.record_failure("commit", e)
             cycle_result["outcome"] = "commit_timeout"
             cycle_result["error"] = str(e)
             # Don't return early - still want to log leaderboard etc.
@@ -8382,6 +8457,7 @@ Working directory: {self.aragora_path}
             cycle_result["phases"]["commit"] = commit_result
         except Exception as e:
             self._log(f"PHASE CRASH: Commit phase failed: {e}")
+            self.phase_recovery.record_failure("commit", e)
             cycle_result["outcome"] = "commit_crashed"
             cycle_result["error"] = str(e)
             commit_result = {"committed": False, "reason": str(e)}
@@ -8478,11 +8554,19 @@ Working directory: {self.aragora_path}
                 improvement = cycle_result.get("phases", {}).get("debate", {}).get("final_answer", "")
                 is_success = outcome == "success"
 
+                # Extract domain and participating agents for cross-cycle learning
+                domain = self._detect_domain(improvement) if improvement else "general"
+                debate_agents = []
+                if cycle_result.get("phases", {}).get("debate", {}).get("agents"):
+                    debate_agents = cycle_result["phases"]["debate"]["agents"]
+                elif hasattr(self, '_last_debate_team'):
+                    debate_agents = [a.name for a in getattr(self, '_last_debate_team', [])]
+
                 # Store in SLOW tier (strategic learning across cycles)
                 memory_id = f"cycle-{self.cycle_count}-{outcome}"
                 self.continuum.add(
                     id=memory_id,
-                    content=f"Cycle {self.cycle_count}: {outcome}. Improvement: {improvement}",
+                    content=f"Cycle {self.cycle_count}: {outcome}. Domain: {domain}. Improvement: {improvement}",
                     tier=MemoryTier.SLOW,
                     importance=0.8 if is_success else 0.5,
                     metadata={
@@ -8490,9 +8574,12 @@ Working directory: {self.aragora_path}
                         "outcome": outcome,
                         "duration_seconds": cycle_result.get("duration_seconds", 0),
                         "success": is_success,
+                        "domain": domain,
+                        "agents": debate_agents,
+                        "phases_completed": list(cycle_result.get("phases", {}).keys()),
                     }
                 )
-                self._log(f"  [continuum] Stored cycle outcome in SLOW tier")
+                self._log(f"  [continuum] Stored cycle outcome in SLOW tier (domain={domain})")
 
                 # Consolidate memory periodically (every 3 cycles for faster learning)
                 if self.cycle_count % 3 == 0:
@@ -8599,6 +8686,33 @@ Working directory: {self.aragora_path}
             "duration": cycle_result.get("duration_seconds"),
             "phases_completed": list(cycle_result.get("phases", {}).keys()),
         })
+
+        # Record cycle outcome in ContinuumMemory for cross-cycle learning
+        if self.continuum:
+            try:
+                outcome = cycle_result.get("outcome", "unknown")
+                cycle_id = f"cycle_{self.cycle_count}_{outcome}"
+                phases_completed = list(cycle_result.get("phases", {}).keys())
+
+                # Add memory entry for this cycle
+                self.continuum.add(
+                    id=cycle_id,
+                    content=f"Cycle {self.cycle_count}: {outcome}. Phases completed: {', '.join(phases_completed)}",
+                    importance=0.7 if outcome != "success" else 0.5,
+                    metadata={
+                        "cycle": self.cycle_count,
+                        "outcome": outcome,
+                        "phases": phases_completed,
+                        "duration": cycle_result.get("duration_seconds"),
+                    },
+                )
+
+                # Update with success/failure for surprise-based learning
+                is_success = outcome == "success"
+                self.continuum.update_outcome(cycle_id, success=is_success)
+                self._log(f"  [continuum] Recorded cycle outcome: {outcome}")
+            except Exception as e:
+                self._log(f"  [continuum] Failed to record outcome: {e}")
 
         # Reset deadlock counter on success
         if cycle_result.get("outcome") == "success":

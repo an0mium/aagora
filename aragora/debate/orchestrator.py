@@ -421,8 +421,8 @@ class Arena:
                         }
                     )
                     stored_count += 1
-                except Exception:
-                    pass  # Skip duplicates or storage errors
+                except Exception as e:
+                    logger.debug(f"Continuum storage error (non-fatal): {e}")
 
             if stored_count > 0:
                 logger.info(f"  [continuum] Stored {stored_count} evidence snippets for future retrieval")
@@ -481,7 +481,7 @@ class Arena:
                 # Log high-priority citation needs
                 high_priority = [n for n in needs if n["priority"] == "high"]
                 if high_priority:
-                    print(f"  [citations] {agent_name}: {len(high_priority)} claims need evidence")
+                    logger.debug(f"citations_needed agent={agent_name} count={len(high_priority)}")
 
         return citation_needs
 
@@ -693,8 +693,8 @@ class Arena:
                 loop_id=getattr(self, 'loop_id', ''),
             )
             self.event_emitter.emit(stream_event)
-        except Exception:
-            pass  # Fail silently to not disrupt debate flow
+        except Exception as e:
+            logger.debug(f"Event emission error (non-fatal): {e}")
 
         # Update ArgumentCartographer with this event
         self._update_cartographer(event_type, **kwargs)
@@ -757,8 +757,8 @@ class Arena:
                     result=result,
                     round_num=round_num,
                 )
-        except Exception:
-            pass  # Don't break debate on cartographer errors
+        except Exception as e:
+            logger.warning(f"Cartographer error (non-fatal): {e}")
 
     def _record_grounded_position(
         self, agent_name: str, content: str, debate_id: str, round_num: int,
@@ -772,8 +772,8 @@ class Arena:
                 agent_name=agent_name, claim=content[:1000], confidence=confidence,
                 debate_id=debate_id, round_num=round_num, domain=domain,
             )
-        except Exception:
-            pass  # Don't break debate on ledger errors
+        except Exception as e:
+            logger.warning(f"Position ledger error (non-fatal): {e}")
 
     def _update_agent_relationships(self, debate_id: str, participants: list[str], winner: Optional[str], votes: list):
         """Update agent relationships after debate completion."""
@@ -790,8 +790,8 @@ class Arena:
                         agent_a=agent_a, agent_b=agent_b, debate_increment=1,
                         agreement_increment=1 if agreed else 0, a_win=a_win, b_win=b_win,
                     )
-        except Exception:
-            pass  # Don't break debate on relationship update errors
+        except Exception as e:
+            logger.warning(f"Relationship update error (non-fatal): {e}")
 
     def _generate_disagreement_report(
         self,
@@ -1161,7 +1161,8 @@ class Arena:
                 lines.append("")  # blank line between entries
 
             return "\n".join(lines)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Historical context formatting error: {e}")
             return ""
 
     def _format_patterns_for_prompt(self, patterns: list[dict]) -> str:
@@ -1474,7 +1475,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     timeout=self.protocol.timeout_seconds
                 )
             except asyncio.TimeoutError:
-                print(f"\n[TIMEOUT] Debate exceeded {self.protocol.timeout_seconds}s limit")
+                logger.warning(f"debate_timeout timeout_seconds={self.protocol.timeout_seconds}")
                 # Return partial result with timeout indicator
                 return DebateResult(
                     task=self.env.task,
@@ -1499,8 +1500,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             try:
                 self.recorder.start()
                 self.recorder.record_phase_change("debate_start")
-            except Exception:
-                pass  # Recording failure shouldn't break debate
+            except Exception as e:
+                logger.warning(f"Recorder start error (non-fatal): {e}")
 
         # Fetch historical context once at debate start (for institutional memory)
         if self.debate_embeddings:
@@ -1508,7 +1509,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 self._historical_context_cache = await self._fetch_historical_context(
                     self.env.task, limit=2  # Limit to 2 to avoid prompt bloat
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Historical context fetch error: {e}")
                 self._historical_context_cache = ""
 
         # Inject learned patterns from past debates (pattern-based prompting)
@@ -1523,8 +1525,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         self.env.context += "\n\n" + pattern_context
                     else:
                         self.env.context = pattern_context
-            except Exception:
-                pass  # Pattern injection failure shouldn't break debate
+            except Exception as e:
+                logger.debug(f"Pattern injection error: {e}")
 
         # Inject successful critique patterns from CritiqueStore memory
         if self.memory:
@@ -1536,25 +1538,25 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     else:
                         self.env.context = memory_patterns
                     logger.info("  [memory] Injected successful critique patterns into debate context")
-            except Exception:
-                pass  # Pattern injection failure shouldn't break debate
+            except Exception as e:
+                logger.debug(f"Memory pattern injection error: {e}")
 
         # Pre-debate research phase
         if self.protocol.enable_research:
             try:
-                print("  [research] Performing web research on topic...")
+                logger.info("research_start phase=research")
                 research_context = await self._perform_research(self.env.task)
                 if research_context:
-                    print(f"  [research] Added {len(research_context)} chars of research context")
+                    logger.info(f"research_complete chars={len(research_context)}")
                     # Add research to environment context
                     if self.env.context:
                         self.env.context += "\n\n" + research_context
                     else:
                         self.env.context = research_context
                 else:
-                    print("  [research] No research context returned")
+                    logger.info("research_empty")
             except Exception as e:
-                print(f"  [research] Research phase failed: {e}")
+                logger.warning(f"research_error error={e}")
                 # Continue without research - don't break the debate
 
         result = DebateResult(
@@ -1576,12 +1578,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         # Update cognitive role assignments for round 0
         self._update_role_assignments(round_num=0)
 
-        print(f"\n{'='*60}")
-        print(f"DEBATE: {self.env.task[:80]}...")
-        print(f"Agents: {', '.join(a.name for a in self.agents)}")
-        print(f"Rounds: {self.protocol.rounds}")
-        print(f"Agreement intensity: {self.protocol.agreement_intensity}/10")
-        print(f"{'='*60}\n")
+        agent_names = [a.name for a in self.agents]
+        logger.info(f"debate_start task={self.env.task[:80]} agents={agent_names} rounds={self.protocol.rounds}")
 
         # Emit debate start event
         if "on_debate_start" in self.hooks:
@@ -1591,20 +1589,19 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         self._notify_spectator("debate_start", details=f"Task: {self.env.task[:50]}...", agent="system")
 
         # Generate initial proposals (stream output as each completes)
-        print("Round 0: Initial Proposals")
-        print("-" * 40)
+        logger.info("round_start round=0 phase=proposals")
 
         # Filter proposers through circuit breaker
         available_proposers = self.circuit_breaker.filter_available_agents(proposers)
         if len(available_proposers) < len(proposers):
             skipped = [a.name for a in proposers if a not in available_proposers]
-            print(f"  [circuit_breaker] Skipping agents: {', '.join(skipped)}")
+            logger.info(f"circuit_breaker_skip agents={skipped}")
 
         # Create tasks with agent reference for streaming output
         async def generate_proposal(agent):
             """Generate proposal and return (agent, result_or_error)."""
             prompt = self._build_proposal_prompt(agent)
-            print(f"  {agent.name}: generating...", flush=True)
+            logger.debug(f"agent_generating agent={agent.name} phase=proposal")
             try:
                 # Per-agent timeout prevents one stalled agent from blocking entire debate
                 result = await self._with_timeout(
@@ -1623,12 +1620,12 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             agent, result_or_error = await completed_task
 
             if isinstance(result_or_error, Exception):
-                print(f"  {agent.name}: ERROR - {result_or_error}")
+                logger.error(f"agent_error agent={agent.name} phase=proposal error={result_or_error}")
                 proposals[agent.name] = f"[Error generating proposal: {result_or_error}]"
                 self.circuit_breaker.record_failure(agent.name)
             else:
                 proposals[agent.name] = result_or_error
-                print(f"  {agent.name}: {result_or_error}")  # Full content
+                logger.info(f"agent_complete agent={agent.name} phase=proposal chars={len(result_or_error)}")
                 self.circuit_breaker.record_success(agent.name)
 
                 # Notify spectator of proposal
@@ -1645,8 +1642,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             round_num=0,
                             confidence=0.7,
                         )
-                    except Exception:
-                        pass  # Position tracking failure shouldn't break debate
+                    except Exception as e:
+                        logger.debug(f"Position tracking error: {e}")
 
                 # Record position for grounded personas (new ledger system)
                 debate_id = result.id if hasattr(result, 'id') else self.env.task[:50]
@@ -1675,16 +1672,15 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             if self.recorder and not isinstance(result_or_error, Exception):
                 try:
                     self.recorder.record_turn(agent.name, proposals[agent.name], 0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Recorder error for proposal: {e}")
 
         # Extract citation needs from initial proposals (Heavy3-inspired)
         self._extract_citation_needs(proposals)
 
         # === DEBATE ROUNDS ===
         for round_num in range(1, self.protocol.rounds + 1):
-            print(f"\nRound {round_num}: Critique & Revise")
-            print("-" * 40)
+            logger.info(f"round_critique_revise round={round_num}")
 
             # Update cognitive role assignments for this round
             self._update_role_assignments(round_num=round_num)
@@ -1696,7 +1692,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             if self.protocol.asymmetric_stances and self.protocol.rotate_stances:
                 self._assign_stances(round_num)
                 stances_str = ", ".join(f"{a.name}:{a.stance}" for a in self.agents)
-                print(f"  Stances: {stances_str}")
+                logger.debug(f"stances_rotated stances={stances_str}")
 
             # Emit round start event
             if "on_round_start" in self.hooks:
@@ -1706,8 +1702,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             if self.recorder:
                 try:
                     self.recorder.record_phase_change(f"round_{round_num}_start")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Recorder error for round start: {e}")
 
             # Get critics - when all agents are proposers, they all critique each other
             critics = [a for a in self.agents if a.role in ("critic", "synthesizer")]
@@ -1720,13 +1716,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             available_critics = self.circuit_breaker.filter_available_agents(critics)
             if len(available_critics) < len(critics):
                 skipped = [c.name for c in critics if c not in available_critics]
-                print(f"  [circuit_breaker] Skipping critics: {', '.join(skipped)}")
+                logger.info(f"circuit_breaker_skip_critics skipped={skipped}")
             critics = available_critics
 
             # === Critique Phase (stream output as each critique completes) ===
             async def generate_critique(critic, proposal_agent, proposal):
                 """Generate critique and return (critic, proposal_agent, result_or_error)."""
-                print(f"  {critic.name} -> {proposal_agent}: critiquing...", flush=True)
+                logger.debug(f"critique_generating critic={critic.name} target={proposal_agent}")
                 try:
                     # Per-agent timeout prevents one stalled agent from blocking entire debate
                     crit_result = await self._with_timeout(
@@ -1752,17 +1748,13 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 critic, proposal_agent, crit_result = await completed_task
 
                 if isinstance(crit_result, Exception):
-                    print(f"  {critic.name} -> {proposal_agent}: ERROR - {crit_result}")
+                    logger.error(f"critique_error critic={critic.name} target={proposal_agent} error={crit_result}")
                     self.circuit_breaker.record_failure(critic.name)
                 else:
                     self.circuit_breaker.record_success(critic.name)
                     result.critiques.append(crit_result)
                     self._partial_critiques.append(crit_result)  # Track for timeout recovery
-                    print(
-                        f"  {critic.name} -> {proposal_agent}: "
-                        f"{len(crit_result.issues)} issues, "
-                        f"severity {crit_result.severity:.1f}"
-                    )
+                    logger.debug(f"critique_complete critic={critic.name} target={proposal_agent} issues={len(crit_result.issues)} severity={crit_result.severity:.1f}")
 
                     # Notify spectator of critique
                     self._notify_spectator("critique", agent=critic.name, details=f"Critiqued {proposal_agent}: {len(crit_result.issues)} issues", metric=crit_result.severity)
@@ -1794,8 +1786,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if self.recorder:
                         try:
                             self.recorder.record_turn(critic.name, critique_content, round_num)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Recorder error for critique: {e}")
 
                     # Add critique to context
                     msg = Message(
@@ -1838,14 +1830,14 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 # Process results sequentially (for proper message ordering)
                 for agent, revised in zip(revision_agents, revision_results):
                     if isinstance(revised, Exception):
-                        print(f"  {agent.name} revision ERROR: {revised}")
+                        logger.error(f"revision_error agent={agent.name} error={revised}")
                         self.circuit_breaker.record_failure(agent.name)
                         continue
 
                     self.circuit_breaker.record_success(agent.name)
 
                     proposals[agent.name] = revised
-                    print(f"  {agent.name} revised: {revised}")  # Full content
+                    logger.debug(f"revision_complete agent={agent.name} length={len(revised)}")
 
                     # Notify spectator of revision
                     self._notify_spectator("propose", agent=agent.name, details=f"Revised proposal ({len(revised)} chars)", metric=len(revised))
@@ -1873,8 +1865,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if self.recorder:
                         try:
                             self.recorder.record_turn(agent.name, revised, round_num)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Recorder error for revision: {e}")
 
                     # Record revised position for grounded personas
                     debate_id = result.id if hasattr(result, 'id') else self.env.task[:50]
@@ -1895,7 +1887,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     result.convergence_similarity = convergence.avg_similarity
                     result.per_agent_similarity = convergence.per_agent_similarity
 
-                    print(f"  Convergence: {convergence.status} ({convergence.avg_similarity:.0%} avg)")
+                    logger.info(f"convergence_check status={convergence.status} similarity={convergence.avg_similarity:.0%}")
 
                     # Notify spectator of convergence
                     self._notify_spectator("convergence", details=f"{convergence.status}", metric=convergence.avg_similarity)
@@ -1911,7 +1903,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
 
                     # Stop early if converged
                     if convergence.converged:
-                        print(f"  Debate converged at round {round_num}")
+                        logger.info(f"debate_converged round={round_num}")
                         self._previous_round_responses = current_responses
                         break
 
@@ -1934,8 +1926,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     break  # Exit debate loop, proceed to consensus
 
         # === CONSENSUS PHASE ===
-        print(f"\nConsensus Phase ({self.protocol.consensus})")
-        print("-" * 40)
+        logger.info(f"consensus_phase_start mode={self.protocol.consensus}")
 
         if self.protocol.consensus == "none":
             # No consensus - just return all proposals
@@ -1949,7 +1940,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             # All agents vote (stream output as each vote completes)
             async def cast_vote(agent):
                 """Cast vote and return (agent, result_or_error)."""
-                print(f"  {agent.name}: voting...", flush=True)
+                logger.debug(f"agent_voting agent={agent.name}")
                 try:
                     vote_result = await self._vote_with_agent(agent, proposals, self.env.task)
                     return (agent, vote_result)
@@ -1962,10 +1953,10 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 agent, vote_result = await completed_task
 
                 if isinstance(vote_result, Exception):
-                    print(f"  {agent.name}: ERROR voting - {vote_result}")
+                    logger.error(f"vote_error agent={agent.name} error={vote_result}")
                 else:
                     result.votes.append(vote_result)
-                    print(f"  {agent.name} votes: {vote_result.choice} ({vote_result.confidence:.0%})")
+                    logger.debug(f"vote_cast agent={agent.name} choice={vote_result.choice} confidence={vote_result.confidence:.0%}")
 
                     # Notify spectator of vote
                     self._notify_spectator("vote", agent=agent.name, details=f"Voted for {vote_result.choice}", metric=vote_result.confidence)
@@ -1978,8 +1969,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if self.recorder:
                         try:
                             self.recorder.record_vote(agent.name, vote_result.choice, vote_result.reasoning)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Recorder error for vote: {e}")
 
                     # Record position for truth-grounded personas
                     if self.position_tracker:
@@ -1992,8 +1983,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                                 round_num=result.rounds_used,
                                 confidence=vote_result.confidence,
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Position tracking error for vote: {e}")
 
             # Group similar vote options before counting
             vote_groups = self._group_similar_votes(result.votes)
@@ -2005,7 +1996,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     choice_mapping[variant] = canonical
 
             if vote_groups:
-                print(f"  Vote grouping merged: {vote_groups}")
+                logger.debug(f"vote_grouping_merged groups={vote_groups}")
 
             # Pre-compute vote weights for all agents (batch fetch optimization)
             _vote_weight_cache: dict[str, float] = {}
@@ -2026,8 +2017,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         consistency = self.flip_detector.get_agent_consistency(agent.name)
                         consistency_weight = 0.5 + (consistency.consistency_score * 0.5)
                         agent_weight *= consistency_weight
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"FlipDetector consistency error: {e}")
 
                 _vote_weight_cache[agent.name] = agent_weight
 
@@ -2057,7 +2048,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     final_weight = base_user_weight * intensity_multiplier
                     vote_counts[canonical] += final_weight
                     total_weighted_votes += final_weight
-                    print(f"  User {user_vote.get('user_id', 'anonymous')} votes: {choice} (intensity: {intensity}, weight: {final_weight:.2f})")
+                    logger.debug(f"user_vote user={user_vote.get('user_id', 'anonymous')} choice={choice} intensity={intensity} weight={final_weight:.2f}")
 
             total_votes = total_weighted_votes
 
@@ -2084,7 +2075,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     else:
                         result.consensus_strength = "weak"
 
-                    print(f"  Consensus strength: {result.consensus_strength} (variance: {variance:.2f})")
+                    logger.info(f"consensus_strength strength={result.consensus_strength} variance={variance:.2f}")
                 else:
                     result.consensus_strength = "unanimous"
                     result.consensus_variance = 0.0
@@ -2094,7 +2085,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if agent != winner:
                         result.dissenting_views.append(f"[{agent}]: {prop}")
 
-                print(f"\n  Winner: {winner} ({count}/{len(self.agents)} votes)")
+                logger.info(f"consensus_winner winner={winner} votes={count}/{len(self.agents)}")
 
                 # Notify spectator of consensus
                 self._notify_spectator("consensus", details=f"Majority vote: {winner}", metric=result.confidence)
@@ -2103,8 +2094,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 if self.recorder:
                     try:
                         self.recorder.record_phase_change(f"consensus_reached: {winner}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Recorder error for consensus: {e}")
 
                 # Finalize debate for truth-grounded personas
                 if self.position_tracker:
@@ -2115,8 +2106,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             winning_position=result.final_answer[:1000],
                             consensus_confidence=result.confidence,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Position tracker finalize error: {e}")
 
                 # Record calibration predictions (vote predictions vs consensus outcome)
                 if self.calibration_tracker:
@@ -2134,9 +2125,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                                     domain=self._extract_debate_domain(),
                                     debate_id=debate_id,
                                 )
-                        print(f"  [calibration] Recorded {len(result.votes)} predictions")
+                        logger.debug(f"calibration_recorded predictions={len(result.votes)}")
                     except Exception as e:
-                        print(f"  [calibration] Error recording predictions: {e}")
+                        logger.warning(f"calibration_error error={e}")
 
                 # Analyze belief network to identify cruxes (key disagreement points)
                 BN, BPA = _get_belief_analyzer()
@@ -2160,9 +2151,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             result.debate_cruxes = analyzer.identify_debate_cruxes(top_k=3)
                             result.evidence_suggestions = analyzer.suggest_evidence_targets()[:3]
                             if result.debate_cruxes:
-                                print(f"  [belief] Identified {len(result.debate_cruxes)} debate cruxes")
+                                logger.debug(f"belief_cruxes count={len(result.debate_cruxes)}")
                     except Exception as e:
-                        print(f"  [belief] Analysis error: {e}")
+                        logger.warning(f"belief_analysis_error error={e}")
             else:
                 result.final_answer = list(proposals.values())[0]
                 result.consensus_reached = False
@@ -2173,7 +2164,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             # Uses same voting mechanism as majority, but requires 100% agreement
             async def cast_vote(agent):
                 """Cast vote and return (agent, result_or_error)."""
-                print(f"  {agent.name}: voting (unanimous mode)...", flush=True)
+                logger.debug(f"agent_voting_unanimous agent={agent.name}")
                 try:
                     vote_result = await self._vote_with_agent(agent, proposals, self.env.task)
                     return (agent, vote_result)
@@ -2187,11 +2178,11 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 agent, vote_result = await completed_task
 
                 if isinstance(vote_result, Exception):
-                    print(f"  {agent.name}: ERROR voting - {vote_result}")
+                    logger.error(f"vote_error_unanimous agent={agent.name} error={vote_result}")
                     voting_errors += 1  # Count as failed vote (breaks unanimity)
                 else:
                     result.votes.append(vote_result)
-                    print(f"  {agent.name} votes: {vote_result.choice} ({vote_result.confidence:.0%})")
+                    logger.debug(f"vote_cast_unanimous agent={agent.name} choice={vote_result.choice} confidence={vote_result.confidence:.0%}")
 
                     # Notify spectator of vote
                     self._notify_spectator("vote", agent=agent.name, details=f"Voted for {vote_result.choice}", metric=vote_result.confidence)
@@ -2204,8 +2195,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if self.recorder:
                         try:
                             self.recorder.record_vote(agent.name, vote_result.choice, vote_result.reasoning)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Recorder error for unanimous vote: {e}")
 
             # Group similar votes to handle minor wording differences
             vote_groups = self._group_similar_votes(result.votes)
@@ -2232,7 +2223,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if choice:
                         canonical = choice_mapping.get(choice, choice)
                         vote_counts[canonical] += 1
-                        print(f"  User {user_vote.get('user_id', 'anonymous')} votes: {choice}")
+                        logger.debug(f"user_vote_unanimous user={user_vote.get('user_id', 'anonymous')} choice={choice}")
 
             # Update vote tally for recording
             vote_tally = dict(vote_counts)
@@ -2254,7 +2245,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     result.confidence = unanimity_ratio
                     result.consensus_strength = "unanimous"
                     result.consensus_variance = 0.0
-                    print(f"\n  UNANIMOUS: {winner} ({count}/{total_voters} votes, {unanimity_ratio:.0%})")
+                    logger.info(f"consensus_unanimous winner={winner} votes={count}/{total_voters} ratio={unanimity_ratio:.0%}")
 
                     # Notify spectator of unanimous consensus
                     self._notify_spectator("consensus", details=f"Unanimous: {winner}", metric=result.confidence)
@@ -2263,8 +2254,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     if self.recorder:
                         try:
                             self.recorder.record_phase_change(f"consensus_reached: {winner}")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Recorder error for unanimous consensus: {e}")
 
                     # Record calibration predictions for unanimous mode
                     if self.calibration_tracker:
@@ -2281,9 +2272,9 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                                         domain=self._extract_debate_domain(),
                                         debate_id=debate_id,
                                     )
-                            print(f"  [calibration] Recorded {len(result.votes)} predictions (unanimous)")
+                            logger.debug(f"calibration_recorded_unanimous predictions={len(result.votes)}")
                         except Exception as e:
-                            print(f"  [calibration] Error recording predictions: {e}")
+                            logger.warning(f"calibration_error_unanimous error={e}")
                 else:
                     # Not unanimous - no consensus
                     result.final_answer = f"[No unanimous consensus reached]\n\nProposals:\n" + "\n\n---\n\n".join(
@@ -2298,7 +2289,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     for agent, prop in proposals.items():
                         result.dissenting_views.append(f"[{agent}]: {prop}")
 
-                    print(f"\n  NO UNANIMOUS CONSENSUS: Best was {winner} with {unanimity_ratio:.0%} ({count}/{total_voters})")
+                    logger.info(f"consensus_not_unanimous best={winner} ratio={unanimity_ratio:.0%} votes={count}/{total_voters}")
                     self._notify_spectator("consensus", details=f"No unanimity: {winner} got {unanimity_ratio:.0%}", metric=unanimity_ratio)
             else:
                 result.final_answer = list(proposals.values())[0]
@@ -2308,7 +2299,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         elif self.protocol.consensus == "judge":
             # Select judge based on protocol setting (random, voted, or last)
             judge = await self._select_judge(proposals, context)
-            print(f"  Judge selected: {judge.name} (via {self.protocol.judge_selection})")
+            logger.info(f"judge_selected judge={judge.name} method={self.protocol.judge_selection}")
 
             # Notify spectator of judge selection
             self._notify_spectator("judge", agent=judge.name, details=f"Selected as judge via {self.protocol.judge_selection}")
@@ -2323,7 +2314,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 result.final_answer = synthesis
                 result.consensus_reached = True
                 result.confidence = 0.8
-                print(f"  Judge ({judge.name}): {synthesis}")  # Full content
+                logger.info(f"judge_synthesis judge={judge.name} length={len(synthesis)}")
 
                 # Notify spectator of judge synthesis
                 self._notify_spectator("consensus", agent=judge.name, details=f"Judge synthesis ({len(synthesis)} chars)", metric=0.8)
@@ -2337,7 +2328,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         round_num=self.protocol.rounds + 1,  # After all debate rounds
                     )
             except Exception as e:
-                print(f"  Judge ERROR: {e}")
+                logger.error(f"judge_error error={e}")
                 result.final_answer = list(proposals.values())[0]
                 result.consensus_reached = False
 
@@ -2387,7 +2378,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 insights = await extractor.extract(result)
                 stored_count = await self.insight_store.store_debate_insights(insights)
                 if stored_count > 0:
-                    print(f"  Extracted {insights.total_insights} insights ({stored_count} stored)")
+                    logger.info(f"insights_extracted total={insights.total_insights} stored={stored_count}")
                     # Emit INSIGHT_EXTRACTED event for frontend
                     self._notify_spectator(
                         "insight_extracted",
@@ -2395,7 +2386,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         metric=stored_count,
                     )
             except Exception as e:
-                print(f"  Insight extraction failed: {e}")
+                logger.warning(f"insight_extraction_failed error={e}")
 
         # === Update agent relationships for grounded personas ===
         winner_agent = max(vote_tally.items(), key=lambda x: x[1])[0] if vote_tally else None
@@ -2413,16 +2404,16 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             winner=winner_agent,
         )
         if result.disagreement_report.unanimous_critiques:
-            print(f"  [disagreement] {len(result.disagreement_report.unanimous_critiques)} unanimous critiques found")
+            logger.debug(f"disagreement_unanimous_critiques count={len(result.disagreement_report.unanimous_critiques)}")
         if result.disagreement_report.split_opinions:
-            print(f"  [disagreement] {len(result.disagreement_report.split_opinions)} split opinions detected")
+            logger.debug(f"disagreement_split_opinions count={len(result.disagreement_report.split_opinions)}")
 
         # === Generate grounded verdict (Heavy3-inspired evidence grounding) ===
         result.grounded_verdict = self._create_grounded_verdict(result)
         if result.grounded_verdict:
-            print(f"  [grounding] Evidence grounding score: {result.grounded_verdict.grounding_score:.0%}")
+            logger.info(f"grounding_score score={result.grounded_verdict.grounding_score:.0%}")
             if result.grounded_verdict.claims:
-                print(f"  [grounding] {len(result.grounded_verdict.claims)} claims analyzed")
+                logger.debug(f"grounding_claims count={len(result.grounded_verdict.claims)}")
 
             # Emit grounded verdict event for frontend display
             if self.event_emitter:
@@ -2456,24 +2447,24 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 cruxes = analyzer.identify_debate_cruxes(threshold=0.6)
                 result.belief_cruxes = cruxes
                 if cruxes:
-                    print(f"  [belief] Identified {len(cruxes)} debate cruxes")
-                    for crux in cruxes[:3]:  # Show top 3
-                        print(f"    - {crux.get('claim', 'unknown')[:60]}... (uncertainty: {crux.get('uncertainty', 0):.2f})")
+                    logger.debug(f"belief_cruxes_identified count={len(cruxes)}")
+                    for crux in cruxes[:3]:  # Log top 3
+                        logger.debug(f"belief_crux claim={crux.get('claim', 'unknown')[:60]} uncertainty={crux.get('uncertainty', 0):.2f}")
             except Exception as e:
                 logger.debug(f"Belief analysis failed: {e}")
 
-        # Print formatted conclusion with full context
-        print(f"\n[Completed in {result.duration_seconds:.1f}s]")
+        # Log completion and formatted conclusion
+        logger.info(f"debate_completed duration={result.duration_seconds:.1f}s rounds={result.rounds_used} consensus={result.consensus_reached}")
         conclusion = self._format_conclusion(result)
-        print(conclusion)
+        logger.debug(f"debate_conclusion length={len(conclusion)}")
 
         # Finalize recording
         if self.recorder:
             try:
                 verdict = result.final_answer[:100] if result.final_answer else "incomplete"
                 self.recorder.finalize(verdict, vote_tally)
-            except Exception:
-                pass  # Recording finalization failure shouldn't affect result
+            except Exception as e:
+                logger.warning(f"Recorder finalize error: {e}")
 
         # === FEEDBACK LOOPS: Update systems with debate outcome ===
         debate_id = getattr(result, 'id', None) or self.env.task[:50]
@@ -2503,7 +2494,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             try:
                                 rating = self.elo_system.get_rating(agent_name)
                                 elo_changes[agent_name] = rating.elo if rating else 1500.0
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(f"ELO rating fetch error for {agent_name}: {e}")
                                 elo_changes[agent_name] = 1500.0
                         self.event_emitter.emit(StreamEvent(
                             type=StreamEventType.MATCH_RECORDED,
@@ -2516,8 +2508,8 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                                 "winner": result.winner,
                             }
                         ))
-                    except Exception:
-                        pass  # Don't break on event emission failure
+                    except Exception as e:
+                        logger.debug(f"ELO event emission error: {e}")
             except Exception as e:
                 logger.debug("ELO update failed: %s", e)
 
@@ -2825,7 +2817,7 @@ REASON: <brief explanation>"""
                     reason = line.split(":", 1)[1].strip()
 
             if conclusive:
-                print(f"  Judge ({judge.name}) says debate is conclusive: {reason[:100]}")
+                logger.info(f"judge_termination judge={judge.name} reason={reason[:100]}")
                 # Emit event
                 if "on_judge_termination" in self.hooks:
                     self.hooks["on_judge_termination"](judge.name, reason)
@@ -2890,7 +2882,7 @@ Respond with only: CONTINUE or STOP
         should_stop = stop_ratio >= self.protocol.early_stop_threshold
 
         if should_stop:
-            print(f"\n  Early stopping: {stop_votes}/{total_votes} agents voted to stop")
+            logger.info(f"early_stopping votes={stop_votes}/{total_votes}")
             # Emit early stop event
             if "on_early_stop" in self.hooks:
                 self.hooks["on_early_stop"](round_num, stop_votes, total_votes)
@@ -2958,8 +2950,8 @@ Respond with only: CONTINUE or STOP
                     if other.name.lower() in response.lower():
                         vote_counts[other.name] = vote_counts.get(other.name, 0) + 1
                         break
-            except Exception:
-                pass  # Skip failed votes
+            except Exception as e:
+                logger.debug(f"Synthesizer vote error for {agent.name}: {e}")
 
         # Select agent with most votes, random tiebreaker
         if vote_counts:
@@ -3038,7 +3030,8 @@ and building on others' ideas."""
                 if fix_preview:
                     lines.append(f"  Fix: {fix_preview} ({p.success_count} successes)")
             return "\n".join(lines)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Successful patterns formatting error: {e}")
             return ""
 
     def _update_role_assignments(self, round_num: int) -> None:
@@ -3056,7 +3049,7 @@ and building on others' ideas."""
                 f"{name}: {assign.role.value}"
                 for name, assign in self.current_role_assignments.items()
             )
-            print(f"  [roles] Round {round_num}: {roles_str}")
+            logger.debug(f"role_assignments round={round_num} roles={roles_str}")
 
     def _get_role_context(self, agent: Agent) -> str:
         """Get cognitive role context for an agent in the current round."""
@@ -3136,8 +3129,9 @@ and building on others' ideas."""
 
             return "\n".join(lines) if len(lines) > 1 else ""
 
-        except Exception:
-            return ""  # Non-critical, continue without flip context
+        except Exception as e:
+            logger.debug(f"Flip context formatting error: {e}")
+            return ""
 
     def _build_proposal_prompt(self, agent: Agent) -> str:
         """Build the initial proposal prompt."""
@@ -3193,8 +3187,8 @@ and building on others' ideas."""
                 )
                 if dissent_context:
                     dissent_section = f"\n\n## Historical Minority Views\n{dissent_context[:600]}"
-            except Exception:
-                pass  # Non-critical, continue without historical dissent
+            except Exception as e:
+                logger.debug(f"Dissent retrieval error: {e}")
 
         # Include successful patterns from past debates
         patterns_section = ""

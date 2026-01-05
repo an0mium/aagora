@@ -13,6 +13,8 @@ Research sources:
 - Codex excels at review/QA where latency isn't critical
 """
 
+import asyncio
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -21,6 +23,15 @@ from typing import Optional
 from aragora.agents.cli_agents import ClaudeAgent, CodexAgent
 
 from .types import ImplementTask, TaskResult
+
+# Feature flags for task splitting (Jan 2026)
+# COMPLEXITY_TIMEOUT: Use task complexity to calculate timeouts (default ON)
+# DECOMPOSE_FAILED: Decompose failed complex tasks into subtasks (default OFF)
+# PARALLEL_TASKS: Execute independent tasks in parallel (default OFF)
+COMPLEXITY_TIMEOUT = os.environ.get("IMPL_COMPLEXITY_TIMEOUT", "1") == "1"
+DECOMPOSE_FAILED = os.environ.get("IMPL_DECOMPOSE_FAILED", "0") == "1"
+PARALLEL_TASKS = os.environ.get("IMPL_PARALLEL_TASKS", "0") == "1"
+MAX_PARALLEL = int(os.environ.get("IMPL_MAX_PARALLEL", "2"))
 
 
 TASK_PROMPT_TEMPLATE = """Implement this task in the codebase:
@@ -121,6 +132,31 @@ Make only the changes specified. Follow existing code style."""
         # Complexity only affects timeout expectations
         return self.claude, "claude"
 
+    def _get_task_timeout(self, task: ImplementTask) -> int:
+        """Calculate timeout based on task complexity and file count.
+
+        Uses COMPLEXITY_TIMEOUT feature flag (default ON).
+        When disabled, returns the default claude_timeout.
+
+        Timeout guidelines:
+        - simple: 5 min base (single file, <50 lines)
+        - moderate: 10 min base (2-3 files, coordination needed)
+        - complex: 20 min base (4+ files, architectural changes)
+        - +2 min per additional file beyond the first
+        - Maximum: 30 min (prevents runaway tasks)
+        """
+        if not COMPLEXITY_TIMEOUT:
+            return self.claude_timeout
+
+        base_timeouts = {"simple": 300, "moderate": 600, "complex": 1200}
+        base = base_timeouts.get(task.complexity, 600)
+
+        # Add 2 min per additional file (coordination overhead)
+        file_count = len(task.files) if task.files else 1
+        file_bonus = max(0, file_count - 1) * 120
+
+        return min(base + file_bonus, 1800)  # Cap at 30 min
+
     def _build_prompt(self, task: ImplementTask) -> str:
         """Build the implementation prompt for a task."""
         files_str = "\n".join(f"- {f}" for f in task.files) if task.files else "- (determine from description)"
@@ -162,21 +198,24 @@ Make only the changes specified. Follow existing code style."""
         Returns:
             TaskResult with success status and diff
         """
+        # Calculate base timeout from task complexity
+        base_timeout = self._get_task_timeout(task)
+
         # Select agent - use fallback (Codex) if primary (Claude) failed
         if use_fallback:
             agent = self.codex
             model_name = "codex-fallback"
             # Use 2x timeout for fallback
-            agent.timeout = self.codex_timeout * 2
-            print(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt})...")
+            agent.timeout = base_timeout * 2
+            print(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt}, timeout {agent.timeout}s)...")
         else:
             agent, model_name = self._select_agent(task.complexity)
-            # Increase timeout on retry
+            # Scale timeout by attempt number
+            agent.timeout = base_timeout * attempt
             if attempt > 1:
-                agent.timeout = self.claude_timeout * attempt
                 print(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt}, timeout {agent.timeout}s)...")
             else:
-                print(f"  Executing [{task.complexity}] {task.id} with {model_name}...")
+                print(f"  Executing [{task.complexity}] {task.id} with {model_name} (timeout {agent.timeout}s)...")
 
         prompt = self._build_prompt(task)
         start_time = time.time()
@@ -333,6 +372,84 @@ Make only the changes specified. Follow existing code style."""
                     completed.add(task.id)
                     if on_task_complete:
                         on_task_complete(task.id, result)
+
+        return results
+
+    async def execute_plan_parallel(
+        self,
+        tasks: list[ImplementTask],
+        completed: set[str],
+        max_parallel: int = None,
+        on_task_complete=None,
+    ) -> list[TaskResult]:
+        """
+        Execute tasks with parallelism for independent tasks.
+
+        Uses PARALLEL_TASKS feature flag (default OFF).
+        When disabled, falls back to sequential execute_plan().
+
+        Groups tasks by dependency level and executes each level
+        in parallel (up to max_parallel concurrent tasks).
+
+        Args:
+            tasks: List of tasks to execute
+            completed: Set of already-completed task IDs
+            max_parallel: Max concurrent tasks (default from MAX_PARALLEL env)
+            on_task_complete: Optional callback after each task
+
+        Returns:
+            List of TaskResults for executed tasks
+        """
+        if not PARALLEL_TASKS:
+            return await self.execute_plan(tasks, completed, on_task_complete)
+
+        max_parallel = max_parallel or MAX_PARALLEL
+        results = []
+        remaining = [t for t in tasks if t.id not in completed]
+
+        print(f"  Executing {len(remaining)} tasks (max {max_parallel} parallel)...")
+
+        while remaining:
+            # Find tasks with all dependencies met
+            ready = [
+                t for t in remaining
+                if all(dep in completed for dep in t.dependencies)
+            ]
+
+            if not ready:
+                # Deadlock - remaining tasks have unmet dependencies
+                unmet = remaining[0]
+                missing = [d for d in unmet.dependencies if d not in completed]
+                print(f"  Deadlock: {unmet.id} waiting for {missing}")
+                break
+
+            # Execute up to max_parallel tasks concurrently
+            batch = ready[:max_parallel]
+            print(f"    Parallel batch: {[t.id for t in batch]}")
+
+            batch_results = await asyncio.gather(*[
+                self.execute_task_with_retry(t) for t in batch
+            ], return_exceptions=True)
+
+            for task, result in zip(batch, batch_results):
+                # Handle exceptions from gather
+                if isinstance(result, Exception):
+                    result = TaskResult(
+                        task_id=task.id,
+                        success=False,
+                        error=str(result),
+                        model_used="unknown",
+                        duration_seconds=0,
+                    )
+
+                results.append(result)
+                remaining.remove(task)
+
+                if result.success:
+                    completed.add(task.id)
+
+                if on_task_complete:
+                    on_task_complete(task.id, result)
 
         return results
 

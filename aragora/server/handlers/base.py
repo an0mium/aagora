@@ -8,6 +8,7 @@ shared across all endpoint modules.
 import json
 import logging
 import os
+import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -128,14 +129,16 @@ class BoundedTTLCache:
 _cache = BoundedTTLCache()
 
 
-def ttl_cache(ttl_seconds: float = 60.0, key_prefix: str = "", skip_self: bool = True):
+def ttl_cache(ttl_seconds: float = 60.0, key_prefix: str = "", skip_first: bool = True):
     """
     Decorator for caching function results with TTL expiry.
 
     Args:
         ttl_seconds: How long to cache results (default 60s)
         key_prefix: Prefix for cache key to namespace different functions
-        skip_self: If True, skip first arg (self) when building cache key for methods
+        skip_first: If True, skip first arg (self) when building cache key for methods.
+                   Default is True since most usage is on class methods.
+                   Set to False when decorating standalone functions.
 
     Usage:
         @ttl_cache(ttl_seconds=300, key_prefix="leaderboard")
@@ -146,7 +149,7 @@ def ttl_cache(ttl_seconds: float = 60.0, key_prefix: str = "", skip_self: bool =
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Skip 'self' when building cache key for methods
-            cache_args = args[1:] if skip_self and args else args
+            cache_args = args[1:] if skip_first and args else args
             # Build cache key from function name, args and kwargs
             cache_key = f"{key_prefix}:{func.__name__}:{cache_args}:{sorted(kwargs.items())}"
 
@@ -234,6 +237,60 @@ def get_bool_param(params: dict, key: str, default: bool = False) -> bool:
     """Safely get a boolean parameter."""
     value = params.get(key, str(default)).lower()
     return value in ('true', '1', 'yes', 'on')
+
+
+# Validation patterns for path segments
+SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
+SAFE_AGENT_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,32}$')
+SAFE_SLUG_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,128}$')
+
+
+def validate_path_segment(
+    value: str,
+    name: str,
+    pattern: re.Pattern = SAFE_ID_PATTERN,
+) -> Tuple[bool, Optional[str]]:
+    """Validate a path segment against a pattern.
+
+    Args:
+        value: The value to validate
+        name: Name of the segment for error messages
+        pattern: Regex pattern to match against
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not value:
+        return False, f"Missing {name}"
+    if '..' in value or '/' in value:
+        return False, f"Invalid {name}: path traversal not allowed"
+    if not pattern.match(value):
+        return False, f"Invalid {name} format"
+    return True, None
+
+
+def validate_agent_name(agent: str) -> Tuple[bool, Optional[str]]:
+    """Validate an agent name.
+
+    Args:
+        agent: Agent name to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(agent, "agent name", SAFE_AGENT_PATTERN)
+
+
+def validate_debate_id(debate_id: str) -> Tuple[bool, Optional[str]]:
+    """Validate a debate ID.
+
+    Args:
+        debate_id: Debate ID to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(debate_id, "debate ID", SAFE_SLUG_PATTERN)
 
 
 class BaseHandler:

@@ -6,10 +6,13 @@ to provide factual grounding for debates.
 """
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from aragora.connectors.base import Connector
 from aragora.core import Message, Environment
@@ -85,7 +88,7 @@ class EvidenceCollector:
         # NEW: First, fetch any explicit URLs mentioned in the task
         explicit_urls = self._extract_urls(task)
         if explicit_urls:
-            print(f"Evidence collection: fetching {len(explicit_urls)} explicit URL(s): {explicit_urls}")
+            logger.info(f"Fetching {len(explicit_urls)} explicit URL(s): {explicit_urls}")
             if "web" in self.connectors:
                 web_connector = self.connectors["web"]
                 for url in explicit_urls:
@@ -106,13 +109,13 @@ class EvidenceCollector:
                                 )
                                 all_snippets.append(snippet)
                                 total_searched += 1
-                                print(f"  Fetched: {full_url} ({len(evidence.content)} chars)")
+                                logger.debug(f"Fetched: {full_url} ({len(evidence.content)} chars)")
                     except Exception as e:
-                        print(f"  Failed to fetch {url}: {e}")
+                        logger.warning(f"Failed to fetch {url}: {e}")
 
         # Extract keywords from task for search
         keywords = self._extract_keywords(task)
-        print(f"Evidence collection: searching for keywords {keywords}")
+        logger.info(f"Searching for keywords: {keywords}")
 
         # Search all enabled connectors concurrently
         search_tasks = []
@@ -126,7 +129,7 @@ class EvidenceCollector:
 
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"Connector search error: {result}")
+                    logger.warning(f"Connector search error: {result}")
                 else:
                     connector_snippets, searched_count = result
                     all_snippets.extend(connector_snippets)
