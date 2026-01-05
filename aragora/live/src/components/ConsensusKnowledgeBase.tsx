@@ -40,7 +40,7 @@ interface ConsensusKnowledgeBaseProps {
 type TabType = 'settled' | 'search' | 'stats' | 'dissents';
 
 export function ConsensusKnowledgeBase({ apiBase }: ConsensusKnowledgeBaseProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true); // Show by default
   const [activeTab, setActiveTab] = useState<TabType>('settled');
   const [settledTopics, setSettledTopics] = useState<SettledTopic[]>([]);
   const [stats, setStats] = useState<ConsensusStats | null>(null);

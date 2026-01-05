@@ -51,7 +51,7 @@ export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE }: LaboratoryPanelP
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'traits' | 'pollinations' | 'evolution' | 'patterns'>('traits');
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true); // Show by default
 
   const fetchData = useCallback(async () => {
     setLoading(true);

@@ -78,7 +78,7 @@ export function MemoryInspector({ apiBase = DEFAULT_API_BASE }: MemoryInspectorP
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTiers, setSelectedTiers] = useState<string[]>(['fast', 'medium']);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true); // Show by default
   const [consolidating, setConsolidating] = useState(false);
   const [consolidationResult, setConsolidationResult] = useState<ConsolidationResult | null>(null);
 

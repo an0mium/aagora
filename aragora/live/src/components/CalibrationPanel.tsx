@@ -30,7 +30,7 @@ interface CalibrationPanelProps {
 }
 
 export function CalibrationPanel({ apiBase }: CalibrationPanelProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true); // Show by default
   const [agents, setAgents] = useState<CalibrationAgent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [agentDetail, setAgentDetail] = useState<AgentCalibration | null>(null);
