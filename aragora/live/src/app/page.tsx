@@ -356,7 +356,9 @@ export default function Home() {
                 onToggle={() => setViewMode('tabs')}
               />
             ) : viewMode === 'tabs' ? (
-              <AgentTabs events={events} />
+              <PanelErrorBoundary panelName="Debate Dashboard">
+                <AgentTabs events={events} />
+              </PanelErrorBoundary>
             ) : (
               <AgentPanel events={events} />
             )}
@@ -364,21 +366,33 @@ export default function Home() {
 
           {/* Side Panel */}
           <div className="lg:col-span-1 space-y-4">
-            <DocumentUpload apiBase={apiBase} />
-            <UserParticipation
-              events={events}
-              onVote={handleUserVote}
-              onSuggest={handleUserSuggestion}
-              onAck={onAck}
-              onError={onError}
-            />
-            <CitationsPanel events={events} />
-            <HistoryPanel />
+            <PanelErrorBoundary panelName="Document Upload">
+              <DocumentUpload apiBase={apiBase} />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary panelName="User Participation">
+              <UserParticipation
+                events={events}
+                onVote={handleUserVote}
+                onSuggest={handleUserSuggestion}
+                onAck={onAck}
+                onError={onError}
+              />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary panelName="Citations">
+              <CitationsPanel events={events} />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary panelName="History">
+              <HistoryPanel />
+            </PanelErrorBoundary>
             <PanelErrorBoundary panelName="Trending Topics">
               <TrendingTopicsPanel apiBase={apiBase} />
             </PanelErrorBoundary>
-            <DebateListPanel />
-            <AgentComparePanel />
+            <PanelErrorBoundary panelName="Debate List">
+              <DebateListPanel />
+            </PanelErrorBoundary>
+            <PanelErrorBoundary panelName="Agent Compare">
+              <AgentComparePanel />
+            </PanelErrorBoundary>
             <PanelErrorBoundary panelName="Leaderboard">
               <LeaderboardPanel wsMessages={events} loopId={effectiveLoopId} apiBase={apiBase} />
             </PanelErrorBoundary>
@@ -394,7 +408,9 @@ export default function Home() {
             <PanelErrorBoundary panelName="Consensus KB">
               <ConsensusKnowledgeBase apiBase={apiBase} />
             </PanelErrorBoundary>
-            <DebateBrowser />
+            <PanelErrorBoundary panelName="Debate Browser">
+              <DebateBrowser />
+            </PanelErrorBoundary>
             <PanelErrorBoundary panelName="Insights">
               <InsightsPanel wsMessages={events} />
             </PanelErrorBoundary>
@@ -425,7 +441,9 @@ export default function Home() {
             <PanelErrorBoundary panelName="Risk Warnings">
               <RiskWarningsPanel apiBase={apiBase} />
             </PanelErrorBoundary>
-            <ReplayBrowser />
+            <PanelErrorBoundary panelName="Replay Browser">
+              <ReplayBrowser />
+            </PanelErrorBoundary>
           </div>
         </div>
 

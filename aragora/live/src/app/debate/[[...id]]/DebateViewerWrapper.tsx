@@ -5,6 +5,7 @@ import { DebateViewer } from '@/components/DebateViewer';
 import { CruxPanel } from '@/components/CruxPanel';
 import { AnalyticsPanel } from '@/components/AnalyticsPanel';
 import { RedTeamAnalysisPanel } from '@/components/RedTeamAnalysisPanel';
+import { PanelErrorBoundary } from '@/components/PanelErrorBoundary';
 import Link from 'next/link';
 import { Scanlines, CRTVignette } from '@/components/MatrixRain';
 import { AsciiBannerCompact } from '@/components/AsciiBanner';
@@ -63,7 +64,9 @@ export function DebateViewerWrapper() {
   return (
     <div className="min-h-screen bg-bg">
       {/* Main Debate Viewer */}
-      <DebateViewer debateId={debateId} wsUrl={config.ws} />
+      <PanelErrorBoundary panelName="Debate Viewer">
+        <DebateViewer debateId={debateId} wsUrl={config.ws} />
+      </PanelErrorBoundary>
 
       {/* Analysis Panels Toggle */}
       <div className="container mx-auto px-4 py-4">
@@ -81,17 +84,23 @@ export function DebateViewerWrapper() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Crux Analysis Panel */}
             <div className="lg:col-span-1">
-              <CruxPanel debateId={debateId} apiBase={config.api} />
+              <PanelErrorBoundary panelName="Crux Analysis">
+                <CruxPanel debateId={debateId} apiBase={config.api} />
+              </PanelErrorBoundary>
             </div>
 
             {/* Analytics Panel (with Graph Stats) */}
             <div className="lg:col-span-1">
-              <AnalyticsPanel apiBase={config.api} loopId={debateId} />
+              <PanelErrorBoundary panelName="Analytics">
+                <AnalyticsPanel apiBase={config.api} loopId={debateId} />
+              </PanelErrorBoundary>
             </div>
 
             {/* Red Team Analysis Panel */}
             <div className="lg:col-span-1">
-              <RedTeamAnalysisPanel debateId={debateId} apiBase={config.api} />
+              <PanelErrorBoundary panelName="Red Team Analysis">
+                <RedTeamAnalysisPanel debateId={debateId} apiBase={config.api} />
+              </PanelErrorBoundary>
             </div>
           </div>
         </div>
