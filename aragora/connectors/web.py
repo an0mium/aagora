@@ -239,8 +239,9 @@ class WebConnector(BaseConnector):
                 # Not an IP address, allow
                 return False
 
-        except Exception:
+        except Exception as e:
             # If parsing fails, err on side of caution
+            logger.warning(f"[web] URL security validation failed for {url}: {e}")
             return True
 
     def _get_cache_file(self, query: str) -> Path:

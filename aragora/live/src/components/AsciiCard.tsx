@@ -136,21 +136,23 @@ export function AsciiProgress({
   );
 }
 
+// ASCII spinner frames (constant, outside component for stable reference)
+const SPINNER_FRAMES = ['|', '/', '-', '\\'];
+
 // Loading spinner with ASCII animation
 export function AsciiSpinner({ text = 'Loading' }: { text?: string }) {
-  const frames = ['|', '/', '-', '\\'];
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setFrame((prev) => (prev + 1) % frames.length);
+      setFrame((prev) => (prev + 1) % SPINNER_FRAMES.length);
     }, 100);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <span className="font-mono text-acid-green">
-      {text} <span className="inline-block w-3">{frames[frame]}</span>
+      {text} <span className="inline-block w-3">{SPINNER_FRAMES[frame]}</span>
     </span>
   );
 }

@@ -1104,7 +1104,7 @@ class Arena:
                             "type": "formal_proof",
                             "prover": proof_result.language.value,
                             "verified": False,
-                            "counterexample": proof_result.counterexample,
+                            "counterexample": proof_result.proof_text,  # proof_text contains counterexample
                         })
                         disproven_count += 1
 

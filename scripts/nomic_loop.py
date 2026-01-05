@@ -77,6 +77,16 @@ class PhaseRecovery:
         "commit": {"max_retries": 1, "base_delay": 5, "critical": True},
     }
 
+    # Individual phase timeouts (seconds) - complements cycle-level timeout
+    PHASE_TIMEOUTS = {
+        "context": 600,      # 10 min - codebase exploration
+        "debate": 1800,      # 30 min - multi-agent discussion
+        "design": 900,       # 15 min - architecture planning
+        "implement": 2400,   # 40 min - code generation
+        "verify": 600,       # 10 min - test execution
+        "commit": 180,       # 3 min - git operations
+    }
+
     # Errors that should NOT be retried
     NON_RETRYABLE_ERRORS = (
         KeyboardInterrupt,
@@ -1618,8 +1628,8 @@ class NomicLoop:
         if hook_name in self.stream_hooks:
             try:
                 self.stream_hooks[hook_name](*args, **kwargs)
-            except Exception:
-                pass  # Don't let streaming errors break the loop
+            except Exception as e:
+                logger.warning(f"[stream] Hook '{hook_name}' failed: {e}")
 
         # Persist to Supabase
         if self.persistence and StreamEvent:
@@ -1633,8 +1643,8 @@ class NomicLoop:
                 )
                 # Run async save in background (fire and forget)
                 asyncio.get_event_loop().create_task(self.persistence.save_event(event))
-            except Exception:
-                pass  # Don't let persistence errors break the loop
+            except Exception as e:
+                logger.warning(f"[persistence] Event save failed: {e}")
 
     async def _persist_cycle(self, phase: str, stage: str, success: bool = None,
                               git_commit: str = None, task_description: str = None,
@@ -1655,8 +1665,8 @@ class NomicLoop:
                 error_message=error_message,
             )
             await self.persistence.save_cycle(cycle)
-        except Exception:
-            pass  # Don't let persistence errors break the loop
+        except Exception as e:
+            logger.warning(f"[persistence] Cycle state save failed (cycle={self.cycle_count}, phase={phase}): {e}")
 
     async def _persist_debate(self, phase: str, task: str, agents: list,
                                transcript: list, consensus_reached: bool,
@@ -1681,8 +1691,8 @@ class NomicLoop:
             # Also index in embeddings database for future search
             if self.debate_embeddings:
                 await self.debate_embeddings.index_debate(debate)
-        except Exception:
-            pass  # Don't let persistence errors break the loop
+        except Exception as e:
+            logger.warning(f"[persistence] Debate artifact save failed (phase={phase}): {e}")
 
     def _log(self, message: str, also_print: bool = True, phase: str = None, agent: str = None):
         """Log to file and optionally stdout. File is always flushed immediately."""
@@ -1868,6 +1878,40 @@ class NomicLoop:
         self._fast_track_mode = False
         self._design_recovery_attempts = set()
         self._phase_progress = {}
+
+    async def _run_with_phase_timeout(self, phase: str, coro, fallback=None):
+        """
+        Execute a phase coroutine with individual timeout protection.
+
+        Complements the cycle-level timeout by preventing any single phase
+        from consuming the entire time budget.
+
+        Args:
+            phase: Phase name (context, debate, design, implement, verify, commit)
+            coro: Async coroutine to execute
+            fallback: Optional fallback value on timeout (if None, raises PhaseError)
+
+        Returns:
+            Coroutine result or fallback value
+
+        Raises:
+            PhaseError: If timeout occurs and no fallback provided
+        """
+        timeout = PhaseRecovery.PHASE_TIMEOUTS.get(phase, 600)
+        self._log(f"  [timeout] Phase '{phase}' has {timeout}s budget")
+        self._stream_emit("on_phase_start", phase, timeout)
+
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            elapsed_msg = f"Phase '{phase}' exceeded {timeout}s timeout"
+            self._log(f"  [TIMEOUT] {elapsed_msg}")
+            logger.warning(f"[phase_timeout] {elapsed_msg}")
+            self._stream_emit("on_phase_timeout", phase, timeout)
+
+            if fallback is not None:
+                return fallback
+            raise PhaseError(phase, f"Timeout after {timeout}s", recoverable=False)
 
     async def _check_agent_health(self, agent, agent_name: str) -> bool:
         """
@@ -3110,6 +3154,7 @@ The most valuable proposals combine deep analysis with actionable implementation
                     persona_manager=self.persona_manager,
                     relationship_tracker=self.relationship_tracker,
                     moment_detector=self.moment_detector,
+                    continuum_memory=self.continuum,
                 )
                 return await arena.run()  # run() takes no arguments
 
@@ -3995,6 +4040,7 @@ The most valuable proposals combine deep analysis with actionable implementation
                     persona_manager=self.persona_manager,
                     relationship_tracker=self.relationship_tracker,
                     moment_detector=self.moment_detector,
+                    continuum_memory=self.continuum,
                 )
                 return await arena.run()  # run() takes no arguments
 
@@ -5441,6 +5487,7 @@ Start directly with "## 1. FILE CHANGES" or similar."""
                 persona_manager=self.persona_manager,
                 relationship_tracker=self.relationship_tracker,
                 moment_detector=self.moment_detector,
+                continuum_memory=self.continuum,
             )
             return await self._run_arena_with_logging(arena, phase_name)
 
@@ -5518,6 +5565,7 @@ Start directly with "## 1. FILE CHANGES" or similar."""
                 persona_manager=self.persona_manager,
                 relationship_tracker=self.relationship_tracker,
                 moment_detector=self.moment_detector,
+                continuum_memory=self.continuum,
             )
             return await self._run_arena_with_logging(arena, phase_name)
 
@@ -5947,6 +5995,7 @@ Recent changes:
             persona_manager=self.persona_manager,
             relationship_tracker=self.relationship_tracker,
             moment_detector=self.moment_detector,
+            continuum_memory=self.continuum,
         )
 
         # P1-Phase2: Use graph-based debate for complex multi-agent reasoning if available
@@ -6651,6 +6700,7 @@ Your design will be evaluated on:
             persona_manager=self.persona_manager,
             relationship_tracker=self.relationship_tracker,
             moment_detector=self.moment_detector,
+            continuum_memory=self.continuum,
         )
         result = await self._run_arena_with_logging(arena, "design")
 
@@ -7776,9 +7826,17 @@ Be concise - this is a quality gate, not a full review."""
         # Phase 0: Context Gathering (Claude + Codex explore codebase)
         # This ensures Gemini and Grok get accurate context about existing features
         try:
-            context_result = await self.phase_context_gathering()
+            context_result = await self._run_with_phase_timeout(
+                "context",
+                self.phase_context_gathering()
+            )
             cycle_result["phases"]["context"] = context_result
             codebase_context = context_result.get("context", "")
+        except PhaseError as e:
+            self._log(f"PHASE TIMEOUT: Context gathering exceeded time limit: {e}")
+            cycle_result["outcome"] = "context_timeout"
+            cycle_result["error"] = str(e)
+            return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Context gathering failed: {e}")
             cycle_result["outcome"] = "context_crashed"
@@ -7793,8 +7851,16 @@ Be concise - this is a quality gate, not a full review."""
 
         # Phase 1: Debate (all agents, with gathered context)
         try:
-            debate_result = await self.phase_debate(codebase_context=codebase_context)
+            debate_result = await self._run_with_phase_timeout(
+                "debate",
+                self.phase_debate(codebase_context=codebase_context)
+            )
             cycle_result["phases"]["debate"] = debate_result
+        except PhaseError as e:
+            self._log(f"PHASE TIMEOUT: Debate exceeded time limit: {e}")
+            cycle_result["outcome"] = "debate_timeout"
+            cycle_result["error"] = str(e)
+            return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Debate phase failed: {e}")
             cycle_result["outcome"] = "debate_crashed"
@@ -7819,8 +7885,16 @@ Be concise - this is a quality gate, not a full review."""
         # Phase 2: Design (with belief analysis from debate)
         belief_analysis = debate_result.get("belief_analysis")
         try:
-            design_result = await self.phase_design(improvement, belief_analysis=belief_analysis)
+            design_result = await self._run_with_phase_timeout(
+                "design",
+                self.phase_design(improvement, belief_analysis=belief_analysis)
+            )
             cycle_result["phases"]["design"] = design_result
+        except PhaseError as e:
+            self._log(f"PHASE TIMEOUT: Design exceeded time limit: {e}")
+            cycle_result["outcome"] = "design_timeout"
+            cycle_result["error"] = str(e)
+            return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Design phase failed: {e}")
             cycle_result["outcome"] = "design_crashed"
@@ -7907,8 +7981,16 @@ Be concise - this is a quality gate, not a full review."""
 
         # Phase 3: Implement
         try:
-            impl_result = await self.phase_implement(design)
+            impl_result = await self._run_with_phase_timeout(
+                "implement",
+                self.phase_implement(design)
+            )
             cycle_result["phases"]["implement"] = impl_result
+        except PhaseError as e:
+            self._log(f"PHASE TIMEOUT: Implementation exceeded time limit: {e}")
+            cycle_result["outcome"] = "implement_timeout"
+            cycle_result["error"] = str(e)
+            return cycle_result
         except Exception as e:
             self._log(f"PHASE CRASH: Implementation phase failed: {e}")
             cycle_result["outcome"] = "implement_crashed"
@@ -8285,8 +8367,25 @@ Working directory: {self.aragora_path}
         self._log(f"\nVerification passed")
 
         # Phase 5: Commit
-        commit_result = await self.phase_commit(improvement)
-        cycle_result["phases"]["commit"] = commit_result
+        try:
+            commit_result = await self._run_with_phase_timeout(
+                "commit",
+                self.phase_commit(improvement)
+            )
+            cycle_result["phases"]["commit"] = commit_result
+        except PhaseError as e:
+            self._log(f"PHASE TIMEOUT: Commit exceeded time limit: {e}")
+            cycle_result["outcome"] = "commit_timeout"
+            cycle_result["error"] = str(e)
+            # Don't return early - still want to log leaderboard etc.
+            commit_result = {"committed": False, "reason": "timeout"}
+            cycle_result["phases"]["commit"] = commit_result
+        except Exception as e:
+            self._log(f"PHASE CRASH: Commit phase failed: {e}")
+            cycle_result["outcome"] = "commit_crashed"
+            cycle_result["error"] = str(e)
+            commit_result = {"committed": False, "reason": str(e)}
+            cycle_result["phases"]["commit"] = commit_result
 
         if commit_result.get("committed"):
             cycle_result["outcome"] = "success"

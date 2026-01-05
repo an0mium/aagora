@@ -71,7 +71,8 @@ describe('UserParticipation', () => {
     const submitButton = screen.getByText('Submit Vote');
     fireEvent.click(submitButton);
 
-    expect(mockOnVote).toHaveBeenCalledWith('Agent1');
+    // onVote now receives (choice, intensity) where intensity defaults to 5
+    expect(mockOnVote).toHaveBeenCalledWith('Agent1', expect.any(Number));
   });
 
   it('calls onSuggest with trimmed suggestion when suggestion is submitted', () => {
@@ -164,9 +165,9 @@ describe('UserParticipation', () => {
       fireEvent.click(submitButton);
     });
 
-    // Simulate error
+    // Simulate error (non-rate-limited error shows "Failed")
     await act(async () => {
-      errorCallback('Rate limited. Please wait before submitting again.');
+      errorCallback('Server error occurred.');
     });
 
     await waitFor(() => {

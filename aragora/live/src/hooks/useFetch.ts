@@ -53,9 +53,10 @@ export function useFetch<T>(
   // Track mounted state
   useEffect(() => {
     mountedRef.current = true;
+    const abortController = abortControllerRef.current;
     return () => {
       mountedRef.current = false;
-      abortControllerRef.current?.abort();
+      abortController?.abort();
     };
   }, []);
 

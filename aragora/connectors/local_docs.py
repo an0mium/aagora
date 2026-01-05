@@ -235,7 +235,8 @@ class LocalDocsConnector(BaseConnector):
             self._cache[evidence.id] = evidence
             return evidence
 
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[local_docs] Failed to read {path}: {e}")
             return None
 
     async def list_files(

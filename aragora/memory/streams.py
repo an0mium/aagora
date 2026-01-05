@@ -10,6 +10,7 @@ Inspired by Stanford Generative Agents, this module provides:
 
 import asyncio
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,6 +20,8 @@ import hashlib
 
 if TYPE_CHECKING:
     from aragora.memory.embeddings import EmbeddingProvider
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -297,8 +300,8 @@ class MemoryStream:
         if self.embedding_provider:
             try:
                 return self._embedding_similarity(content, query)
-            except Exception:
-                pass  # Fall back to keyword matching
+            except Exception as e:
+                logger.debug(f"[memory] Embedding similarity failed, using keyword fallback: {e}")
 
         # Keyword matching fallback
         content_lower = content.lower()

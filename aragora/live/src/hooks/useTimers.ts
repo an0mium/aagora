@@ -15,9 +15,10 @@ export function useTimeout() {
 
   // Cleanup all timeouts on unmount
   useEffect(() => {
+    const ids = timeoutIds.current;
     return () => {
-      timeoutIds.current.forEach((id) => clearTimeout(id));
-      timeoutIds.current.clear();
+      ids.forEach((id) => clearTimeout(id));
+      ids.clear();
     };
   }, []);
 
@@ -84,9 +85,10 @@ export function useInterval() {
 
   // Cleanup all intervals on unmount
   useEffect(() => {
+    const ids = intervalIds.current;
     return () => {
-      intervalIds.current.forEach((id) => clearInterval(id));
-      intervalIds.current.clear();
+      ids.forEach((id) => clearInterval(id));
+      ids.clear();
     };
   }, []);
 
@@ -198,6 +200,7 @@ export function useThrottle<T extends (...args: unknown[]) => unknown>(
     };
   }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Refs don't need deps; delay is the only true dependency
   return useCallback(
     ((...args) => {
       const now = Date.now();

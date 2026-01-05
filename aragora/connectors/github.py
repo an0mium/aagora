@@ -13,6 +13,7 @@ Searches:
 
 import asyncio
 import json
+import logging
 import re
 import subprocess
 from typing import Optional
@@ -21,6 +22,8 @@ import hashlib
 
 from aragora.reasoning.provenance import SourceType
 from aragora.connectors.base import BaseConnector, Evidence
+
+logger = logging.getLogger(__name__)
 
 # Regex for valid GitHub repo format: owner/repo (alphanumeric, dash, underscore, dot)
 VALID_REPO_PATTERN = re.compile(r'^[\w.-]+/[\w.-]+$')
@@ -74,7 +77,8 @@ class GitHubConnector(BaseConnector):
                 timeout=30,  # Auth check should be fast
             )
             self._gh_available = result.returncode == 0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[github] gh CLI check failed: {e}")
             self._gh_available = False
 
         return self._gh_available
@@ -98,7 +102,8 @@ class GitHubConnector(BaseConnector):
             if proc.returncode == 0:
                 return stdout.decode("utf-8")
             return None
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[github] gh command failed (args={args[:2]}...): {e}")
             return None
 
     async def search(

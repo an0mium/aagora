@@ -17,7 +17,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from aragora.storage.schema import SchemaManager, safe_add_column
+
 logger = logging.getLogger(__name__)
+
+# Schema version - increment when making schema changes
+ELO_SCHEMA_VERSION = 2
 
 # Default ELO rating for new agents
 DEFAULT_ELO = 1500

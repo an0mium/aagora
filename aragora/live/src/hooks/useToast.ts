@@ -28,8 +28,9 @@ export function useToast(): UseToastReturn {
 
   // Clean up timeouts on unmount
   useEffect(() => {
+    const refs = timeoutRefs.current;
     return () => {
-      timeoutRefs.current.forEach((timeout) => clearTimeout(timeout));
+      refs.forEach((timeout) => clearTimeout(timeout));
     };
   }, []);
 

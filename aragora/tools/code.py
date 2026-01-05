@@ -551,7 +551,8 @@ class SelfImprover:
                         f"{ctx.path}: File too long ({ctx.line_count} lines)"
                     )
 
-            except Exception:
+            except Exception as e:
+                logger.debug(f"[code] Failed to analyze {path}: {e}")
                 continue
 
         return analysis

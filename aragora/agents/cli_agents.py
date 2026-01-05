@@ -6,12 +6,15 @@ enabling heterogeneous multi-model debates.
 """
 
 import asyncio
+import logging
 import subprocess
 import json
 import re
 from typing import Optional
 
 from aragora.core import Agent, Critique, Message
+
+logger = logging.getLogger(__name__)
 
 # Context window limits (in characters, ~4 chars per token)
 # Use 60% of available window to leave room for response
@@ -52,8 +55,9 @@ class CLIAgent(Agent):
                 proc.kill()
                 await proc.wait()  # Ensure process is fully cleaned up
             raise TimeoutError(f"CLI command timed out after {self.timeout}s")
-        except Exception:
+        except Exception as e:
             if proc and proc.returncode is None:
+                logger.debug(f"[cleanup] Killing subprocess after error: {e}")
                 proc.kill()
                 await proc.wait()  # Cleanup zombie processes
             raise

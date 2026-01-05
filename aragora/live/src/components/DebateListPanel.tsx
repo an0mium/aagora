@@ -64,7 +64,7 @@ export function DebateListPanel({ onSelectDebate, limit = 20 }: DebateListPanelP
 
   useEffect(() => {
     fetchDebates(true);
-  }, []);
+  }, [fetchDebates]);
 
   const filteredDebates = debates.filter(debate => {
     if (filter === 'consensus') return debate.consensus_reached;

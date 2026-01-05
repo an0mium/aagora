@@ -1120,3 +1120,250 @@ class TestMetricsTracking:
 
         assert _request_counts.get("/test/error", 0) == initial_req + 1
         assert _error_counts.get("/test/error", 0) == initial_err + 1
+
+
+# ============================================================================
+# Edge Case Tests for Debates Handler
+# ============================================================================
+
+class TestDebatesHandlerEdgeCases:
+    """Edge case tests for DebatesHandler."""
+
+    @pytest.fixture
+    def debates_handler_with_mock(self):
+        """Create DebatesHandler with mock storage."""
+        storage = Mock()
+        ctx = {"storage": storage, "elo_system": None, "nomic_dir": None}
+        return DebatesHandler(ctx), storage
+
+    def test_empty_debate_list(self, debates_handler_with_mock):
+        """Test listing debates when storage is empty."""
+        handler, storage = debates_handler_with_mock
+        storage.list_debates.return_value = []
+
+        result = handler.handle("/api/debates", {}, None)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["debates"] == []
+        assert data["count"] == 0
+
+    def test_limit_param_zero(self, debates_handler_with_mock):
+        """Test limit parameter of zero is handled."""
+        handler, storage = debates_handler_with_mock
+        storage.list_debates.return_value = []
+
+        result = handler.handle("/api/debates", {"limit": "0"}, None)
+
+        assert result.status_code == 200
+        storage.list_debates.assert_called_with(limit=0)
+
+    def test_limit_param_negative(self, debates_handler_with_mock):
+        """Test negative limit parameter defaults gracefully."""
+        handler, storage = debates_handler_with_mock
+        storage.list_debates.return_value = []
+
+        result = handler.handle("/api/debates", {"limit": "-1"}, None)
+
+        # Should use the negative value (storage can handle it)
+        assert result.status_code == 200
+
+    def test_limit_param_exceeds_max(self, debates_handler_with_mock):
+        """Test limit parameter is capped at 100."""
+        handler, storage = debates_handler_with_mock
+        storage.list_debates.return_value = []
+
+        result = handler.handle("/api/debates", {"limit": "500"}, None)
+
+        assert result.status_code == 200
+        # Limit should be capped at 100
+        storage.list_debates.assert_called_with(limit=100)
+
+    def test_export_empty_debate(self, debates_handler_with_mock):
+        """Test exporting debate with no messages."""
+        handler, storage = debates_handler_with_mock
+        storage.get_debate.return_value = {
+            "id": "empty",
+            "slug": "empty",
+            "topic": "Empty debate",
+            "messages": [],
+            "critiques": [],
+            "votes": [],
+            "consensus_reached": False,
+        }
+
+        result = handler.handle("/api/debates/empty/export/csv", {"table": "messages"}, None)
+
+        assert result[1] == 200  # status code
+        assert b"round,agent,role,content,timestamp" in result[0]  # header row only
+
+    def test_export_html_format(self, debates_handler_with_mock):
+        """Test HTML export generates valid HTML."""
+        handler, storage = debates_handler_with_mock
+        storage.get_debate.return_value = {
+            "id": "test",
+            "slug": "test",
+            "topic": "Test Debate",
+            "messages": [{"agent": "claude", "content": "Hello", "round": 1}],
+            "critiques": [],
+            "consensus_reached": True,
+            "final_answer": "Test answer",
+            "rounds_used": 3,
+        }
+
+        result = handler.handle("/api/debates/test/export/html", {}, None)
+
+        assert result[1] == 200
+        html_content = result[0].decode("utf-8")
+        assert "<!DOCTYPE html>" in html_content
+        assert "Test Debate" in html_content
+        assert "claude" in html_content
+
+    def test_export_invalid_format(self, debates_handler_with_mock):
+        """Test export with invalid format returns error."""
+        handler, storage = debates_handler_with_mock
+
+        result = handler.handle("/api/debates/test/export/pdf", {}, None)
+
+        assert result.status_code == 400
+        data = json.loads(result.body)
+        assert "Invalid format" in data["error"]
+
+    def test_impasse_high_severity(self, debates_handler_with_mock):
+        """Test impasse detection with high severity critiques."""
+        handler, storage = debates_handler_with_mock
+        storage.get_debate.return_value = {
+            "id": "impasse",
+            "slug": "impasse",
+            "messages": [],
+            "critiques": [
+                {"severity": 0.8},
+                {"severity": 0.9},
+            ],
+            "consensus_reached": False,
+        }
+
+        result = handler.handle("/api/debates/impasse/impasse", {}, None)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["is_impasse"] is True
+        assert data["indicators"]["high_severity_critiques"] is True
+
+
+# ============================================================================
+# Edge Case Tests for Agents Handler
+# ============================================================================
+
+class TestAgentsHandlerEdgeCases:
+    """Edge case tests for AgentsHandler."""
+
+    @pytest.fixture
+    def agents_handler_with_mock(self):
+        """Create AgentsHandler with mock ELO system."""
+        elo = Mock()
+        ctx = {"storage": None, "elo_system": elo, "nomic_dir": None}
+        return AgentsHandler(ctx), elo
+
+    def test_leaderboard_empty(self, agents_handler_with_mock):
+        """Test leaderboard with no agents."""
+        handler, elo = agents_handler_with_mock
+        elo.get_cached_leaderboard.return_value = []
+        elo.get_leaderboard.return_value = []
+
+        result = handler.handle("/api/leaderboard", {}, None)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["rankings"] == []
+
+    def test_agent_not_found(self, agents_handler_with_mock):
+        """Test profile request for non-existent agent."""
+        handler, elo = agents_handler_with_mock
+        elo.get_agent_stats.return_value = None
+
+        result = handler.handle("/api/agent/nonexistent/profile", {}, None)
+
+        # Should still return 200 with empty/default data or 404
+        assert result.status_code in (200, 404)
+
+    def test_compare_same_agent(self, agents_handler_with_mock):
+        """Test comparing agent with itself."""
+        handler, elo = agents_handler_with_mock
+        elo.get_head_to_head.return_value = {"matches": 0, "agent1_wins": 0, "agent2_wins": 0}
+
+        result = handler.handle("/api/agents/claude/vs/claude", {}, None)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        # Should handle gracefully
+        assert "comparison" in data or "head_to_head" in data or "error" not in data
+
+    def test_matches_empty(self, agents_handler_with_mock):
+        """Test recent matches when none exist."""
+        handler, elo = agents_handler_with_mock
+        elo.get_recent_matches.return_value = []
+
+        result = handler.handle("/api/matches", {"limit": "10"}, None)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["matches"] == []
+
+
+# ============================================================================
+# Edge Case Tests for System Handler
+# ============================================================================
+
+class TestSystemHandlerEdgeCases:
+    """Edge case tests for SystemHandler."""
+
+    @pytest.fixture
+    def system_handler_with_empty_dir(self):
+        """Create SystemHandler with empty nomic directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nomic_dir = Path(tmpdir)
+            ctx = {"storage": None, "elo_system": None, "nomic_dir": nomic_dir}
+            yield SystemHandler(ctx)
+
+    @pytest.fixture
+    def system_handler_with_corrupted_state(self):
+        """Create SystemHandler with corrupted state file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nomic_dir = Path(tmpdir)
+            state_file = nomic_dir / "nomic_state.json"
+            state_file.write_text("{ invalid json }")
+            ctx = {"storage": None, "elo_system": None, "nomic_dir": nomic_dir}
+            yield SystemHandler(ctx)
+
+    def test_nomic_log_empty(self, system_handler_with_empty_dir):
+        """Test nomic log when file doesn't exist."""
+        result = system_handler_with_empty_dir.handle("/api/nomic/log", {}, None)
+
+        # Should return 200 with empty content or 404
+        assert result.status_code in (200, 404, 503)
+        if result.status_code == 200:
+            data = json.loads(result.body)
+            # Should have lines field (possibly empty)
+            assert "lines" in data or "error" in data
+
+    def test_nomic_state_missing(self, system_handler_with_empty_dir):
+        """Test nomic state when file doesn't exist."""
+        result = system_handler_with_empty_dir.handle("/api/nomic/state", {}, None)
+
+        # Should handle gracefully
+        assert result.status_code in (200, 404, 503)
+
+    def test_nomic_state_corrupted(self, system_handler_with_corrupted_state):
+        """Test nomic state with corrupted JSON."""
+        result = system_handler_with_corrupted_state.handle("/api/nomic/state", {}, None)
+
+        # Should handle JSON parse error gracefully
+        assert result.status_code in (200, 500, 503)
+
+    def test_history_empty(self, system_handler_with_empty_dir):
+        """Test history endpoint with no data."""
+        result = system_handler_with_empty_dir.handle("/api/history", {}, None)
+
+        # Should handle empty state gracefully
+        assert result.status_code in (200, 404, 503)

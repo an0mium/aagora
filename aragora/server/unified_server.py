@@ -400,6 +400,7 @@ try:
         AnalyticsHandler,
         MetricsHandler,
         ConsensusHandler,
+        BeliefHandler,
         HandlerResult,
     )
     HANDLERS_AVAILABLE = True
@@ -412,6 +413,7 @@ except ImportError:
     PulseHandler = None
     AnalyticsHandler = None
     ConsensusHandler = None
+    BeliefHandler = None
     HandlerResult = None
 
 # Track active ad-hoc debates
@@ -545,6 +547,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _analytics_handler: Optional["AnalyticsHandler"] = None
     _metrics_handler: Optional["MetricsHandler"] = None
     _consensus_handler: Optional["ConsensusHandler"] = None
+    _belief_handler: Optional["BeliefHandler"] = None
     _handlers_initialized: bool = False
 
     # Thread pool for debate execution (prevents unbounded thread creation)
@@ -637,8 +640,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         cls._analytics_handler = AnalyticsHandler(ctx)
         cls._metrics_handler = MetricsHandler(ctx)
         cls._consensus_handler = ConsensusHandler(ctx)
+        cls._belief_handler = BeliefHandler(ctx)
         cls._handlers_initialized = True
-        logger.info("[handlers] Modular handlers initialized (7 handlers)")
+        logger.info("[handlers] Modular handlers initialized (8 handlers)")
 
     def _try_modular_handler(self, path: str, query: dict) -> bool:
         """Try to handle request via modular handlers.
@@ -663,6 +667,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._analytics_handler,
             self._metrics_handler,
             self._consensus_handler,
+            self._belief_handler,
         ]
 
         for handler in handlers:

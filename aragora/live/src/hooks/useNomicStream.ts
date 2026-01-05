@@ -29,13 +29,15 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
   const ackCallbacksRef = useRef<((msgType: string) => void)[]>([]);
   const errorCallbacksRef = useRef<((message: string) => void)[]>([]);
 
+  // Ref for updateStateFromEvent to avoid stale closure in connect
+  const updateStateFromEventRef = useRef<(event: StreamEvent) => void>(() => {});
+
   const connect = useCallback(() => {
     try {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
         setConnected(true);
         // Reset circuit breaker on successful connection
         reconnectAttemptsRef.current = 0;
@@ -43,7 +45,6 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
       };
 
       ws.onclose = () => {
-        console.log('WebSocket disconnected');
         setConnected(false);
         wsRef.current = null;
 
@@ -132,7 +133,7 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
             const loopId = data.data.loop_id as string;
             setActiveLoops((prev) => prev.filter((l) => l.loop_id !== loopId));
             // If this was the selected loop, switch to another
-            if (selectedLoopId === loopId) {
+            if (selectedLoopIdRef.current === loopId) {
               setActiveLoops((prev) => {
                 if (prev.length > 0) {
                   setSelectedLoopId(prev[0].loop_id);
@@ -169,7 +170,7 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
           });
 
           // Update state based on event type
-          updateStateFromEvent(data);
+          updateStateFromEventRef.current(data);
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e);
         }
@@ -234,6 +235,11 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
         break;
     }
   }, []);
+
+  // Keep ref in sync with callback
+  useEffect(() => {
+    updateStateFromEventRef.current = updateStateFromEvent;
+  }, [updateStateFromEvent]);
 
   useEffect(() => {
     connect();

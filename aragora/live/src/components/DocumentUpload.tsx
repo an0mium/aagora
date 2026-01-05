@@ -33,7 +33,7 @@ export function DocumentUpload({ onDocumentsChange, apiBase = '' }: DocumentUplo
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const uploadFile = async (file: File) => {
+  const uploadFile = useCallback(async (file: File) => {
     setStatus('uploading');
     setError(null);
 
@@ -72,9 +72,9 @@ export function DocumentUpload({ onDocumentsChange, apiBase = '' }: DocumentUplo
       setError(err instanceof Error ? err.message : 'Upload failed');
       setStatus('error');
     }
-  };
+  }, [apiBase, onDocumentsChange]);
 
-  const handleFileSelect = (files: FileList | null) => {
+  const handleFileSelect = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
 
     const file = files[0];
@@ -109,7 +109,7 @@ export function DocumentUpload({ onDocumentsChange, apiBase = '' }: DocumentUplo
     }
 
     uploadFile(file);
-  };
+  }, [uploadFile]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -125,7 +125,7 @@ export function DocumentUpload({ onDocumentsChange, apiBase = '' }: DocumentUplo
     e.preventDefault();
     setIsDragging(false);
     handleFileSelect(e.dataTransfer.files);
-  }, []);
+  }, [handleFileSelect]);
 
   const removeDocument = (docId: string) => {
     setDocuments((prev) => {

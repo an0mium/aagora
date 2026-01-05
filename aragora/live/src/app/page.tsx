@@ -14,6 +14,9 @@ import { HistoryPanel } from '@/components/HistoryPanel';
 import { UserParticipation } from '@/components/UserParticipation';
 import { ReplayBrowser } from '@/components/ReplayBrowser';
 import { DebateBrowser } from '@/components/DebateBrowser';
+import { ImpasseDetectionPanel } from '@/components/ImpasseDetectionPanel';
+import { LearningEvolution } from '@/components/LearningEvolution';
+import { DebateExportModal } from '@/components/DebateExportModal';
 import { TournamentPanel } from '@/components/TournamentPanel';
 import { CruxPanel } from '@/components/CruxPanel';
 import { MemoryInspector } from '@/components/MemoryInspector';
@@ -144,6 +147,11 @@ export default function Home() {
   const [showCompare, setShowCompare] = useState(false);
   const [showBoot, setShowBoot] = useState(true);
   const [skipBoot, setSkipBoot] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportDebateId, setExportDebateId] = useState<string | null>(null);
+
+  // Track current debate for impasse detection
+  const [currentDebateId, setCurrentDebateId] = useState<string | null>(null);
 
   // Check if boot was shown before (session storage)
   useEffect(() => {
@@ -207,6 +215,27 @@ export default function Home() {
 
   // Derive current phase from state or latest phase event
   const currentPhase = nomicState?.phase || 'idle';
+
+  // Track current debate ID from events
+  useEffect(() => {
+    const debateEvent = events.find(
+      (e) => e.type === 'debate_start' || (e.data && 'debate_id' in e.data)
+    );
+    if (debateEvent?.data && 'debate_id' in debateEvent.data) {
+      setCurrentDebateId(debateEvent.data.debate_id as string);
+    }
+  }, [events]);
+
+  // Export modal handlers
+  const handleExportDebate = useCallback((debateId: string) => {
+    setExportDebateId(debateId);
+    setShowExportModal(true);
+  }, []);
+
+  const handleCloseExport = useCallback(() => {
+    setShowExportModal(false);
+    setExportDebateId(null);
+  }, []);
 
   // Check if we have a verdict
   const hasVerdict = events.some(
@@ -280,6 +309,16 @@ export default function Home() {
         {/* Compare Modal */}
         {showCompare && (
           <CompareView events={events} onClose={() => setShowCompare(false)} />
+        )}
+
+        {/* Export Modal */}
+        {showExportModal && exportDebateId && (
+          <DebateExportModal
+            debateId={exportDebateId}
+            isOpen={showExportModal}
+            onClose={handleCloseExport}
+            apiBase={apiBase}
+          />
         )}
 
         {/* Header */}
@@ -450,6 +489,14 @@ export default function Home() {
             <PanelErrorBoundary panelName="Analytics">
               <AnalyticsPanel apiBase={apiBase} />
             </PanelErrorBoundary>
+            <PanelErrorBoundary panelName="Learning Evolution">
+              <LearningEvolution />
+            </PanelErrorBoundary>
+            {currentDebateId && (
+              <PanelErrorBoundary panelName="Impasse Detection">
+                <ImpasseDetectionPanel debateId={currentDebateId} apiBase={apiBase} />
+              </PanelErrorBoundary>
+            )}
             <PanelErrorBoundary panelName="Server Metrics">
               <MetricsPanel apiBase={apiBase} />
             </PanelErrorBoundary>
