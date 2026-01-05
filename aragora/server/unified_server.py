@@ -408,6 +408,7 @@ try:
         MemoryHandler,
         LeaderboardViewHandler,
         DocumentHandler,
+        VerificationHandler,
         HandlerResult,
     )
     HANDLERS_AVAILABLE = True
@@ -428,6 +429,7 @@ except ImportError:
     MemoryHandler = None
     LeaderboardViewHandler = None
     DocumentHandler = None
+    VerificationHandler = None
     HandlerResult = None
 
 # Track active ad-hoc debates
@@ -569,6 +571,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _memory_handler: Optional["MemoryHandler"] = None
     _leaderboard_handler: Optional["LeaderboardViewHandler"] = None
     _document_handler: Optional["DocumentHandler"] = None
+    _verification_handler: Optional["VerificationHandler"] = None
     _handlers_initialized: bool = False
 
     # Thread pool for debate execution (prevents unbounded thread creation)
@@ -715,8 +718,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         cls._memory_handler = MemoryHandler(ctx)
         cls._leaderboard_handler = LeaderboardViewHandler(ctx)
         cls._document_handler = DocumentHandler(ctx)
+        cls._verification_handler = VerificationHandler(ctx)
         cls._handlers_initialized = True
-        logger.info("[handlers] Modular handlers initialized (15 handlers)")
+        logger.info("[handlers] Modular handlers initialized (16 handlers)")
 
     def _try_modular_handler(self, path: str, query: dict) -> bool:
         """Try to handle request via modular handlers.
@@ -749,6 +753,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._memory_handler,
             self._leaderboard_handler,
             self._document_handler,
+            self._verification_handler,
         ]
 
         for handler in handlers:

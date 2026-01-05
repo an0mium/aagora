@@ -41,6 +41,7 @@ from .leaderboard import LeaderboardViewHandler
 from .relationship import RelationshipHandler
 from .moments import MomentsHandler
 from .documents import DocumentHandler
+from .verification import VerificationHandler
 
 __all__ = [
     # Base utilities
@@ -66,4 +67,5 @@ __all__ = [
     "RelationshipHandler",
     "MomentsHandler",
     "DocumentHandler",
+    "VerificationHandler",
 ]
