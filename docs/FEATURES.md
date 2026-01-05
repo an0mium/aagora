@@ -593,16 +593,56 @@ if result.status == "PROVED":
 ### DebateGraph
 **File:** `aragora/debate/graph.py`
 
-DAG-based debates for complex multi-path disagreements.
+DAG-based debates for complex multi-path disagreements with automatic branching and merging.
 
 ```python
-from aragora.debate.graph import DebateGraph, GraphDebateOrchestrator
+from aragora.debate.graph import (
+    DebateGraph,
+    GraphDebateOrchestrator,
+    BranchPolicy,
+    ConvergencePolicy,
+)
 
-orchestrator = GraphDebateOrchestrator(agents=agents)
-result = await orchestrator.run_debate(task)
+# Configure branching behavior
+policy = BranchPolicy(
+    disagreement_threshold=0.7,  # When to create branches
+    max_branches=3,               # Limit concurrent branches
+    min_depth_for_branch=1,       # Minimum rounds before branching
+)
+
+orchestrator = GraphDebateOrchestrator(agents=agents, policy=policy)
+
+# Run with custom agent function
+async def run_agent(agent, prompt, context):
+    return await agent.generate(prompt, context)
+
+result = await orchestrator.run_debate(
+    task="Design a caching strategy",
+    max_rounds=5,
+    run_agent_fn=run_agent,  # async fn(agent, prompt, context) -> str
+    on_node=lambda node: print(f"New node: {node.id}"),
+    on_branch=lambda branch: print(f"Branch: {branch.hypothesis}"),
+    on_merge=lambda merge: print(f"Merged: {merge.winning_branch}"),
+)
+
+# Access graph structure
 graph = orchestrator.graph
 paths = graph.get_all_paths()
+synthesis = graph.get_final_synthesis()
 ```
+
+**Key Components:**
+- `DebateNode` - A node with claims, confidence, and evidence
+- `Branch` - A parallel exploration path with hypothesis
+- `BranchPolicy` - Rules for when to create branches
+- `ConvergencePolicy` - Rules for when to merge branches
+- `MergeStrategy` - How to combine branches (vote, synthesis, best_path)
+
+**Helper Methods:**
+- `_build_context(nodes)` - Build context from last 5 nodes
+- `_extract_confidence(response)` - Parse confidence (0-100%) from text
+- `_extract_claims(response)` - Extract numbered/bulleted claims
+- `_synthesize_branches(a, b)` - Merge claims from branches
 
 ### DebateForker
 **File:** `aragora/debate/forking.py`
