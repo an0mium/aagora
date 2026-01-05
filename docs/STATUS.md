@@ -15,16 +15,17 @@
   - Belief analyzer function name corrected in orchestrator.py:2213
 
 ### Nomic Loop
-- **Cycle**: 1
-- **Phase**: implement (executing stage)
-- **Current Proposal**: "Live Debate Viewer with Shareable Permalinks" (already implemented)
-- **Last Proposal**: Claude's "Persona Laboratory v2" (won 2/3 consensus)
-- **Implementation**: Core streaming/storage/viewer infrastructure complete
+- **Cycle**: 2 (starting fresh after stalled cycle 1)
+- **Phase**: debate (starting)
+- **Last Proposal**: "Debate Mood Ring" (80% consensus, stalled at 0% design consensus)
+- **Cycle 1 Issue**: Design phase had 0% consensus → plan generation failed → loop stalled
+- **Fix Applied**: Added design consensus check before implementation (skips if no design)
 - **Blocking Issues FIXED**:
   - Missing `agent_type` attribute in GeminiAgent (now added to all API agents)
   - RelationshipTracker.get_influence_network() parameter mismatch (fixed)
   - OpenRouterAgent broken super().__init__() call (fixed)
   - `_get_belief_classes()` undefined (fixed - was typo for `_get_belief_analyzer()`)
+  - Design phase 0% consensus now detected and cycle skipped (new safeguard)
 - **Position Ledger**: Implemented in `aragora/agents/grounded.py`
 - **NomicIntegration**: Fully wired up (probing, belief analysis, checkpointing, staleness)
 
@@ -135,9 +136,18 @@
 - **NEW**: Fixed N+1 query pattern in get_rivals/get_allies (single DB query instead of N+1)
 - **NEW**: Wired AUDIENCE_SUMMARY and INSIGHT_EXTRACTED events to WebSocket stream
 
+### Recent Changes (2026-01-05 Session 2)
+- **NEW**: Added design consensus safeguard (skips implementation if design has 0% consensus)
+- **NEW**: Fixed security: X-Forwarded-For header only trusted from TRUSTED_PROXIES
+- **NEW**: Added AnalyticsPanel for disagreements, early-stops, and role rotation visualization
+- **NEW**: Added CalibrationPanel for agent confidence accuracy curves
+- **NEW**: Added ConsensusKnowledgeBase for browsing settled topics and searching similar debates
+- **NEW**: Killed stalled nomic loop (was stuck 10+ hours on empty plan) and reset state for cycle 2
+- **NEW**: Updated Fully Integrated feature count to 54
+
 ## Feature Integration Status
 
-### Fully Integrated (51)
+### Fully Integrated (54)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -184,6 +194,9 @@
 | Mood Event Types | Active | `aragora/server/stream.py` (MOOD_DETECTED, MOOD_SHIFT, DEBATE_ENERGY) |
 | ContraryViewsPanel | Active | `aragora/live/src/components/ContraryViewsPanel.tsx` |
 | RiskWarningsPanel | Active | `aragora/live/src/components/RiskWarningsPanel.tsx` |
+| AnalyticsPanel | Active | `aragora/live/src/components/AnalyticsPanel.tsx` (disagreements, roles, early-stops) |
+| CalibrationPanel | Active | `aragora/live/src/components/CalibrationPanel.tsx` (confidence accuracy) |
+| ConsensusKnowledgeBase | Active | `aragora/live/src/components/ConsensusKnowledgeBase.tsx` (settled topics) |
 | DebateViewer Critique Handling | Active | `aragora/live/src/components/DebateViewer.tsx` (critique + consensus) |
 | ArgumentCartographer | Active | `aragora/debate/orchestrator.py` (graph visualization) |
 | Graph Export API | Active | `aragora/server/stream.py` (/api/debate/{loop_id}/graph/*) |
