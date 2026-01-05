@@ -19,9 +19,39 @@ Usage:
 import logging
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+# Default database connection timeout in seconds
+DB_TIMEOUT = 30.0
+
+
+def get_wal_connection(db_path: Union[str, Path], timeout: float = DB_TIMEOUT) -> sqlite3.Connection:
+    """Get a SQLite connection with WAL mode enabled for better concurrency.
+
+    WAL (Write-Ahead Logging) mode allows:
+    - Multiple readers to operate concurrently with a single writer
+    - Better performance for write-heavy workloads
+    - Reduced lock contention in multi-threaded scenarios
+
+    Args:
+        db_path: Path to the SQLite database file
+        timeout: Connection timeout in seconds (default: 30.0)
+
+    Returns:
+        A sqlite3.Connection configured for WAL mode
+    """
+    conn = sqlite3.connect(db_path, timeout=timeout)
+    # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL")
+    # Use NORMAL synchronous mode (safe with WAL, faster than FULL)
+    conn.execute("PRAGMA synchronous=NORMAL")
+    # Set busy timeout in milliseconds
+    conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+    return conn
 
 
 @dataclass

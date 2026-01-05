@@ -24,7 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from aragora.storage.schema import SchemaManager
+from aragora.storage.schema import SchemaManager, get_wal_connection
 
 # Schema version for ContinuumMemory
 CONTINUUM_SCHEMA_VERSION = 1
@@ -172,7 +172,7 @@ class ContinuumMemory:
 
     def _init_db(self):
         """Initialize the continuum memory tables using SchemaManager."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             manager = SchemaManager(conn, "continuum_memory", current_version=CONTINUUM_SCHEMA_VERSION)
 
             # Initial schema (v1)
@@ -249,7 +249,7 @@ class ContinuumMemory:
         """
         now = datetime.now().isoformat()
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -279,7 +279,7 @@ class ContinuumMemory:
 
     def get(self, id: str) -> Optional[ContinuumMemoryEntry]:
         """Get a memory entry by ID."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -345,7 +345,7 @@ class ContinuumMemory:
         tier_values = [t.value for t in tiers]
         placeholders = ",".join("?" * len(tier_values))
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             # Retrieval query with time-decay scoring
@@ -423,7 +423,7 @@ class ContinuumMemory:
         Returns:
             Updated surprise score
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             # Get current state
@@ -515,7 +515,7 @@ class ContinuumMemory:
 
         Returns the new tier if promoted, None otherwise.
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -575,7 +575,7 @@ class ContinuumMemory:
 
         Returns the new tier if demoted, None otherwise.
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -639,7 +639,7 @@ class ContinuumMemory:
         promotion_ids: List[str] = []
         demotion_ids: List[str] = []
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             # Find candidates for promotion (high surprise)
@@ -680,7 +680,7 @@ class ContinuumMemory:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about the continuum memory system."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             stats: Dict[str, Any] = {}

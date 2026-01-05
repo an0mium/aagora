@@ -16,8 +16,8 @@ from typing import Optional, Generator
 from aragora.core import Critique, DebateResult
 
 
-# Database connection timeout in seconds
-DB_TIMEOUT = 30.0
+# Import WAL connection helper from storage module
+from aragora.storage.schema import get_wal_connection, DB_TIMEOUT
 
 
 @dataclass
@@ -126,10 +126,10 @@ class CritiqueStore:
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection as a context manager.
 
-        Ensures connections are properly closed even if exceptions occur.
+        Uses WAL mode for better concurrency. Ensures connections are
+        properly closed even if exceptions occur.
         """
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT)
-        conn.execute(f"PRAGMA busy_timeout = {int(DB_TIMEOUT * 1000)}")
+        conn = get_wal_connection(self.db_path, timeout=DB_TIMEOUT)
         try:
             yield conn
         finally:
@@ -349,32 +349,33 @@ class CritiqueStore:
                 # Get matching suggestion
                 suggestion = critique.suggestions[0] if critique.suggestions else ""
 
-                # Check if pattern exists
-                cursor.execute("SELECT success_count, avg_severity FROM patterns WHERE id = ?", (pattern_id,))
-                existing = cursor.fetchone()
-
-                if existing:
-                    # Update existing pattern
-                    new_count = existing[0] + 1
-                    new_avg = (existing[1] * existing[0] + critique.severity) / new_count
-                    cursor.execute(
-                        """
-                        UPDATE patterns
-                        SET success_count = ?, avg_severity = ?, updated_at = ?
-                        WHERE id = ?
+                # Atomic upsert to avoid race condition in concurrent writes
+                # Uses INSERT ... ON CONFLICT to eliminate check-then-act race window
+                now = datetime.now().isoformat()
+                cursor.execute(
+                    """
+                    INSERT INTO patterns
+                        (id, issue_type, issue_text, suggestion_text, success_count,
+                         avg_severity, example_task, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        success_count = success_count + 1,
+                        avg_severity = (avg_severity * success_count + ?) / (success_count + 1),
+                        updated_at = ?
                     """,
-                        (new_count, new_avg, datetime.now().isoformat(), pattern_id),
-                    )
-                else:
-                    # Insert new pattern
-                    cursor.execute(
-                        """
-                        INSERT INTO patterns
-                        (id, issue_type, issue_text, suggestion_text, success_count, avg_severity, example_task)
-                        VALUES (?, ?, ?, ?, 1, ?, ?)
-                    """,
-                        (pattern_id, issue_type, issue, suggestion, critique.severity, successful_fix[:500]),
-                    )
+                    (
+                        pattern_id,
+                        issue_type,
+                        issue,
+                        suggestion,
+                        critique.severity,  # initial avg_severity for INSERT
+                        successful_fix[:500],
+                        now,  # created_at (only set on INSERT)
+                        now,  # updated_at
+                        critique.severity,  # new severity for UPDATE averaging
+                        now,  # updated_at for UPDATE
+                    ),
+                )
 
                 # Update surprise score (Titans/MIRAS: track unexpected successes)
                 self._update_surprise_score(cursor, pattern_id, is_success=True)
