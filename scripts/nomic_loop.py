@@ -7096,9 +7096,15 @@ Be concise - this is a quality gate, not a full review."""
 
         # Phase 0: Context Gathering (Claude + Codex explore codebase)
         # This ensures Gemini and Grok get accurate context about existing features
-        context_result = await self.phase_context_gathering()
-        cycle_result["phases"]["context"] = context_result
-        codebase_context = context_result.get("context", "")
+        try:
+            context_result = await self.phase_context_gathering()
+            cycle_result["phases"]["context"] = context_result
+            codebase_context = context_result.get("context", "")
+        except Exception as e:
+            self._log(f"PHASE CRASH: Context gathering failed: {e}")
+            cycle_result["outcome"] = "context_crashed"
+            cycle_result["error"] = str(e)
+            return cycle_result
 
         # === Deadline check after context gathering ===
         if not self._check_cycle_deadline(cycle_deadline, "context_gathering"):
@@ -7107,8 +7113,14 @@ Be concise - this is a quality gate, not a full review."""
             return cycle_result
 
         # Phase 1: Debate (all agents, with gathered context)
-        debate_result = await self.phase_debate(codebase_context=codebase_context)
-        cycle_result["phases"]["debate"] = debate_result
+        try:
+            debate_result = await self.phase_debate(codebase_context=codebase_context)
+            cycle_result["phases"]["debate"] = debate_result
+        except Exception as e:
+            self._log(f"PHASE CRASH: Debate phase failed: {e}")
+            cycle_result["outcome"] = "debate_crashed"
+            cycle_result["error"] = str(e)
+            return cycle_result
 
         if not debate_result.get("consensus_reached"):
             self._log("No consensus reached. Ending cycle.")
@@ -7126,8 +7138,14 @@ Be concise - this is a quality gate, not a full review."""
 
         # Phase 2: Design (with belief analysis from debate)
         belief_analysis = debate_result.get("belief_analysis")
-        design_result = await self.phase_design(improvement, belief_analysis=belief_analysis)
-        cycle_result["phases"]["design"] = design_result
+        try:
+            design_result = await self.phase_design(improvement, belief_analysis=belief_analysis)
+            cycle_result["phases"]["design"] = design_result
+        except Exception as e:
+            self._log(f"PHASE CRASH: Design phase failed: {e}")
+            cycle_result["outcome"] = "design_crashed"
+            cycle_result["error"] = str(e)
+            return cycle_result
 
         design = design_result.get("design", "")
         design_consensus = design_result.get("consensus_reached", False)
@@ -7182,8 +7200,14 @@ Be concise - this is a quality gate, not a full review."""
             return cycle_result
 
         # Phase 3: Implement
-        impl_result = await self.phase_implement(design)
-        cycle_result["phases"]["implement"] = impl_result
+        try:
+            impl_result = await self.phase_implement(design)
+            cycle_result["phases"]["implement"] = impl_result
+        except Exception as e:
+            self._log(f"PHASE CRASH: Implementation phase failed: {e}")
+            cycle_result["outcome"] = "implement_crashed"
+            cycle_result["error"] = str(e)
+            return cycle_result
 
         if not impl_result.get("success"):
             self._log("Implementation failed. Ending cycle.")
@@ -7274,8 +7298,14 @@ Be concise - this is a quality gate, not a full review."""
                     break
 
             # Phase 4: Verify
-            verify_result = await self.phase_verify()
-            cycle_result["phases"]["verify"] = verify_result
+            try:
+                verify_result = await self.phase_verify()
+                cycle_result["phases"]["verify"] = verify_result
+            except Exception as e:
+                self._log(f"PHASE CRASH: Verification phase failed: {e}")
+                # Treat as failed verification, continue to next fix iteration
+                verify_result = {"all_passed": False, "checks": [], "error": str(e)}
+                cycle_result["phases"]["verify"] = verify_result
 
             if verify_result.get("all_passed"):
                 self._log(f"\nVerification passed!")
@@ -7342,7 +7372,11 @@ Be concise - this is a quality gate, not a full review."""
                     if self._selective_rollback(problematic_files):
                         # Re-verify after selective rollback
                         self._log("  Re-verifying after selective rollback...")
-                        re_verify = await self.phase_verify()
+                        try:
+                            re_verify = await self.phase_verify()
+                        except Exception as e:
+                            self._log(f"  Re-verify crashed: {e}")
+                            re_verify = {"all_passed": False}
                         if re_verify.get("all_passed"):
                             self._log("  Selective rollback succeeded! Keeping partial changes.")
                             cycle_result["outcome"] = "partial_success"

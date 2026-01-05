@@ -1049,7 +1049,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         # System Statistics API
         elif path == '/api/ranking/stats':
             self._get_ranking_stats()
-        elif path == '/api/memory/stats':
+        elif path == '/api/memory/stats' or path == '/api/memory/tier-stats':
             self._get_memory_stats()
         elif path == '/api/critiques/patterns':
             limit = self._safe_int(query, 'limit', 10, 50)

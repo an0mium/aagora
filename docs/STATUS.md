@@ -1,11 +1,11 @@
 # Aragora Project Status
 
-*Last updated: January 5, 2026 (12:00 UTC)*
+*Last updated: January 5, 2026 (20:00 UTC)*
 
 ## Current State
 
 ### Test Status
-- **Total Tests**: 356 passed, 0 failures, 2 skipped
+- **Total Tests**: 402 passed, 0 failures, 2 skipped
 - **Recent Fixes (2026-01-05)**:
   - Fixed `_get_belief_classes()` → `_get_belief_analyzer()` typo in orchestrator.py
   - Fixed all 7 unanimous consensus tests (were failing due to above typo)
@@ -135,6 +135,19 @@
 - **NEW**: Exported 4 new modules: audience, plugins, nomic, learning (25+ new public APIs)
 - **NEW**: Fixed N+1 query pattern in get_rivals/get_allies (single DB query instead of N+1)
 - **NEW**: Wired AUDIENCE_SUMMARY and INSIGHT_EXTRACTED events to WebSocket stream
+
+### Recent Changes (2026-01-05 Session 3)
+- **NEW**: Fixed security: SAFE_ID_PATTERN bug (was string, needed re.match)
+- **NEW**: Fixed security: Added symlink protection in _serve_file() (prevents directory escape)
+- **NEW**: Added tests/test_security.py with token validation and SQL injection tests
+- **NEW**: Added try/except error handling around all nomic loop phase calls
+- **NEW**: Added phase crash recovery (context, debate, design, implement, verify phases)
+- **NEW**: Fixed MemoryInspector endpoint (added /api/memory/tier-stats alias)
+- **NEW**: Added design fallback mechanism (uses highest-voted design if no consensus)
+- **NEW**: Added design arbitration (judge picks between competing designs on close votes)
+- **NEW**: Fixed TypeScript errors in page.tsx (AgentNetworkPanel, RedTeamAnalysisPanel)
+- **NEW**: Added missing timedelta import to nomic_loop.py
+- **NEW**: Updated test count to 402 passed
 
 ### Recent Changes (2026-01-05 Session 2)
 - **NEW**: Added design consensus safeguard (skips implementation if design has 0% consensus)
