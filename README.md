@@ -97,6 +97,8 @@ python -m aragora.debate "Implement a secure auth system" \
   --consensus majority
 ```
 
+> **See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the complete 5-minute setup guide.**
+
 ## Prerequisites
 
 **API Agents (Recommended):** Just set your API keys - no additional tools needed:

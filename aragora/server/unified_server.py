@@ -76,6 +76,55 @@ MAX_JSON_CONTENT_LENGTH = 10 * 1024 * 1024
 # Safe ID pattern for path segments (prevent path traversal)
 SAFE_ID_PATTERN = r'^[a-zA-Z0-9_-]+$'
 
+# Query parameter whitelist (security: reject unknown params to prevent injection)
+# Maps param name -> allowed values (None means any string allowed, set means restricted)
+ALLOWED_QUERY_PARAMS = {
+    # Pagination
+    "limit": None,
+    "offset": None,
+    # Filtering
+    "domain": None,
+    "loop_id": None,
+    "topic": None,
+    "query": None,
+    # Export
+    "table": {"summary", "debates", "proposals", "votes", "critiques", "messages"},
+    # Agent queries
+    "agent": None,
+    "agent_a": None,
+    "agent_b": None,
+    "sections": {"identity", "performance", "relationships", "all"},
+    # Calibration
+    "buckets": None,
+    # Memory
+    "tiers": None,
+    "min_importance": None,
+    # Genesis
+    "event_type": {"mutation", "crossover", "selection", "extinction", "speciation"},
+    # Logs
+    "lines": None,
+}
+
+
+def _validate_query_params(query: dict) -> tuple[bool, str]:
+    """Validate query parameters against whitelist.
+
+    Returns (is_valid, error_message).
+    """
+    for param, values in query.items():
+        if param not in ALLOWED_QUERY_PARAMS:
+            return False, f"Unknown query parameter: {param}"
+
+        allowed = ALLOWED_QUERY_PARAMS[param]
+        if allowed is not None:
+            # Check if value is in the allowed set
+            for val in values:
+                if val not in allowed:
+                    return False, f"Invalid value for {param}: {val}"
+
+    return True, ""
+
+
 # Optional Supabase persistence
 try:
     from aragora.persistence import SupabaseClient
@@ -668,6 +717,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+
+        # Validate query parameters against whitelist (security)
+        if query and path.startswith('/api/'):
+            is_valid, error_msg = _validate_query_params(query)
+            if not is_valid:
+                self._send_json({"error": error_msg}, status=400)
+                return
 
         # API routes
         if path.startswith('/api/debates/slug/'):

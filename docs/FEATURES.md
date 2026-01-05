@@ -211,6 +211,71 @@ template = templates.get("code_review")
 structured_task = template.format(code=code_snippet)
 ```
 
+### AgentCircuitBreaker
+**File:** `scripts/nomic_loop.py`
+
+Prevents cascade failures when agents repeatedly fail. Trips after configurable failure threshold and auto-resets after cooldown cycles.
+
+```python
+from scripts.nomic_loop import AgentCircuitBreaker
+
+breaker = AgentCircuitBreaker(
+    failure_threshold=3,  # Trip after 3 consecutive failures
+    cooldown_cycles=2     # Wait 2 cycles before retrying
+)
+
+# Check before calling agent
+if breaker.is_open("claude"):
+    print("Agent tripped - skipping")
+else:
+    try:
+        result = await agent.call()
+        breaker.record_success("claude")
+    except Exception:
+        breaker.record_failure("claude")
+
+# Get circuit status
+status = breaker.get_status()  # {"claude": {"open": True, "failures": 3}}
+```
+
+**States:**
+- **CLOSED**: Normal operation, agent is healthy
+- **OPEN**: Tripped, skipping agent calls
+- **HALF-OPEN**: Testing if agent recovered (first call after cooldown)
+
+### Cycle Timeout
+**File:** `scripts/nomic_loop.py`
+
+Prevents runaway cycles from consuming unlimited time. Configurable per-cycle timeout with phase-level deadline checks.
+
+```python
+loop = NomicLoop(
+    max_cycle_seconds=7200  # 2 hour max per cycle (default)
+)
+
+# Or override per-run:
+await loop.run_cycle(max_cycle_seconds=3600)  # 1 hour limit
+```
+
+**Behavior:**
+- Logs warning at 50% time consumed
+- Graceful shutdown at deadline with partial results
+- Phase-level checks prevent hanging in any single phase
+- Timeout triggers circuit breaker for slow agents
+
+### Agent Health Check
+**File:** `aragora/debate/orchestrator.py`
+
+15-second connectivity probe before debates to verify agents are reachable.
+
+```python
+# Arena performs health check on startup
+arena = Arena(environment=env, agents=agents)
+# Logs: "[health] claude: OK (0.8s)" or "[health] codex: FAILED (timeout)"
+```
+
+Unhealthy agents are excluded from the debate automatically.
+
 ---
 
 ## Phase 4: Agent Evolution
