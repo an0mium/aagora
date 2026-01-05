@@ -323,8 +323,283 @@ class TestRateLimiting:
         # This verifies it's a sliding window, not a fixed window
 
 
+class TestTokenRevocation:
+    """Test token revocation security."""
+
+    @pytest.fixture
+    def auth(self):
+        """Create an AuthConfig with a known secret."""
+        config = AuthConfig()
+        config.api_token = "test_secret_key_12345"
+        config.enabled = True
+        config.token_ttl = 3600
+        config._revoked_tokens.clear()
+        return config
+
+    def test_revoke_token_basic(self, auth):
+        """Token revocation should work."""
+        token = auth.generate_token("loop_1")
+        assert auth.validate_token(token, "loop_1") is True
+
+        # Revoke the token
+        assert auth.revoke_token(token) is True
+
+        # Token should now be rejected
+        assert auth.validate_token(token, "loop_1") is False
+
+    def test_revoke_token_idempotence(self, auth):
+        """Revoking same token twice should be idempotent."""
+        token = auth.generate_token("loop_1")
+
+        # Revoke twice
+        assert auth.revoke_token(token) is True
+        assert auth.revoke_token(token) is True
+
+        # Should still be revoked
+        assert auth.is_revoked(token) is True
+        assert auth.get_revocation_count() == 1  # Only one entry
+
+    def test_revoke_nonexistent_token(self, auth):
+        """Revoking a non-existent token should succeed."""
+        assert auth.revoke_token("nonexistent_token") is True
+        assert auth.is_revoked("nonexistent_token") is True
+
+    def test_revoke_empty_token(self, auth):
+        """Revoking empty token should return False."""
+        assert auth.revoke_token("") is False
+        assert auth.revoke_token(None) is False
+
+    def test_is_revoked_empty_token(self, auth):
+        """is_revoked with empty token should return False."""
+        assert auth.is_revoked("") is False
+        assert auth.is_revoked(None) is False
+
+    def test_revocation_max_capacity_cleanup(self, auth):
+        """Revocation storage should clean up at max capacity."""
+        auth._max_revoked_tokens = 20
+
+        # Add max tokens
+        for i in range(20):
+            auth.revoke_token(f"token_{i}")
+
+        assert auth.get_revocation_count() == 20
+
+        # Adding one more should trigger cleanup (removes 10%)
+        auth.revoke_token("token_overflow")
+
+        # Should have cleaned up oldest 10% (2 tokens) and added new one
+        assert auth.get_revocation_count() <= 19
+
+    def test_revocation_before_validation(self, auth):
+        """Revoked tokens should be checked before expensive crypto."""
+        token = auth.generate_token("loop_1")
+        auth.revoke_token(token)
+
+        # Should fail fast on revocation check
+        assert auth.validate_token(token, "loop_1") is False
+
+    def test_revocation_thread_safety(self, auth):
+        """Revocation should be thread-safe."""
+        errors = []
+        tokens = [f"token_{i}" for i in range(100)]
+
+        def revoke_tokens():
+            try:
+                for token in tokens:
+                    auth.revoke_token(token)
+            except Exception as e:
+                errors.append(e)
+
+        def check_revocations():
+            try:
+                for token in tokens:
+                    auth.is_revoked(token)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=revoke_tokens),
+            threading.Thread(target=check_revocations),
+            threading.Thread(target=revoke_tokens),
+            threading.Thread(target=check_revocations),
+        ]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+
+
+class TestBearerHeaderParsing:
+    """Test Bearer header extraction edge cases."""
+
+    def test_bearer_case_sensitive(self):
+        """Bearer prefix should be case-sensitive."""
+        config = AuthConfig()
+        config.api_token = "secret"
+        config.enabled = True
+
+        valid_token = config.generate_token("loop")
+
+        # Correct case
+        result = config.extract_token_from_request(
+            {"Authorization": f"Bearer {valid_token}"},
+            {}
+        )
+        assert result == valid_token
+
+        # Wrong case should not extract
+        result = config.extract_token_from_request(
+            {"Authorization": f"bearer {valid_token}"},
+            {}
+        )
+        assert result is None
+
+        result = config.extract_token_from_request(
+            {"Authorization": f"BEARER {valid_token}"},
+            {}
+        )
+        assert result is None
+
+    def test_bearer_with_extra_spaces(self):
+        """Bearer prefix should require exactly one space."""
+        config = AuthConfig()
+
+        # Extra leading spaces in token
+        result = config.extract_token_from_request(
+            {"Authorization": "Bearer  token_with_space"},
+            {}
+        )
+        assert result == " token_with_space"  # Includes the extra space
+
+    def test_bearer_empty_value(self):
+        """Bearer with empty value should return empty string."""
+        config = AuthConfig()
+
+        result = config.extract_token_from_request(
+            {"Authorization": "Bearer "},
+            {}
+        )
+        assert result == ""
+
+    def test_query_param_fallback(self):
+        """Should fall back to query param if no Bearer header."""
+        config = AuthConfig()
+
+        result = config.extract_token_from_request(
+            {"Authorization": "Basic abc123"},  # Not Bearer
+            {"token": ["query_token"]}
+        )
+        assert result == "query_token"
+
+    def test_bearer_takes_precedence(self):
+        """Bearer header should take precedence over query param."""
+        config = AuthConfig()
+
+        result = config.extract_token_from_request(
+            {"Authorization": "Bearer header_token"},
+            {"token": ["query_token"]}
+        )
+        assert result == "header_token"
+
+    def test_no_auth_header(self):
+        """Missing Authorization header should check query params."""
+        config = AuthConfig()
+
+        result = config.extract_token_from_request(
+            {},
+            {"token": ["fallback"]}
+        )
+        assert result == "fallback"
+
+
+class TestRateLimitCleanupUnderLoad:
+    """Test rate limit cleanup behavior under concurrent load."""
+
+    def test_cleanup_triggers_at_threshold(self):
+        """Cleanup should trigger at 90% capacity when entries are stale."""
+        auth = AuthConfig()
+        auth._max_tracked_entries = 100  # Low threshold to trigger cleanup
+        auth.rate_limit_per_minute = 1000
+
+        # Fill to 89% - no cleanup yet
+        for i in range(89):
+            auth.check_rate_limit(f"token_{i}")
+
+        assert len(auth._token_request_counts) == 89
+
+        # Make some entries stale by clearing their timestamps
+        # (simulating window expiration)
+        for i in range(50):
+            auth._token_request_counts[f"token_{i}"] = []
+
+        # Fill to 91% - should trigger cleanup of stale entries
+        for i in range(89, 92):
+            auth.check_rate_limit(f"token_{i}")
+
+        # Should have cleaned up stale entries (empty lists)
+        assert len(auth._token_request_counts) < 92
+
+    def test_concurrent_requests_during_cleanup(self):
+        """Concurrent requests during cleanup should be safe."""
+        auth = AuthConfig()
+        auth._max_tracked_entries = 50
+        auth.rate_limit_per_minute = 10000
+        errors = []
+
+        def make_requests(prefix):
+            try:
+                for i in range(100):
+                    auth.check_rate_limit(f"{prefix}_token_{i}")
+            except Exception as e:
+                errors.append(e)
+
+        # Multiple threads adding tokens rapidly
+        threads = [
+            threading.Thread(target=make_requests, args=(f"thread_{j}",))
+            for j in range(5)
+        ]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        # Should have stayed within bounds
+        assert len(auth._token_request_counts) <= auth._max_tracked_entries
+
+    def test_ip_cleanup_under_load(self):
+        """IP-based rate limit cleanup should work under load."""
+        auth = AuthConfig()
+        auth._max_tracked_entries = 50
+        auth.ip_rate_limit_per_minute = 10000
+        errors = []
+
+        def make_requests(prefix):
+            try:
+                for i in range(100):
+                    auth.check_rate_limit_by_ip(f"192.168.{prefix}.{i}")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=make_requests, args=(j,))
+            for j in range(5)
+        ]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        assert len(auth._ip_request_counts) <= auth._max_tracked_entries
+
+
 class TestCheckAuthIntegration:
-    """Test the check_auth function integration."""
 
     def test_check_auth_disabled(self):
         """When auth is disabled, should allow all requests."""
