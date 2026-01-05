@@ -1316,6 +1316,150 @@ class AiohttpUnifiedServer:
                 headers=self._cors_headers(origin)
             )
 
+    async def _handle_agent_consistency(self, request) -> 'aiohttp.web.Response':
+        """GET /api/agent/{name}/consistency - Agent consistency score from FlipDetector."""
+        import aiohttp.web as web
+        import re
+        origin = request.headers.get("Origin")
+
+        agent_name = request.match_info.get('name', '')
+
+        # Validate agent name format
+        if not re.match(r'^[a-zA-Z0-9_-]+$', agent_name):
+            return web.json_response(
+                {"error": "Invalid agent name format"},
+                status=400,
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            from aragora.insights.flip_detector import FlipDetector
+
+            db_path = self.nomic_dir / "aragora_personas.db" if self.nomic_dir else "aragora_personas.db"
+            detector = FlipDetector(db_path=str(db_path))
+
+            # Get consistency score
+            score = detector.get_agent_consistency(agent_name)
+
+            if score:
+                consistency = score.consistency_score
+                consistency_class = "high" if consistency >= 0.8 else ("medium" if consistency >= 0.5 else "low")
+                return web.json_response(
+                    {
+                        "agent": agent_name,
+                        "consistency": consistency,
+                        "consistency_class": consistency_class,
+                        "total_positions": score.total_positions,
+                        "total_flips": score.total_flips,
+                        "flip_rate": score.flip_rate,
+                        "contradictions": score.contradictions,
+                        "refinements": score.refinements,
+                    },
+                    headers=self._cors_headers(origin)
+                )
+            else:
+                # No data yet - return default high consistency
+                return web.json_response(
+                    {
+                        "agent": agent_name,
+                        "consistency": 1.0,
+                        "consistency_class": "high",
+                        "total_positions": 0,
+                        "total_flips": 0,
+                        "flip_rate": 0.0,
+                        "contradictions": 0,
+                        "refinements": 0,
+                    },
+                    headers=self._cors_headers(origin)
+                )
+        except Exception as e:
+            logger.error(f"Agent consistency error for {agent_name}: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch agent consistency"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_agent_network(self, request) -> 'aiohttp.web.Response':
+        """GET /api/agent/{name}/network - Agent relationship network (rivals, allies)."""
+        import aiohttp.web as web
+        import re
+        origin = request.headers.get("Origin")
+
+        agent_name = request.match_info.get('name', '')
+
+        # Validate agent name format
+        if not re.match(r'^[a-zA-Z0-9_-]+$', agent_name):
+            return web.json_response(
+                {"error": "Invalid agent name format"},
+                status=400,
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            # Try to get relationship data from ELO system or persona manager
+            network_data = {
+                "agent": agent_name,
+                "influences": [],
+                "influenced_by": [],
+                "rivals": [],
+                "allies": [],
+            }
+
+            # Try persona manager first (has relationship tracker)
+            if self.persona_manager and hasattr(self.persona_manager, 'relationship_tracker'):
+                tracker = self.persona_manager.relationship_tracker
+
+                if hasattr(tracker, 'get_rivals'):
+                    rivals = tracker.get_rivals(agent_name, limit=5)
+                    network_data["rivals"] = [
+                        {"agent": r[0], "score": r[1], "debate_count": 0}
+                        for r in rivals
+                    ] if rivals else []
+
+                if hasattr(tracker, 'get_allies'):
+                    allies = tracker.get_allies(agent_name, limit=5)
+                    network_data["allies"] = [
+                        {"agent": a[0], "score": a[1], "debate_count": 0}
+                        for a in allies
+                    ] if allies else []
+
+                if hasattr(tracker, 'get_influence_network'):
+                    influence = tracker.get_influence_network(agent_name)
+                    network_data["influences"] = [
+                        {"agent": name, "score": score, "debate_count": 0}
+                        for name, score in influence.get("influences", [])
+                    ]
+                    network_data["influenced_by"] = [
+                        {"agent": name, "score": score, "debate_count": 0}
+                        for name, score in influence.get("influenced_by", [])
+                    ]
+
+            # Fall back to ELO system if no persona manager
+            elif self.elo_system:
+                if hasattr(self.elo_system, 'get_rivals'):
+                    rivals = self.elo_system.get_rivals(agent_name, limit=5)
+                    network_data["rivals"] = [
+                        {"agent": r.get("agent_b", r.get("agent")), "score": r.get("rivalry_score", 0), "debate_count": r.get("matches", 0)}
+                        for r in rivals
+                    ] if rivals else []
+
+                if hasattr(self.elo_system, 'get_allies'):
+                    allies = self.elo_system.get_allies(agent_name, limit=5)
+                    network_data["allies"] = [
+                        {"agent": a.get("agent_b", a.get("agent")), "score": a.get("alliance_score", 0), "debate_count": a.get("matches", 0)}
+                        for a in allies
+                    ] if allies else []
+
+            return web.json_response(network_data, headers=self._cors_headers(origin))
+        except Exception as e:
+            logger.error(f"Agent network error for {agent_name}: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch agent network"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
     async def _handle_memory_tier_stats(self, request) -> 'aiohttp.web.Response':
         """GET /api/memory/tier-stats - Continuum memory statistics."""
         import aiohttp.web as web
@@ -1649,6 +1793,8 @@ class AiohttpUnifiedServer:
         app.router.add_get("/api/flips/recent", self._handle_flips_recent)
         app.router.add_get("/api/tournaments", self._handle_tournaments)
         app.router.add_get("/api/tournaments/{tournament_id}", self._handle_tournament_details)
+        app.router.add_get("/api/agent/{name}/consistency", self._handle_agent_consistency)
+        app.router.add_get("/api/agent/{name}/network", self._handle_agent_network)
         app.router.add_get("/api/memory/tier-stats", self._handle_memory_tier_stats)
         app.router.add_get("/api/laboratory/emergent-traits", self._handle_laboratory_emergent_traits)
         app.router.add_get("/api/laboratory/cross-pollinations/suggest", self._handle_laboratory_cross_pollinations)

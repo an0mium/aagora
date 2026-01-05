@@ -2172,6 +2172,31 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     else:
                         scores[agent_name] = 0.0
                 self.elo_system.record_match(debate_id, participants, scores, domain=domain)
+
+                # Emit MATCH_RECORDED event for real-time leaderboard updates
+                if self.event_emitter:
+                    try:
+                        from aragora.server.stream import StreamEvent, StreamEventType
+                        elo_changes = {}
+                        for agent_name in participants:
+                            try:
+                                rating = self.elo_system.get_agent_rating(agent_name)
+                                elo_changes[agent_name] = rating.elo if rating else 1500.0
+                            except Exception:
+                                elo_changes[agent_name] = 1500.0
+                        self.event_emitter.emit(StreamEvent(
+                            type=StreamEventType.MATCH_RECORDED,
+                            loop_id=getattr(self, 'loop_id', None),
+                            data={
+                                "debate_id": debate_id,
+                                "participants": participants,
+                                "elo_changes": elo_changes,
+                                "domain": domain,
+                                "winner": result.winner,
+                            }
+                        ))
+                    except Exception:
+                        pass  # Don't break on event emission failure
             except Exception as e:
                 logger.debug("ELO update failed: %s", e)
 
