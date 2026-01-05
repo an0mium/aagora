@@ -360,7 +360,7 @@ class ProofExecutor:
         namespace: dict[str, Any] = {}
 
         try:
-            _exec_with_timeout(exec_code, namespace, timeout=EXEC_TIMEOUT_SECONDS)
+            _exec_with_timeout(exec_code, namespace, timeout=timeout)
 
             if assertion:
                 assertion_value = namespace.get("__result__", False)
@@ -418,7 +418,7 @@ class ProofExecutor:
             sys.stdout = stdout_capture
             namespace: dict[str, Any] = {}
             # Use timeout protection for code execution
-            _exec_with_timeout(proof.code, namespace, timeout=min(timeout, EXEC_TIMEOUT_SECONDS))
+            _exec_with_timeout(proof.code, namespace, timeout=timeout)
             output = stdout_capture.getvalue()
 
         except TimeoutError as e:
