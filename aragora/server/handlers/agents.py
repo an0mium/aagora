@@ -18,7 +18,7 @@ Endpoints:
 """
 
 from typing import Optional, List
-from .base import BaseHandler, HandlerResult, json_response, error_response, get_int_param
+from .base import BaseHandler, HandlerResult, json_response, error_response, get_int_param, ttl_cache
 
 
 class AgentsHandler(BaseHandler):
@@ -208,13 +208,17 @@ class AgentsHandler(BaseHandler):
             return error_response(f"Failed to get calibration leaderboard: {e}", 500)
 
     def _get_recent_matches(self, limit: int, loop_id: Optional[str]) -> HandlerResult:
-        """Get recent matches."""
+        """Get recent matches (uses JSON snapshot cache for fast reads)."""
         elo = self.get_elo_system()
         if not elo:
             return error_response("ELO system not available", 503)
 
         try:
-            matches = elo.get_recent_matches(limit=min(limit, 50))
+            # Use cached matches from JSON snapshot (avoids SQLite locking)
+            if hasattr(elo, 'get_cached_recent_matches'):
+                matches = elo.get_cached_recent_matches(limit=min(limit, 50))
+            else:
+                matches = elo.get_recent_matches(limit=min(limit, 50))
             return json_response({"matches": matches})
         except Exception as e:
             return error_response(f"Failed to get recent matches: {e}", 500)

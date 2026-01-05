@@ -28,6 +28,7 @@ from .agents import AgentsHandler
 from .system import SystemHandler
 from .pulse import PulseHandler
 from .analytics import AnalyticsHandler
+from .metrics import MetricsHandler
 
 __all__ = [
     # Base utilities
@@ -41,4 +42,5 @@ __all__ = [
     "SystemHandler",
     "PulseHandler",
     "AnalyticsHandler",
+    "MetricsHandler",
 ]
