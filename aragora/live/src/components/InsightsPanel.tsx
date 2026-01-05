@@ -115,6 +115,52 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
     }
   }, [wsMessages]);
 
+  // Listen for flip_detected WebSocket events for real-time flip updates
+  useEffect(() => {
+    const flipMessages = wsMessages
+      .filter((msg) => msg.type === 'flip_detected')
+      .map((msg) => {
+        const data = msg.data || {};
+        const flipType = data.flip_type || data.type || 'unknown';
+        const typeEmojis: Record<string, string> = {
+          'contradiction': '🔄',
+          'retraction': '↩️',
+          'qualification': '⚖️',
+          'refinement': '✨',
+        };
+        return {
+          id: data.id || `flip-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          agent: data.agent_name || data.agent || 'unknown',
+          type: flipType as FlipEvent['type'],
+          type_emoji: typeEmojis[flipType] || '❓',
+          before: {
+            claim: data.original_claim || data.before?.claim || '',
+            confidence: data.original_confidence ? `${(data.original_confidence * 100).toFixed(0)}%` : data.before?.confidence || 'N/A',
+          },
+          after: {
+            claim: data.new_claim || data.after?.claim || '',
+            confidence: data.new_confidence ? `${(data.new_confidence * 100).toFixed(0)}%` : data.after?.confidence || 'N/A',
+          },
+          similarity: data.similarity_score ? `${(data.similarity_score * 100).toFixed(0)}%` : data.similarity || 'N/A',
+          domain: data.domain || null,
+          timestamp: msg.timestamp || data.detected_at || new Date().toISOString(),
+        } as FlipEvent;
+      });
+
+    if (flipMessages.length > 0) {
+      setFlips((prev) => {
+        // Deduplicate by ID and keep newest first
+        const existingIds = new Set(prev.map((f) => f.id));
+        const newFlips = flipMessages.filter((f) => !existingIds.has(f.id));
+        return [...newFlips, ...prev].slice(0, 50);
+      });
+      // Auto-switch to flips tab when new flip detected
+      if (activeTab !== 'flips') {
+        setActiveTab('flips');
+      }
+    }
+  }, [wsMessages, activeTab]);
+
   const getTypeColor = (type: string): string => {
     switch (type) {
       case 'consensus':

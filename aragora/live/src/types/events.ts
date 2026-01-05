@@ -34,7 +34,17 @@ export type StreamEventType =
   | 'user_suggestion'
   | 'audience_summary'
   | 'audience_metrics'
-  | 'ack';
+  | 'audience_drain'
+  | 'ack'
+  // Ranking/insight events
+  | 'match_recorded'
+  | 'leaderboard_update'
+  | 'flip_detected'
+  | 'memory_recall'
+  // Token streaming events
+  | 'token_start'
+  | 'token_delta'
+  | 'token_end';
 
 export interface StreamEvent {
   type: StreamEventType;
