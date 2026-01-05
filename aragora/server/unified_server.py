@@ -1644,17 +1644,47 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 # Create agents with streaming support
                 # All agents are proposers for full participation in all rounds
                 agents = []
+                failed_agents = []
                 for i, (agent_type, role) in enumerate(agent_specs):
                     if role is None:
                         role = "proposer"  # All agents propose and participate fully
-                    agent = create_agent(
-                        model_type=agent_type,
-                        name=f"{agent_type}_{role}",
-                        role=role,
-                    )
-                    # Wrap agent for token streaming if supported
-                    agent = _wrap_agent_for_streaming(agent, self.stream_emitter, debate_id)
-                    agents.append(agent)
+                    try:
+                        agent = create_agent(
+                            model_type=agent_type,
+                            name=f"{agent_type}_{role}",
+                            role=role,
+                        )
+                        # Check if API key is missing (for API-based agents)
+                        if hasattr(agent, 'api_key') and not agent.api_key:
+                            raise ValueError(f"Missing API key for {agent_type}")
+                        # Wrap agent for token streaming if supported
+                        agent = _wrap_agent_for_streaming(agent, self.stream_emitter, debate_id)
+                        agents.append(agent)
+                        logger.debug(f"Created agent {agent_type} successfully")
+                    except Exception as e:
+                        error_msg = f"Failed to create agent {agent_type}: {e}"
+                        logger.error(error_msg)
+                        failed_agents.append((agent_type, str(e)))
+                        # Emit error event so frontend knows which agent failed
+                        self.stream_emitter.emit(StreamEvent(
+                            type=StreamEventType.ERROR,
+                            data={"agent": agent_type, "error": str(e), "phase": "initialization"},
+                            debate_id=debate_id,
+                        ))
+
+                # Check if enough agents were created
+                if len(agents) < 2:
+                    error_msg = f"Only {len(agents)} agents initialized (need at least 2). Failed: {', '.join(a for a, _ in failed_agents)}"
+                    logger.error(error_msg)
+                    with _active_debates_lock:
+                        _active_debates[debate_id]["status"] = "error"
+                        _active_debates[debate_id]["error"] = error_msg
+                    self.stream_emitter.emit(StreamEvent(
+                        type=StreamEventType.ERROR,
+                        data={"error": error_msg, "failed_agents": [a for a, _ in failed_agents]},
+                        debate_id=debate_id,
+                    ))
+                    return
 
                 # Create environment and protocol
                 env = Environment(task=question, context="", max_rounds=rounds)
