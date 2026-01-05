@@ -102,6 +102,32 @@ class CircuitBreaker:
             },
         }
 
+    def get_all_status(self) -> dict[str, dict]:
+        """Get status for all tracked agents."""
+        all_agents = set(self._failures.keys()) | set(self._circuit_open_at.keys())
+        return {
+            agent: {
+                "status": self.get_status(agent),
+                "failures": self._failures.get(agent, 0),
+                "half_open_successes": self._half_open_successes.get(agent, 0),
+            }
+            for agent in all_agents
+        }
+
+    def reset_agent(self, agent_name: str) -> None:
+        """Reset circuit breaker state for a specific agent."""
+        self._failures.pop(agent_name, None)
+        self._circuit_open_at.pop(agent_name, None)
+        self._half_open_successes.pop(agent_name, None)
+        logger.info(f"[circuit_breaker] Reset state for {agent_name}")
+
+    def reset_all(self) -> None:
+        """Reset all circuit breaker state."""
+        self._failures.clear()
+        self._circuit_open_at.clear()
+        self._half_open_successes.clear()
+        logger.info("[circuit_breaker] Reset all agent states")
+
     @classmethod
     def from_dict(cls, data: dict, **kwargs) -> "CircuitBreaker":
         """Load from persisted dict."""

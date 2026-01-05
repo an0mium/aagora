@@ -1682,6 +1682,16 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                     loop_id=debate_id,
                 )
 
+                # Log and optionally reset circuit breaker for fresh debates
+                cb_status = arena.circuit_breaker.get_all_status()
+                if cb_status:
+                    print(f"  [circuit_breaker] Agent status before debate: {cb_status}")
+                    # Reset all circuits for ad-hoc debates to ensure full participation
+                    open_circuits = [name for name, status in cb_status.items() if status["status"] == "open"]
+                    if open_circuits:
+                        print(f"  [circuit_breaker] Resetting open circuits for: {open_circuits}")
+                        arena.circuit_breaker.reset_all()
+
                 # Run debate with timeout protection (10 minutes max)
                 with _active_debates_lock:
                     _active_debates[debate_id]["status"] = "running"

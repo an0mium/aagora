@@ -3109,6 +3109,13 @@ and building on others' ideas."""
         self._drain_user_events()
 
         context_str = f"\n\nContext: {self.env.context}" if self.env.context else ""
+
+        # Add research status indicator to help agents understand what information they have
+        research_status = ""
+        if not self.env.context or "No research context" in str(self.env.context):
+            research_status = "\n\n[RESEARCH STATUS: No external research was performed. Base your response on your training knowledge and clearly state any limitations or uncertainties about specific entities, websites, or current events.]"
+        elif "EVIDENCE CONTEXT" in str(self.env.context):
+            research_status = "\n\n[RESEARCH STATUS: Research context has been provided above. Use this information in your response and cite it where applicable.]"
         stance_str = self._get_stance_guidance(agent)
         stance_section = f"\n\n{stance_str}" if stance_str else ""
 
@@ -3180,7 +3187,12 @@ and building on others' ideas."""
 
         return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}{flip_section}
 {historical_section}{continuum_section}{dissent_section}{patterns_section}{audience_section}
-Task: {self.env.task}{context_str}
+Task: {self.env.task}{context_str}{research_status}
+
+IMPORTANT: If this task mentions a specific website, company, product, or current topic, you MUST:
+1. State what you know vs what you would need to research
+2. If research context was provided above, use it. If not, acknowledge the limitation.
+3. Do NOT make up facts or speculate about specific entities you don't have verified information about.
 
 Please provide your best proposal to address this task. Be thorough and specific.
 Your proposal will be critiqued by other agents, so anticipate potential objections."""
