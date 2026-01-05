@@ -191,7 +191,13 @@ class SchemaManager:
         if current == 0 and initial_schema:
             # Fresh database - create initial schema
             logger.info(f"[{self.module_name}] Creating initial schema (v1)")
-            self.conn.executescript(initial_schema)
+            try:
+                self.conn.executescript(initial_schema)
+                self.conn.commit()
+            except Exception as e:
+                self.conn.rollback()
+                logger.error(f"[{self.module_name}] Schema initialization failed: {e}")
+                raise
             self.set_version(1)
             current = 1
             applied = True
@@ -219,10 +225,12 @@ class SchemaManager:
                 logger.info(f"[{self.module_name}] Running migration: {desc}")
                 try:
                     migration.apply(self.conn)
+                    self.conn.commit()
                     current = migration.to_version
                     self.set_version(current)
                 except Exception as e:
-                    logger.error(f"[{self.module_name}] Migration failed: {e}")
+                    self.conn.rollback()
+                    logger.error(f"[{self.module_name}] Migration to v{migration.to_version} failed: {e}")
                     raise
 
         return True
