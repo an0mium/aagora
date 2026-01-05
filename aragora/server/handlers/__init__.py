@@ -42,6 +42,7 @@ from .relationship import RelationshipHandler
 from .moments import MomentsHandler
 from .documents import DocumentHandler
 from .verification import VerificationHandler
+from .auditing import AuditingHandler
 
 __all__ = [
     # Base utilities
@@ -68,4 +69,5 @@ __all__ = [
     "MomentsHandler",
     "DocumentHandler",
     "VerificationHandler",
+    "AuditingHandler",
 ]
