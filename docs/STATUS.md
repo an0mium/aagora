@@ -81,6 +81,10 @@
 - **NEW**: Added plugins API endpoints (/api/plugins, /api/plugins/{name}, /api/plugins/{name}/run)
 - **NEW**: Added genesis API endpoints (/api/genesis/stats, /api/genesis/events, /api/genesis/lineage/*, /api/genesis/tree/*)
 - **NEW**: Connected Z3 SMT solver to post-debate claim verification (auto-verifies decidable claims)
+- **NEW**: Added Replay Theater visualization (ReplayGenerator, self-contained HTML replays)
+- **NEW**: Wired SpectatorStream events to WebSocket broadcast (real-time UI updates)
+- **NEW**: Added optional WebSocket authentication (check_auth integration)
+- **NEW**: Added AUDIENCE_DRAIN event type for audience event processing
 
 ## Feature Integration Status
 
