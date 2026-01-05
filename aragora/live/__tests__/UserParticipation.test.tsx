@@ -7,7 +7,7 @@
  * 3. Add test script to package.json
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UserParticipation } from '../src/components/UserParticipation';
 import type { StreamEvent } from '../src/types/events';
 
@@ -102,24 +102,32 @@ describe('UserParticipation', () => {
       return () => {};
     });
 
-    render(
-      <UserParticipation
-        events={mockEvents}
-        onVote={mockOnVote}
-        onSuggest={mockOnSuggest}
-        onAck={mockOnAck}
-        onError={mockOnError}
-      />
-    );
+    await act(async () => {
+      render(
+        <UserParticipation
+          events={mockEvents}
+          onVote={mockOnVote}
+          onSuggest={mockOnSuggest}
+          onAck={mockOnAck}
+          onError={mockOnError}
+        />
+      );
+    });
 
     // Submit a vote
     const radioButton = screen.getByDisplayValue('Agent1');
-    fireEvent.click(radioButton);
+    await act(async () => {
+      fireEvent.click(radioButton);
+    });
     const submitButton = screen.getByText('Submit Vote');
-    fireEvent.click(submitButton);
+    await act(async () => {
+      fireEvent.click(submitButton);
+    });
 
     // Simulate ack
-    ackCallback('user_vote');
+    await act(async () => {
+      ackCallback('user_vote');
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Vote Submitted ✓')).toBeInTheDocument();
@@ -134,24 +142,32 @@ describe('UserParticipation', () => {
       return () => {};
     });
 
-    render(
-      <UserParticipation
-        events={mockEvents}
-        onVote={mockOnVote}
-        onSuggest={mockOnSuggest}
-        onAck={mockOnAck}
-        onError={mockOnError}
-      />
-    );
+    await act(async () => {
+      render(
+        <UserParticipation
+          events={mockEvents}
+          onVote={mockOnVote}
+          onSuggest={mockOnSuggest}
+          onAck={mockOnAck}
+          onError={mockOnError}
+        />
+      );
+    });
 
     // Submit a suggestion
     const textarea = screen.getByPlaceholderText('Share your thoughts or suggest an improvement...');
-    fireEvent.change(textarea, { target: { value: 'Test suggestion' } });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'Test suggestion' } });
+    });
     const submitButton = screen.getByText('Suggest');
-    fireEvent.click(submitButton);
+    await act(async () => {
+      fireEvent.click(submitButton);
+    });
 
     // Simulate error
-    errorCallback('Rate limited. Please wait before submitting again.');
+    await act(async () => {
+      errorCallback('Rate limited. Please wait before submitting again.');
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Failed')).toBeInTheDocument();

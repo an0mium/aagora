@@ -9,7 +9,7 @@
  * - Consistency score display
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { LeaderboardPanel } from '../src/components/LeaderboardPanel';
 
 // Mock next/link
@@ -114,15 +114,19 @@ describe('LeaderboardPanel', () => {
     jest.useRealTimers();
   });
 
-  it('renders loading state initially', () => {
+  it('renders loading state initially', async () => {
     mockFetch.mockImplementation(() => new Promise(() => {})); // Never resolves
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
     expect(screen.getByText('Loading rankings...')).toBeInTheDocument();
   });
 
   it('renders agent rankings after data loads', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
@@ -135,7 +139,9 @@ describe('LeaderboardPanel', () => {
 
   it('displays consistency scores for agents', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('85%')).toBeInTheDocument(); // claude consistency
@@ -147,27 +153,35 @@ describe('LeaderboardPanel', () => {
 
   it('switches between tabs correctly', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
     });
 
     // Switch to Matches tab
-    fireEvent.click(screen.getByText('Matches'));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Matches'));
+    });
     await waitFor(() => {
       expect(screen.getByText('claude-3-opus wins')).toBeInTheDocument();
     });
 
     // Switch to Stats tab
-    fireEvent.click(screen.getByText('Stats'));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Stats'));
+    });
     await waitFor(() => {
       expect(screen.getByText('Mean ELO')).toBeInTheDocument();
       expect(screen.getByText('1550')).toBeInTheDocument();
     });
 
     // Switch to Minds tab
-    fireEvent.click(screen.getByText('Minds'));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Minds'));
+    });
     await waitFor(() => {
       expect(screen.getByText('82% calibrated')).toBeInTheDocument();
     });
@@ -175,7 +189,9 @@ describe('LeaderboardPanel', () => {
 
   it('shows domain filter when domains are available', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Domain:')).toBeInTheDocument();
@@ -200,7 +216,9 @@ describe('LeaderboardPanel', () => {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
     });
 
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       // Should still show rankings even if other endpoints fail
@@ -216,7 +234,9 @@ describe('LeaderboardPanel', () => {
       return Promise.resolve({ ok: false, text: () => Promise.resolve('500 Internal Server Error') });
     });
 
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('All endpoints failed. Check server connection.')).toBeInTheDocument();
@@ -231,19 +251,25 @@ describe('LeaderboardPanel', () => {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
     });
 
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Show details')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('Show details'));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Show details'));
+    });
     expect(screen.getByText(/rankings:/)).toBeInTheDocument();
   });
 
   it('refreshes data when refresh button is clicked', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
@@ -251,7 +277,9 @@ describe('LeaderboardPanel', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(6); // 6 endpoints
 
-    fireEvent.click(screen.getByText('Refresh'));
+    await act(async () => {
+      fireEvent.click(screen.getByText('Refresh'));
+    });
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledTimes(12); // 6 more calls
@@ -260,7 +288,9 @@ describe('LeaderboardPanel', () => {
 
   it('auto-refreshes every 30 seconds', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
@@ -269,7 +299,9 @@ describe('LeaderboardPanel', () => {
     expect(mockFetch).toHaveBeenCalledTimes(6);
 
     // Advance timer by 30 seconds
-    jest.advanceTimersByTime(30000);
+    await act(async () => {
+      jest.advanceTimersByTime(30000);
+    });
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledTimes(12);
@@ -278,7 +310,9 @@ describe('LeaderboardPanel', () => {
 
   it('includes loopId in API requests when provided', async () => {
     setupSuccessfulFetch();
-    render(<LeaderboardPanel apiBase="http://localhost:3001" loopId="test-loop-123" />);
+    await act(async () => {
+      render(<LeaderboardPanel apiBase="http://localhost:3001" loopId="test-loop-123" />);
+    });
 
     await waitFor(() => {
       expect(screen.getByText('claude-3-opus')).toBeInTheDocument();

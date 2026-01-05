@@ -384,7 +384,7 @@ describe('InsightsPanel', () => {
   });
 
   describe('Memory Tab', () => {
-    it('displays memory recalls from WebSocket messages', () => {
+    it('displays memory recalls from WebSocket messages', async () => {
       const wsMessages = [
         {
           type: 'memory_recall',
@@ -405,26 +405,34 @@ describe('InsightsPanel', () => {
         json: () => Promise.resolve({ insights: [], flips: [], summary: {} }),
       });
 
-      render(<InsightsPanel wsMessages={wsMessages} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={wsMessages} />);
+      });
 
       const memoryTab = screen.getByRole('button', { name: /Memory/ });
-      fireEvent.click(memoryTab);
+      await act(async () => {
+        fireEvent.click(memoryTab);
+      });
 
       expect(screen.getByText('Query: Test query')).toBeInTheDocument();
       expect(screen.getByText('Related topic 1')).toBeInTheDocument();
       expect(screen.getByText('85%')).toBeInTheDocument();
     });
 
-    it('shows empty state when no memory recalls', () => {
+    it('shows empty state when no memory recalls', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ insights: [], flips: [], summary: {} }),
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const memoryTab = screen.getByRole('button', { name: /Memory/ });
-      fireEvent.click(memoryTab);
+      await act(async () => {
+        fireEvent.click(memoryTab);
+      });
 
       expect(
         screen.getByText(/No memory recalls yet/)

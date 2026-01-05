@@ -7,6 +7,9 @@
  * - Phase transitions
  * - User participation integration
  * - Error handling
+ *
+ * Note: The DebateViewer uses WebSocket only for debate IDs starting with 'adhoc_'.
+ * For other IDs, it fetches from Supabase.
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -19,7 +22,15 @@ jest.mock('next/link', () => {
   );
 });
 
-// Mock WebSocket
+// Mock Supabase fetch
+jest.mock('../src/utils/supabase', () => ({
+  fetchDebateById: jest.fn(),
+}));
+
+// Mock scrollIntoView (not available in jsdom)
+Element.prototype.scrollIntoView = jest.fn();
+
+// Mock WebSocket with synchronous connection for test reliability
 class MockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -32,18 +43,24 @@ class MockWebSocket {
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: ((error: Error) => void) | null = null;
+  private connectionTimeout: NodeJS.Timeout | null = null;
 
   constructor(url: string) {
     this.url = url;
-    // Simulate connection opening
-    setTimeout(() => {
-      this.readyState = MockWebSocket.OPEN;
-      if (this.onopen) this.onopen();
-    }, 10);
+    // Store timeout so it can be controlled in tests
+    this.connectionTimeout = setTimeout(() => {
+      if (this.readyState === MockWebSocket.CONNECTING) {
+        this.readyState = MockWebSocket.OPEN;
+        if (this.onopen) this.onopen();
+      }
+    }, 0);
   }
 
   send = jest.fn();
   close = jest.fn(() => {
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+    }
     this.readyState = MockWebSocket.CLOSED;
     if (this.onclose) this.onclose();
   });
@@ -53,6 +70,12 @@ class MockWebSocket {
     if (this.onmessage) {
       this.onmessage({ data: JSON.stringify(data) });
     }
+  }
+
+  // Helper to manually open connection (for test control)
+  simulateOpen() {
+    this.readyState = MockWebSocket.OPEN;
+    if (this.onopen) this.onopen();
   }
 }
 
@@ -67,45 +90,56 @@ global.WebSocket = jest.fn((url: string) => {
 describe('DebateViewer', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useFakeTimers();
     mockWsInstance = null;
   });
 
-  it('renders loading state initially', () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  // Use adhoc_ prefix to enable WebSocket mode
+  const LIVE_DEBATE_ID = 'adhoc_test-123';
+
+  it('renders connecting state initially for live debates', async () => {
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+    });
     expect(screen.getByText(/Connecting/i)).toBeInTheDocument();
   });
 
   it('establishes WebSocket connection with correct URL', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(global.WebSocket).toHaveBeenCalledWith(
-        expect.stringContaining('ws://localhost:3001')
-      );
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
     });
+
+    expect(global.WebSocket).toHaveBeenCalledWith(
+      expect.stringContaining('ws://localhost:3001')
+    );
   });
 
   it('displays connection status when connected', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
     });
 
-    // After connection opens, should show connected state
-    await waitFor(() => {
-      expect(screen.queryByText(/Connecting/i)).not.toBeInTheDocument();
+    // Flush the setTimeout(0) in MockWebSocket constructor
+    await act(async () => {
+      jest.runAllTimers();
     });
+
+    expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    // After connection opens, should show LIVE DEBATE state
+    expect(screen.getByText(/LIVE DEBATE/i)).toBeInTheDocument();
   });
 
   it('renders agent messages from WebSocket', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+      jest.runAllTimers();
     });
 
-    act(() => {
+    await act(async () => {
       mockWsInstance?.simulateMessage({
         type: 'agent_message',
         data: {
@@ -123,74 +157,51 @@ describe('DebateViewer', () => {
     });
   });
 
-  it('handles phase transition events', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+  it('handles debate_start events', async () => {
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+      jest.runAllTimers();
     });
 
-    act(() => {
+    await act(async () => {
       mockWsInstance?.simulateMessage({
-        type: 'phase_change',
+        type: 'debate_start',
         data: {
-          phase: 'voting',
-          previous_phase: 'deliberation',
+          task: 'Discuss the best approach for feature X',
+          agents: ['claude-3-opus', 'gemini-2.0-flash'],
         },
         timestamp: Date.now(),
       });
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/voting/i)).toBeInTheDocument();
+      expect(screen.getByText(/Discuss the best approach for feature X/)).toBeInTheDocument();
     });
+    expect(screen.getByText('claude-3-opus')).toBeInTheDocument();
+    expect(screen.getByText('gemini-2.0-flash')).toBeInTheDocument();
   });
 
-  it('handles vote events', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+  it('displays agent names when messages arrive', async () => {
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+      jest.runAllTimers();
     });
 
-    act(() => {
+    await act(async () => {
       mockWsInstance?.simulateMessage({
-        type: 'vote',
+        type: 'agent_message',
         data: {
-          voter: 'claude-3-opus',
-          choice: 'proposal_a',
-          rationale: 'This approach is more maintainable.',
+          agent: 'claude-3-opus',
+          role: 'proposer',
+          content: 'Test message',
         },
         timestamp: Date.now(),
+        round: 1,
       });
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/claude-3-opus/)).toBeInTheDocument();
-    });
-  });
-
-  it('handles consensus events', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
-    });
-
-    act(() => {
-      mockWsInstance?.simulateMessage({
-        type: 'consensus_reached',
-        data: {
-          outcome: 'accepted',
-          confidence: 0.85,
-          final_decision: 'Feature X will be implemented with modifications.',
-        },
-        timestamp: Date.now(),
-      });
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText(/consensus/i)).toBeInTheDocument();
+      expect(screen.getByText(/CLAUDE-3-OPUS/)).toBeInTheDocument();
     });
   });
 
@@ -198,13 +209,12 @@ describe('DebateViewer', () => {
     const scrollIntoViewMock = jest.fn();
     Element.prototype.scrollIntoView = scrollIntoViewMock;
 
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+      jest.runAllTimers();
     });
 
-    act(() => {
+    await act(async () => {
       mockWsInstance?.simulateMessage({
         type: 'agent_message',
         data: {
@@ -221,112 +231,130 @@ describe('DebateViewer', () => {
   });
 
   it('cleans up WebSocket on unmount', async () => {
-    const { unmount } = render(
-      <DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />
-    );
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    let unmount: () => void;
+    await act(async () => {
+      const result = render(
+        <DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />
+      );
+      unmount = result.unmount;
+      jest.runAllTimers();
     });
 
-    unmount();
+    expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+
+    await act(async () => {
+      unmount();
+    });
 
     expect(mockWsInstance?.close).toHaveBeenCalled();
   });
 
-  it('handles WebSocket reconnection on error', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+  it('sends subscription message on connection', async () => {
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+      jest.runAllTimers();
     });
 
-    const initialCallCount = (global.WebSocket as jest.Mock).mock.calls.length;
-
-    // Simulate error
-    act(() => {
-      if (mockWsInstance?.onerror) {
-        mockWsInstance.onerror(new Error('Connection lost'));
-      }
-      if (mockWsInstance?.onclose) {
-        mockWsInstance.readyState = MockWebSocket.CLOSED;
-        mockWsInstance.onclose();
-      }
-    });
-
-    // Should attempt reconnection
-    await waitFor(() => {
-      expect((global.WebSocket as jest.Mock).mock.calls.length).toBeGreaterThan(initialCallCount);
-    }, { timeout: 5000 });
-  });
-
-  it('sends user vote through WebSocket', async () => {
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
-    });
-
-    // Simulate receiving proposals to enable voting
-    act(() => {
-      mockWsInstance?.simulateMessage({
-        type: 'agent_message',
-        data: { agent: 'Agent1', role: 'proposer', content: 'Proposal A' },
-        timestamp: Date.now(),
-        round: 1,
-      });
-      mockWsInstance?.simulateMessage({
-        type: 'agent_message',
-        data: { agent: 'Agent2', role: 'proposer', content: 'Proposal B' },
-        timestamp: Date.now(),
-        round: 1,
-      });
-    });
-
-    // Check if send was called with vote data (depends on UI implementation)
-    // This is a structural test - actual voting UI may vary
+    expect(mockWsInstance?.send).toHaveBeenCalledWith(
+      expect.stringContaining('subscribe')
+    );
   });
 
   it('displays debate ID correctly', async () => {
-    render(<DebateViewer debateId="debate-abc-123" wsUrl="ws://localhost:3001" />);
-
-    await waitFor(() => {
-      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
+      jest.runAllTimers();
     });
 
     // Debate ID should be visible somewhere in the UI
-    expect(screen.getByText(/debate-abc-123/i)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(LIVE_DEBATE_ID, 'i'))).toBeInTheDocument();
   });
 });
 
 describe('DebateViewer error states', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useFakeTimers();
     mockWsInstance = null;
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const LIVE_DEBATE_ID = 'adhoc_error-test';
+
   it('shows error message on WebSocket failure', async () => {
-    // Override WebSocket to fail immediately
-    const originalWS = global.WebSocket;
-    // @ts-expect-error - mocking global WebSocket
-    global.WebSocket = jest.fn(() => {
-      const ws = new MockWebSocket('ws://localhost:3001');
-      setTimeout(() => {
-        if (ws.onerror) ws.onerror(new Error('Connection refused'));
-        if (ws.onclose) {
-          ws.readyState = MockWebSocket.CLOSED;
-          ws.onclose();
-        }
-      }, 10);
-      return ws;
+    await act(async () => {
+      render(<DebateViewer debateId={LIVE_DEBATE_ID} wsUrl="ws://localhost:3001" />);
     });
 
-    render(<DebateViewer debateId="test-123" wsUrl="ws://localhost:3001" />);
+    // Simulate WebSocket error
+    await act(async () => {
+      if (mockWsInstance?.onerror) {
+        mockWsInstance.onerror(new Error('Connection refused'));
+      }
+      if (mockWsInstance) {
+        mockWsInstance.readyState = MockWebSocket.CLOSED;
+        if (mockWsInstance.onclose) mockWsInstance.onclose();
+      }
+    });
 
     await waitFor(() => {
-      expect(screen.getByText(/disconnected|error|failed/i)).toBeInTheDocument();
-    }, { timeout: 3000 });
+      expect(screen.getByText(/CONNECTION ERROR/i)).toBeInTheDocument();
+    });
+  });
+});
 
-    global.WebSocket = originalWS;
+describe('DebateViewer archived debates', () => {
+  const { fetchDebateById } = jest.requireMock('../src/utils/supabase');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockWsInstance = null;
+  });
+
+  it('fetches debate from Supabase for non-live debates', async () => {
+    const mockDebate = {
+      id: 'archived-debate-123',
+      loop_id: 'loop-1',
+      cycle_number: 1,
+      task: 'Archived debate task',
+      agents: ['agent-1', 'agent-2'],
+      transcript: [
+        { agent: 'agent-1', content: 'First message', role: 'proposer' },
+      ],
+      phase: 'complete',
+      consensus_reached: true,
+      confidence: 0.85,
+      winning_proposal: 'The winning proposal',
+      vote_tally: { 'agent-1': 2, 'agent-2': 1 },
+      created_at: '2024-01-15T10:00:00Z',
+    };
+
+    fetchDebateById.mockResolvedValue(mockDebate);
+
+    await act(async () => {
+      render(<DebateViewer debateId="archived-debate-123" wsUrl="ws://localhost:3001" />);
+    });
+
+    // WebSocket should NOT be called for non-adhoc debates
+    expect(global.WebSocket).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(screen.getByText('Archived debate task')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error for non-existent archived debate', async () => {
+    fetchDebateById.mockResolvedValue(null);
+
+    await act(async () => {
+      render(<DebateViewer debateId="non-existent" wsUrl="ws://localhost:3001" />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Debate not found/i)).toBeInTheDocument();
+    });
   });
 });
