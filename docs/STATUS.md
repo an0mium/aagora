@@ -101,6 +101,11 @@
 - **NEW**: Fixed security: environment variable bracket access in formal.py and evolver.py
 - **NEW**: Updated CLI serve command to use unified server (aragora serve)
 - **NEW**: Added crux cache clearing at cycle start (prevents context bleeding between cycles)
+- **NEW**: Added real-time flip_detected WebSocket listener in InsightsPanel (auto-switches to flips tab)
+- **NEW**: Added missing event types to events.ts (audience_drain, match_recorded, flip_detected, memory_recall, token_*)
+- **NEW**: Added loop_id to FLIP_DETECTED events for multi-loop isolation
+- **NEW**: Added original_confidence, new_confidence, domain fields to flip event data
+- **NEW**: Fixed security: exec() timeout protection in proofs.py (5s limit prevents CPU exhaustion)
 
 ## Feature Integration Status
 
