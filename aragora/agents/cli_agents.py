@@ -29,12 +29,30 @@ class CLIAgent(Agent):
         super().__init__(name, model, role)
         self.timeout = timeout
 
+    def _sanitize_cli_arg(self, arg: str) -> str:
+        """Sanitize a string for use as a CLI argument.
+
+        Removes null bytes and other control characters that can cause
+        'embedded null byte' ValueError from subprocess calls.
+        Command-line arguments are null-terminated in C, so null bytes
+        in arguments are not allowed by the OS.
+        """
+        if not isinstance(arg, str):
+            return str(arg)
+        # Remove null bytes (cause 'embedded null byte' error)
+        sanitized = arg.replace('\x00', '')
+        # Remove other problematic control characters (except newlines/tabs)
+        sanitized = re.sub(r'[\x01-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', sanitized)
+        return sanitized
+
     async def _run_cli(self, command: list[str], input_text: str = None) -> str:
         """Run a CLI command and return output."""
+        # Sanitize all command arguments to prevent 'embedded null byte' errors
+        sanitized_command = [self._sanitize_cli_arg(arg) for arg in command]
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                *command,
+                *sanitized_command,
                 stdin=asyncio.subprocess.PIPE if input_text else None,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
