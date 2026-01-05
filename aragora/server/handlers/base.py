@@ -239,6 +239,16 @@ def get_bool_param(params: dict, key: str, default: bool = False) -> bool:
     return value in ('true', '1', 'yes', 'on')
 
 
+def get_string_param(params: dict, key: str, default: str = None) -> Optional[str]:
+    """Safely get a string parameter, handling list values from query strings."""
+    value = params.get(key, default)
+    if value is None:
+        return default
+    if isinstance(value, list):
+        return value[0] if value else default
+    return str(value)
+
+
 # Validation patterns for path segments
 SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 SAFE_AGENT_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,32}$')

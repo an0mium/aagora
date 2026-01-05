@@ -14,7 +14,10 @@ from .base import (
     json_response,
     error_response,
     get_int_param,
+    get_string_param,
     ttl_cache,
+    validate_path_segment,
+    SAFE_ID_PATTERN,
 )
 
 
@@ -31,8 +34,16 @@ class LeaderboardViewHandler(BaseHandler):
         """Route leaderboard view requests."""
         if path == "/api/leaderboard-view":
             limit = get_int_param(query_params, 'limit', 10)
-            domain = query_params.get('domain')
-            loop_id = query_params.get('loop_id')
+            domain = get_string_param(query_params, 'domain')
+            if domain:
+                is_valid, err = validate_path_segment(domain, "domain", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
+            loop_id = get_string_param(query_params, 'loop_id')
+            if loop_id:
+                is_valid, err = validate_path_segment(loop_id, "loop_id", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
             return self._get_leaderboard_view(limit, domain, loop_id)
         return None
 

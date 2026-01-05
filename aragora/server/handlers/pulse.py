@@ -7,7 +7,10 @@ Endpoints:
 """
 
 from typing import Optional
-from .base import BaseHandler, HandlerResult, json_response, error_response, get_int_param
+from .base import (
+    BaseHandler, HandlerResult, json_response, error_response,
+    get_int_param, get_string_param, validate_path_segment, SAFE_ID_PATTERN,
+)
 
 
 class PulseHandler(BaseHandler):
@@ -29,7 +32,11 @@ class PulseHandler(BaseHandler):
             return self._get_trending_topics(min(limit, 50))
 
         if path == "/api/pulse/suggest":
-            category = query_params.get('category')
+            category = get_string_param(query_params, 'category')
+            if category:
+                is_valid, err = validate_path_segment(category, "category", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
             return self._suggest_debate_topic(category)
 
         return None

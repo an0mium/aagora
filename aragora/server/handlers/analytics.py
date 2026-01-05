@@ -167,6 +167,17 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get ranking stats: {e}", 500)
 
+    @ttl_cache(ttl_seconds=300, key_prefix="analytics_debates", skip_first=True)
+    def _get_cached_debates(self, limit: int = 100) -> list:
+        """Cached helper for retrieving debates."""
+        storage = self.get_storage()
+        if not storage:
+            return []
+        try:
+            return storage.list_debates(limit=limit)
+        except Exception:
+            return []
+
     @ttl_cache(ttl_seconds=1800, key_prefix="analytics_memory", skip_first=True)
     def _get_memory_stats(self) -> HandlerResult:
         """Get memory system statistics."""

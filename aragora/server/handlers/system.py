@@ -15,7 +15,10 @@ Endpoints:
 import json
 from pathlib import Path
 from typing import Optional
-from .base import BaseHandler, HandlerResult, json_response, error_response, get_int_param
+from .base import (
+    BaseHandler, HandlerResult, json_response, error_response,
+    get_int_param, get_string_param, validate_path_segment, SAFE_ID_PATTERN,
+)
 
 
 class SystemHandler(BaseHandler):
@@ -52,22 +55,38 @@ class SystemHandler(BaseHandler):
             return self._get_modes()
 
         if path == "/api/history/cycles":
-            loop_id = query_params.get('loop_id')
+            loop_id = get_string_param(query_params, 'loop_id')
+            if loop_id:
+                is_valid, err = validate_path_segment(loop_id, "loop_id", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
             limit = get_int_param(query_params, 'limit', 50)
             return self._get_history_cycles(loop_id, min(limit, 200))
 
         if path == "/api/history/events":
-            loop_id = query_params.get('loop_id')
+            loop_id = get_string_param(query_params, 'loop_id')
+            if loop_id:
+                is_valid, err = validate_path_segment(loop_id, "loop_id", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
             limit = get_int_param(query_params, 'limit', 100)
             return self._get_history_events(loop_id, min(limit, 500))
 
         if path == "/api/history/debates":
-            loop_id = query_params.get('loop_id')
+            loop_id = get_string_param(query_params, 'loop_id')
+            if loop_id:
+                is_valid, err = validate_path_segment(loop_id, "loop_id", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
             limit = get_int_param(query_params, 'limit', 50)
             return self._get_history_debates(loop_id, min(limit, 200))
 
         if path == "/api/history/summary":
-            loop_id = query_params.get('loop_id')
+            loop_id = get_string_param(query_params, 'loop_id')
+            if loop_id:
+                is_valid, err = validate_path_segment(loop_id, "loop_id", SAFE_ID_PATTERN)
+                if not is_valid:
+                    return error_response(err, 400)
             return self._get_history_summary(loop_id)
 
         return None

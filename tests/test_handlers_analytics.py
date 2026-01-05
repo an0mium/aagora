@@ -176,7 +176,8 @@ class TestDisagreementStats:
 
         assert result.status_code == 200
         data = json.loads(result.body)
-        assert data["stats"] == {}
+        assert data["stats"]["total_debates"] == 0
+        assert data["stats"]["with_disagreements"] == 0
 
     def test_handles_storage_unavailable(self):
         """Should handle missing storage gracefully."""
@@ -245,7 +246,8 @@ class TestRoleRotationStats:
 
         assert result.status_code == 200
         data = json.loads(result.body)
-        assert data["stats"] == {}
+        assert data["stats"]["total_debates"] == 0
+        assert data["stats"]["role_assignments"] == {}
 
     def test_handles_exception(self, analytics_handler, mock_storage):
         """Should return 500 on exception."""
@@ -299,7 +301,8 @@ class TestEarlyStopStats:
 
         assert result.status_code == 200
         data = json.loads(result.body)
-        assert data["stats"] == {}
+        assert data["stats"]["total_debates"] == 0
+        assert data["stats"]["early_stopped"] == 0
 
     def test_handles_exception(self, analytics_handler, mock_storage):
         """Should return 500 on exception."""
