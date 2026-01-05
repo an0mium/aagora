@@ -20,9 +20,145 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional, Any, Dict
 from urllib.parse import parse_qs, urlparse
+from concurrent.futures import ThreadPoolExecutor
+import uuid
 
 # Configure module logger
 logger = logging.getLogger(__name__)
+
+# Import debate components (lazy-loaded for optional functionality)
+try:
+    from aragora.debate.orchestrator import Arena, DebateProtocol
+    from aragora.agents.base import create_agent
+    from aragora.core import Environment
+    DEBATE_AVAILABLE = True
+except ImportError:
+    DEBATE_AVAILABLE = False
+    Arena = None
+    DebateProtocol = None
+    create_agent = None
+    Environment = None
+
+# Valid agent types (allowlist for security)
+ALLOWED_AGENT_TYPES = frozenset({
+    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli", "kilocode",
+    "gemini", "ollama", "anthropic-api", "openai-api", "grok",
+    "deepseek", "deepseek-r1", "llama", "mistral", "openrouter",
+})
+
+# Maximum number of agents per debate (DoS protection)
+MAX_AGENTS_PER_DEBATE = 10
+MAX_CONCURRENT_DEBATES = 3
+
+# Thread-safe debate tracking
+_active_debates: dict[str, dict] = {}
+_active_debates_lock = threading.Lock()
+_debate_executor: Optional[ThreadPoolExecutor] = None
+_debate_executor_lock = threading.Lock()
+
+
+def _safe_error_message(e: Exception, context: str = "") -> str:
+    """Return a sanitized error message for client responses.
+
+    Logs the full error server-side while returning a generic message to clients.
+    This prevents information disclosure of internal details like file paths,
+    stack traces, or sensitive configuration.
+    """
+    # Log full details server-side for debugging
+    logger.error(f"Error in {context}: {type(e).__name__}: {e}", exc_info=True)
+
+    # Map common exceptions to user-friendly messages
+    error_type = type(e).__name__
+    if error_type in ("FileNotFoundError", "OSError"):
+        return "Resource not found"
+    elif error_type in ("json.JSONDecodeError", "ValueError"):
+        return "Invalid data format"
+    elif error_type in ("PermissionError",):
+        return "Access denied"
+    elif error_type in ("TimeoutError", "asyncio.TimeoutError"):
+        return "Operation timed out"
+    else:
+        return "An error occurred"
+
+
+def _wrap_agent_for_streaming(agent, emitter: 'SyncEventEmitter', debate_id: str):
+    """Wrap an agent to emit token streaming events.
+
+    If the agent has a generate_stream() method, we override its generate()
+    to call generate_stream() and emit TOKEN_* events.
+    """
+    from datetime import datetime
+
+    # Check if agent supports streaming
+    if not hasattr(agent, 'generate_stream'):
+        return agent
+
+    # Store original generate method
+    original_generate = agent.generate
+
+    async def streaming_generate(prompt: str, context=None):
+        """Streaming wrapper that emits TOKEN_* events."""
+        # Emit start event
+        emitter.emit(StreamEvent(
+            type=StreamEventType.TOKEN_START,
+            data={
+                "debate_id": debate_id,
+                "agent": agent.name,
+                "timestamp": datetime.now().isoformat(),
+            },
+            agent=agent.name,
+        ))
+
+        full_response = ""
+        try:
+            # Stream tokens from the agent
+            async for token in agent.generate_stream(prompt, context):
+                full_response += token
+                # Emit token delta event
+                emitter.emit(StreamEvent(
+                    type=StreamEventType.TOKEN_DELTA,
+                    data={
+                        "debate_id": debate_id,
+                        "agent": agent.name,
+                        "token": token,
+                    },
+                    agent=agent.name,
+                ))
+
+            # Emit end event
+            emitter.emit(StreamEvent(
+                type=StreamEventType.TOKEN_END,
+                data={
+                    "debate_id": debate_id,
+                    "agent": agent.name,
+                    "full_response": full_response,
+                },
+                agent=agent.name,
+            ))
+
+            return full_response
+
+        except Exception as e:
+            # Emit error as end event
+            emitter.emit(StreamEvent(
+                type=StreamEventType.TOKEN_END,
+                data={
+                    "debate_id": debate_id,
+                    "agent": agent.name,
+                    "error": _safe_error_message(e, f"token streaming for {agent.name}"),
+                    "full_response": full_response,
+                },
+                agent=agent.name,
+            ))
+            # Fall back to non-streaming
+            if full_response:
+                return full_response
+            return await original_generate(prompt, context)
+
+    # Replace the generate method
+    agent.generate = streaming_generate
+    return agent
+
 
 # Centralized CORS configuration
 from aragora.server.cors_config import WS_ALLOWED_ORIGINS
@@ -1930,6 +2066,200 @@ class AiohttpUnifiedServer:
                 headers=self._cors_headers(origin)
             )
 
+    async def _handle_start_debate(self, request) -> 'aiohttp.web.Response':
+        """POST /api/debate - Start an ad-hoc debate with specified question.
+
+        Accepts JSON body with:
+            question: The topic/question to debate (required)
+            agents: Comma-separated agent list (optional, default: "anthropic-api,openai-api,gemini,grok")
+            rounds: Number of debate rounds (optional, default: 3)
+            consensus: Consensus method (optional, default: "majority")
+
+        All agents participate as proposers for full participation in all rounds.
+        """
+        global _active_debates, _debate_executor
+        import aiohttp.web as web
+
+        origin = request.headers.get("Origin")
+
+        if not DEBATE_AVAILABLE:
+            return web.json_response(
+                {"error": "Debate orchestrator not available"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+        # Parse JSON body
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response(
+                {"error": "Invalid JSON"},
+                status=400,
+                headers=self._cors_headers(origin)
+            )
+
+        # Validate required fields with length limits
+        question = data.get('question', '').strip()
+        if not question:
+            return web.json_response(
+                {"error": "question field is required"},
+                status=400,
+                headers=self._cors_headers(origin)
+            )
+        if len(question) > 10000:
+            return web.json_response(
+                {"error": "question must be under 10,000 characters"},
+                status=400,
+                headers=self._cors_headers(origin)
+            )
+
+        # Parse optional fields with validation
+        agents_str = data.get('agents', 'anthropic-api,openai-api,gemini,grok')
+        try:
+            rounds = min(max(int(data.get('rounds', 3)), 1), 10)  # Clamp to 1-10
+        except (ValueError, TypeError):
+            rounds = 3
+        consensus = data.get('consensus', 'majority')
+
+        # Generate debate ID
+        debate_id = f"adhoc_{uuid.uuid4().hex[:8]}"
+
+        # Track this debate (thread-safe)
+        with _active_debates_lock:
+            _active_debates[debate_id] = {
+                "id": debate_id,
+                "question": question,
+                "status": "starting",
+                "agents": agents_str,
+                "rounds": rounds,
+            }
+
+        # Set loop_id on emitter so events are tagged
+        self.emitter.set_loop_id(debate_id)
+
+        # Start debate in background thread
+        def run_debate():
+            import asyncio as _asyncio
+
+            try:
+                # Parse agents with bounds check
+                agent_list = [s.strip() for s in agents_str.split(",") if s.strip()]
+                if len(agent_list) > MAX_AGENTS_PER_DEBATE:
+                    with _active_debates_lock:
+                        _active_debates[debate_id]["status"] = "error"
+                        _active_debates[debate_id]["error"] = f"Too many agents. Maximum: {MAX_AGENTS_PER_DEBATE}"
+                    return
+                if len(agent_list) < 2:
+                    with _active_debates_lock:
+                        _active_debates[debate_id]["status"] = "error"
+                        _active_debates[debate_id]["error"] = "At least 2 agents required for a debate"
+                    return
+
+                agent_specs = []
+                for spec in agent_list:
+                    spec = spec.strip()
+                    if ":" in spec:
+                        agent_type, role = spec.split(":", 1)
+                    else:
+                        agent_type = spec
+                        role = None
+                    # Validate agent type against allowlist
+                    if agent_type.lower() not in ALLOWED_AGENT_TYPES:
+                        raise ValueError(f"Invalid agent type: {agent_type}. Allowed: {', '.join(sorted(ALLOWED_AGENT_TYPES))}")
+                    agent_specs.append((agent_type, role))
+
+                # Create agents with streaming support
+                # All agents are proposers for full participation in all rounds
+                agents = []
+                for i, (agent_type, role) in enumerate(agent_specs):
+                    if role is None:
+                        role = "proposer"  # All agents propose and participate fully
+                    agent = create_agent(
+                        model_type=agent_type,
+                        name=f"{agent_type}_{role}",
+                        role=role,
+                    )
+                    # Wrap agent for token streaming if supported
+                    agent = _wrap_agent_for_streaming(agent, self.emitter, debate_id)
+                    agents.append(agent)
+
+                # Create environment and protocol
+                env = Environment(task=question, context="", max_rounds=rounds)
+                protocol = DebateProtocol(
+                    rounds=rounds,
+                    consensus=consensus,
+                    proposer_count=len(agents),  # All agents propose initially
+                    topology="all-to-all",  # Everyone critiques everyone
+                )
+
+                # Create arena with hooks and available context systems
+                hooks = create_arena_hooks(self.emitter)
+                arena = Arena(
+                    env, agents, protocol,
+                    event_hooks=hooks,
+                    event_emitter=self.emitter,
+                    loop_id=debate_id,
+                )
+
+                # Run debate with timeout protection (10 minutes max)
+                with _active_debates_lock:
+                    _active_debates[debate_id]["status"] = "running"
+
+                async def run_with_timeout():
+                    return await _asyncio.wait_for(arena.run(), timeout=600)
+
+                result = _asyncio.run(run_with_timeout())
+                with _active_debates_lock:
+                    _active_debates[debate_id]["status"] = "completed"
+                    _active_debates[debate_id]["result"] = {
+                        "final_answer": result.final_answer,
+                        "consensus_reached": result.consensus_reached,
+                        "confidence": result.confidence,
+                    }
+
+            except Exception as e:
+                import traceback
+                safe_msg = _safe_error_message(e, "debate_execution")
+                error_trace = traceback.format_exc()
+                with _active_debates_lock:
+                    _active_debates[debate_id]["status"] = "error"
+                    _active_debates[debate_id]["error"] = safe_msg
+                logger.error(f"[debate] Thread error in {debate_id}: {str(e)}\n{error_trace}")
+                # Emit error event to client
+                self.emitter.emit(StreamEvent(
+                    type=StreamEventType.ERROR,
+                    data={"error": safe_msg, "debate_id": debate_id},
+                ))
+
+        # Use thread pool to prevent unbounded thread creation
+        if _debate_executor is None:
+            with _debate_executor_lock:
+                if _debate_executor is None:
+                    _debate_executor = ThreadPoolExecutor(
+                        max_workers=MAX_CONCURRENT_DEBATES,
+                        thread_name_prefix="debate-"
+                    )
+
+        try:
+            _debate_executor.submit(run_debate)
+        except RuntimeError:
+            return web.json_response({
+                "success": False,
+                "error": "Server at capacity. Please try again later.",
+            }, status=503, headers=self._cors_headers(origin))
+
+        # Return immediately with debate ID
+        return web.json_response({
+            "success": True,
+            "debate_id": debate_id,
+            "question": question,
+            "agents": agents_str.split(","),
+            "rounds": rounds,
+            "status": "starting",
+            "message": "Debate started. Connect to WebSocket to receive events.",
+        }, headers=self._cors_headers(origin))
+
     async def _websocket_handler(self, request) -> 'aiohttp.web.WebSocketResponse':
         """Handle WebSocket connections with security validation and optional auth."""
         import aiohttp
@@ -2186,6 +2516,7 @@ class AiohttpUnifiedServer:
         app.router.add_get("/api/debate/{loop_id}/audience/clusters", self._handle_audience_clusters)
         app.router.add_get("/api/replays", self._handle_replays)
         app.router.add_get("/api/replays/{replay_id}/html", self._handle_replay_html)
+        app.router.add_post("/api/debate", self._handle_start_debate)  # Start ad-hoc debate
         app.router.add_get("/", self._websocket_handler)  # WebSocket at root
         app.router.add_get("/ws", self._websocket_handler)  # Also at /ws
 
