@@ -56,6 +56,31 @@ jobs:
           mypy aragora/ --ignore-missing-imports --no-error-summary
         continue-on-error: true
 
+  frontend-lint:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: aragora/live
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: aragora/live/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: true
+
   security:
     runs-on: ubuntu-latest
 
