@@ -907,14 +907,17 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         if not self._check_rate_limit():
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             if content_length > 0:
                 body = self.rfile.read(content_length).decode('utf-8')
                 data = json.loads(body)
             else:
                 data = {}
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError:
             self._send_json({"error": "Invalid JSON body"}, status=400)
             return
 
@@ -4340,8 +4343,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Persona laboratory not available"}, status=503)
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -4456,8 +4462,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Agent selector not available"}, status=503)
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -4515,8 +4524,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             }, status=503)
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -4608,8 +4620,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         if not self._check_rate_limit():
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -4774,8 +4789,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             }, status=503)
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -5036,8 +5054,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             }, status=503)
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -5370,8 +5391,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             }, status=503)
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 
@@ -5439,8 +5463,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         if not self._check_rate_limit():
             return
 
+        content_length = self._validate_content_length()
+        if content_length is None:
+            return  # Error already sent
+
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body) if body else {}
 

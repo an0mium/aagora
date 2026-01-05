@@ -185,6 +185,10 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Invalid Content-Length header")
             return
 
+        if content_length < 0:
+            self.send_error(400, "Invalid Content-Length header")
+            return
+
         if content_length == 0:
             self.send_error(400, "Missing request body")
             return
@@ -198,6 +202,10 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
             data = json.loads(post_data.decode('utf-8'))
         except (json.JSONDecodeError, UnicodeDecodeError):
             self.send_error(400, "Invalid JSON")
+            return
+        except (IOError, TimeoutError, OSError) as e:
+            logger.warning(f"Request body read error: {type(e).__name__}: {e}")
+            self.send_error(400, "Failed to read request body")
             return
 
         event_id = data.get("event_id")
@@ -247,8 +255,9 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
 
             self._send_json(fork_data)
 
-        except Exception:
+        except Exception as e:
             # Log error server-side but return generic message to client
+            logger.error(f"Fork operation failed for {debate_id}: {type(e).__name__}: {e}")
             self.send_error(500, "Fork operation failed")
 
     def _health_check(self) -> None:

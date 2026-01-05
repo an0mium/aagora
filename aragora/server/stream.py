@@ -777,12 +777,19 @@ class DebateStreamServer:
 
                     # Parse JSON with timeout protection (prevents CPU-bound DoS)
                     try:
+                        loop = asyncio.get_running_loop()
                         data = await asyncio.wait_for(
-                            asyncio.get_event_loop().run_in_executor(None, json.loads, message),
+                            loop.run_in_executor(None, json.loads, message),
                             timeout=5.0  # 5 second timeout for JSON parsing
                         )
                     except asyncio.TimeoutError:
                         logger.warning("[ws] JSON parsing timed out - possible DoS attempt")
+                        continue
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"[ws] Invalid JSON from client: {e}")
+                        continue
+                    except RuntimeError as e:
+                        logger.error(f"[ws] Event loop error during JSON parsing: {e}")
                         continue
 
                     msg_type = data.get("type")
@@ -826,24 +833,30 @@ class DebateStreamServer:
                             }))
                             continue
 
-                        # Get or create rate limiter for this client
-                        if stored_client_id not in self._rate_limiters:
-                            self._rate_limiters[stored_client_id] = TokenBucket(
-                                rate_per_minute=10.0,  # 10 messages per minute
-                                burst_size=5  # Allow burst of 5
-                            )
+                        # Get or create rate limiter for this client (thread-safe)
+                        should_cleanup = False
+                        with self._rate_limiters_lock:
+                            if stored_client_id not in self._rate_limiters:
+                                self._rate_limiters[stored_client_id] = TokenBucket(
+                                    rate_per_minute=10.0,  # 10 messages per minute
+                                    burst_size=5  # Allow burst of 5
+                                )
+                            # Track access time for TTL-based cleanup
+                            self._rate_limiter_last_access[stored_client_id] = time.time()
+                            # Get reference to rate limiter while holding lock
+                            rate_limiter = self._rate_limiters[stored_client_id]
+                            # Periodic cleanup counter (atomic under lock)
+                            self._rate_limiter_cleanup_counter += 1
+                            if self._rate_limiter_cleanup_counter >= self._CLEANUP_INTERVAL:
+                                self._rate_limiter_cleanup_counter = 0
+                                should_cleanup = True
 
-                        # Track access time for TTL-based cleanup
-                        self._rate_limiter_last_access[stored_client_id] = time.time()
-
-                        # Periodic cleanup to prevent memory leak
-                        self._rate_limiter_cleanup_counter += 1
-                        if self._rate_limiter_cleanup_counter >= self._CLEANUP_INTERVAL:
-                            self._rate_limiter_cleanup_counter = 0
+                        # Run cleanup outside lock to avoid holding it too long
+                        if should_cleanup:
                             self._cleanup_stale_rate_limiters()
 
-                        # Check rate limit
-                        if not self._rate_limiters[stored_client_id].consume(1):
+                        # Check rate limit (TokenBucket.consume is thread-safe)
+                        if not rate_limiter.consume(1):
                             await websocket.send(json.dumps({
                                 "type": "error",
                                 "data": {"message": "Rate limited. Please wait before submitting again."}
@@ -894,8 +907,12 @@ class DebateStreamServer:
                 logger.error(f"[ws] Unexpected error for client {client_id[:8]}...: {error_name}: {e}")
         finally:
             self.clients.discard(websocket)
-            # Clean up secure client ID mapping
-            self._client_ids.pop(ws_id, None)
+            # Clean up secure client ID mapping and rate limiters
+            stored_client_id = self._client_ids.pop(ws_id, None)
+            if stored_client_id:
+                with self._rate_limiters_lock:
+                    self._rate_limiters.pop(stored_client_id, None)
+                    self._rate_limiter_last_access.pop(stored_client_id, None)
 
     async def start(self) -> None:
         """Start the WebSocket server."""
@@ -2324,12 +2341,13 @@ class AiohttpUnifiedServer:
         client_id = secrets.token_hex(16)
         self._client_ids[ws_id] = client_id
 
-        # Initialize rate limiter for this client
-        self._rate_limiters[client_id] = TokenBucket(
-            rate_per_minute=10.0,  # 10 messages per minute
-            burst_size=5  # Allow burst of 5
-        )
-        self._rate_limiter_last_access[client_id] = time.time()
+        # Initialize rate limiter for this client (thread-safe)
+        with self._rate_limiters_lock:
+            self._rate_limiters[client_id] = TokenBucket(
+                rate_per_minute=10.0,  # 10 messages per minute
+                burst_size=5  # Allow burst of 5
+            )
+            self._rate_limiter_last_access[client_id] = time.time()
 
         logger.info(f"[ws] Client connected: {client_id[:8]}...")
 
@@ -2432,9 +2450,12 @@ class AiohttpUnifiedServer:
                                 })
                                 continue
 
-                            # Check rate limit
-                            self._rate_limiter_last_access[client_id] = time.time()
-                            if not self._rate_limiters[client_id].consume(1):
+                            # Check rate limit (thread-safe)
+                            with self._rate_limiters_lock:
+                                self._rate_limiter_last_access[client_id] = time.time()
+                                rate_limiter = self._rate_limiters.get(client_id)
+
+                            if rate_limiter is None or not rate_limiter.consume(1):
                                 await ws.send_json({
                                     "type": "error",
                                     "data": {"message": "Rate limit exceeded, try again later"}
@@ -2463,9 +2484,10 @@ class AiohttpUnifiedServer:
         finally:
             self.clients.discard(ws)
             self._client_ids.pop(ws_id, None)
-            # Clean up rate limiter for this client
-            self._rate_limiters.pop(client_id, None)
-            self._rate_limiter_last_access.pop(client_id, None)
+            # Clean up rate limiter for this client (thread-safe)
+            with self._rate_limiters_lock:
+                self._rate_limiters.pop(client_id, None)
+                self._rate_limiter_last_access.pop(client_id, None)
             logger.info(f"[ws] Client disconnected: {client_id[:8]}...")
 
         return ws
