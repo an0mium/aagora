@@ -8,8 +8,8 @@
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { UserParticipation } from '../components/UserParticipation';
-import type { StreamEvent } from '../types/events';
+import { UserParticipation } from '../src/components/UserParticipation';
+import type { StreamEvent } from '../src/types/events';
 
 const mockEvents: StreamEvent[] = [
   {

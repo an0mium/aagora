@@ -430,3 +430,109 @@ class TestConfigureFromEnv:
             config.configure_from_env()
             assert "http://localhost:3000" in config.allowed_origins
             assert "https://example.com" in config.allowed_origins
+
+
+# =============================================================================
+# Query Parameter Validation Tests
+# =============================================================================
+
+
+class TestQueryParameterValidation:
+    """Tests for query parameter validation."""
+
+    def test_unknown_parameter_rejected(self):
+        """Test that unknown parameters are rejected."""
+        from aragora.server.unified_server import _validate_query_params
+
+        valid, error = _validate_query_params({"malicious": ["payload"]})
+        assert valid is False
+        assert "Unknown query parameter" in error
+
+    def test_valid_table_enum(self):
+        """Test valid table enum values accepted."""
+        from aragora.server.unified_server import _validate_query_params
+
+        valid, error = _validate_query_params({"table": ["debates"]})
+        assert valid is True
+
+    def test_invalid_table_enum_rejected(self):
+        """Test invalid table enum value rejected."""
+        from aragora.server.unified_server import _validate_query_params
+
+        valid, error = _validate_query_params({"table": ["malicious"]})
+        assert valid is False
+        assert "Invalid value" in error
+
+    def test_valid_sections_enum(self):
+        """Test valid sections enum accepted."""
+        from aragora.server.unified_server import _validate_query_params
+
+        valid, error = _validate_query_params({"sections": ["all"]})
+        assert valid is True
+
+    def test_multiple_params_validated(self):
+        """Test multiple parameters are validated."""
+        from aragora.server.unified_server import _validate_query_params
+
+        valid, error = _validate_query_params({
+            "limit": ["50"],
+            "offset": ["10"],
+            "agent": ["claude"],
+        })
+        assert valid is True
+
+
+# =============================================================================
+# Trusted Proxy Configuration Tests
+# =============================================================================
+
+
+class TestTrustedProxyConfiguration:
+    """Tests for trusted proxy configuration."""
+
+    def test_trusted_proxies_contains_localhost_ip(self):
+        """Test that localhost IP is in trusted proxies."""
+        from aragora.server.unified_server import TRUSTED_PROXIES
+
+        assert "127.0.0.1" in TRUSTED_PROXIES
+
+    def test_trusted_proxies_contains_ipv6_localhost(self):
+        """Test that IPv6 localhost is in trusted proxies."""
+        from aragora.server.unified_server import TRUSTED_PROXIES
+
+        assert "::1" in TRUSTED_PROXIES
+
+    def test_trusted_proxies_is_frozenset(self):
+        """Test that trusted proxies is immutable."""
+        from aragora.server.unified_server import TRUSTED_PROXIES
+
+        assert isinstance(TRUSTED_PROXIES, frozenset)
+
+
+# =============================================================================
+# Upload Rate Limiting Tests
+# =============================================================================
+
+
+class TestUploadRateLimiting:
+    """Tests for upload rate limiting configuration."""
+
+    def test_upload_rate_limit_exists(self):
+        """Test that upload rate limiting is configured."""
+        from aragora.server.unified_server import UnifiedHandler
+
+        assert hasattr(UnifiedHandler, "MAX_UPLOADS_PER_MINUTE")
+        assert hasattr(UnifiedHandler, "MAX_UPLOADS_PER_HOUR")
+        assert hasattr(UnifiedHandler, "_upload_counts")
+
+    def test_max_concurrent_debates_defined(self):
+        """Test maximum concurrent debates is defined."""
+        from aragora.server.unified_server import UnifiedHandler
+
+        assert UnifiedHandler.MAX_CONCURRENT_DEBATES == 10
+
+    def test_max_json_content_length(self):
+        """Test maximum JSON content length is defined."""
+        from aragora.server.unified_server import MAX_JSON_CONTENT_LENGTH
+
+        assert MAX_JSON_CONTENT_LENGTH == 10 * 1024 * 1024  # 10MB

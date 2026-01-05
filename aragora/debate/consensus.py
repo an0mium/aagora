@@ -506,10 +506,17 @@ class ConsensusBuilder:
                     strength=0.6,
                 )
 
+        # Build claims-by-author index for O(1) lookup (optimization)
+        claims_by_author: dict[str, list] = {}
+        for claim in builder.claims:
+            if claim.author not in claims_by_author:
+                claims_by_author[claim.author] = []
+            claims_by_author[claim.author].append(claim)
+
         # Extract critiques as evidence
         for critique in result.critiques:
-            # Find the claim being critiqued
-            target_claims = [c for c in builder.claims if c.author == critique.target_agent]
+            # Find the claim being critiqued (O(1) lookup using index)
+            target_claims = claims_by_author.get(critique.target_agent, [])
             if target_claims:
                 target_claim = target_claims[-1]  # Most recent claim
 

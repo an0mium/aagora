@@ -7,7 +7,7 @@
  * 3. Add test script to package.json
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { InsightsPanel } from '../src/components/InsightsPanel';
 
 // Mock fetch globally
@@ -26,9 +26,13 @@ describe('InsightsPanel', () => {
         json: () => Promise.resolve({ insights: [], flips: [], summary: {} }),
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
-      expect(screen.getByText(/Insights/)).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText(/Insights/)).toBeInTheDocument();
+      });
       expect(screen.getByText(/Memory/)).toBeInTheDocument();
       expect(screen.getByText(/Flips/)).toBeInTheDocument();
     });
@@ -39,11 +43,15 @@ describe('InsightsPanel', () => {
         json: () => Promise.resolve({ insights: [], flips: [], summary: {} }),
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       // Check that Insights tab button is active (has different styling)
-      const insightsTab = screen.getByRole('button', { name: /Insights/ });
-      expect(insightsTab).toHaveClass('bg-accent');
+      await waitFor(() => {
+        const insightsTab = screen.getByRole('button', { name: /Insights/ });
+        expect(insightsTab).toHaveClass('bg-accent');
+      });
     });
 
     it('switches to Flips tab when clicked', async () => {
@@ -52,10 +60,14 @@ describe('InsightsPanel', () => {
         json: () => Promise.resolve({ insights: [], flips: [], summary: {} }),
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       expect(flipsTab).toHaveClass('bg-accent');
     });
@@ -114,11 +126,15 @@ describe('InsightsPanel', () => {
         });
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       // Switch to Flips tab
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       await waitFor(() => {
         expect(screen.getByText('claude')).toBeInTheDocument();
@@ -146,10 +162,14 @@ describe('InsightsPanel', () => {
         });
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       await waitFor(() => {
         const contradictionBadge = screen.getByText(/contradiction/);
@@ -180,10 +200,14 @@ describe('InsightsPanel', () => {
         });
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       await waitFor(() => {
         expect(screen.getByText('Original position A')).toBeInTheDocument();
@@ -213,10 +237,14 @@ describe('InsightsPanel', () => {
         });
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       await waitFor(() => {
         expect(screen.getByText('Position Reversals')).toBeInTheDocument();
@@ -246,10 +274,14 @@ describe('InsightsPanel', () => {
         });
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       await waitFor(() => {
         expect(
@@ -278,10 +310,14 @@ describe('InsightsPanel', () => {
         });
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const flipsTab = screen.getByRole('button', { name: /Flips/ });
-      fireEvent.click(flipsTab);
+      await act(async () => {
+        fireEvent.click(flipsTab);
+      });
 
       await waitFor(() => {
         expect(screen.getByText('architecture')).toBeInTheDocument();
@@ -297,7 +333,9 @@ describe('InsightsPanel', () => {
         json: () => Promise.resolve({ insights: [], flips: [], summary: {} }),
       });
 
-      render(<InsightsPanel wsMessages={[]} apiBase="https://custom-api.example.com" />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} apiBase="https://custom-api.example.com" />);
+      });
 
       await waitFor(() => {
         expect(mockFetch).toHaveBeenCalledWith(
@@ -313,7 +351,9 @@ describe('InsightsPanel', () => {
         statusText: 'Internal Server Error',
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       await waitFor(() => {
         expect(screen.getByText(/HTTP 500/)).toBeInTheDocument();
@@ -326,12 +366,16 @@ describe('InsightsPanel', () => {
         json: () => Promise.resolve({ insights: [] }),
       });
 
-      render(<InsightsPanel wsMessages={[]} />);
+      await act(async () => {
+        render(<InsightsPanel wsMessages={[]} />);
+      });
 
       const initialCallCount = mockFetch.mock.calls.length;
 
       const refreshButton = screen.getByText('Refresh');
-      fireEvent.click(refreshButton);
+      await act(async () => {
+        fireEvent.click(refreshButton);
+      });
 
       await waitFor(() => {
         expect(mockFetch.mock.calls.length).toBeGreaterThan(initialCallCount);
