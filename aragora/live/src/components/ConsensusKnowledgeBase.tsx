@@ -1,0 +1,273 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+
+interface SettledTopic {
+  topic: string;
+  conclusion: string;
+  confidence: number;
+  strength: number;
+  timestamp: string;
+}
+
+interface ConsensusStats {
+  total_topics: number;
+  high_confidence_count: number;
+  domains: string[];
+  avg_confidence: number;
+}
+
+interface SimilarDebate {
+  topic: string;
+  conclusion: string;
+  confidence: number;
+  similarity: number;
+}
+
+interface ConsensusKnowledgeBaseProps {
+  apiBase: string;
+}
+
+type TabType = 'settled' | 'search' | 'stats';
+
+export function ConsensusKnowledgeBase({ apiBase }: ConsensusKnowledgeBaseProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('settled');
+  const [settledTopics, setSettledTopics] = useState<SettledTopic[]>([]);
+  const [stats, setStats] = useState<ConsensusStats | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SimilarDebate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchSettled = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/api/consensus/settled?min_confidence=0.7&limit=15`);
+      if (!response.ok) throw new Error('Failed to fetch settled topics');
+      const data = await response.json();
+      setSettledTopics(data.topics || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase]);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/consensus/stats`);
+      if (!response.ok) throw new Error('Failed to fetch stats');
+      const data = await response.json();
+      setStats(data);
+    } catch (err) {
+      console.error('Failed to fetch stats:', err);
+    }
+  }, [apiBase]);
+
+  const searchSimilar = useCallback(async () => {
+    if (!searchQuery.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `${apiBase}/api/consensus/similar?topic=${encodeURIComponent(searchQuery)}&limit=5`
+      );
+      if (!response.ok) throw new Error('Failed to search');
+      const data = await response.json();
+      setSearchResults(data.similar || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBase, searchQuery]);
+
+  useEffect(() => {
+    if (expanded) {
+      fetchSettled();
+      fetchStats();
+    }
+  }, [expanded, fetchSettled, fetchStats]);
+
+  const formatTimestamp = (ts: string) => {
+    if (!ts) return 'Unknown';
+    const date = new Date(ts);
+    return date.toLocaleDateString();
+  };
+
+  const getConfidenceColor = (conf: number) => {
+    if (conf >= 0.9) return 'text-acid-green';
+    if (conf >= 0.8) return 'text-acid-cyan';
+    if (conf >= 0.7) return 'text-warning';
+    return 'text-text-muted';
+  };
+
+  return (
+    <div className="border border-acid-green/30 bg-surface/50">
+      {/* Header */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface/80 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-acid-green font-mono text-sm">[KNOWLEDGE BASE]</span>
+          <span className="text-text-muted text-xs">Settled consensus & history</span>
+        </div>
+        <span className="text-acid-green">{expanded ? '[-]' : '[+]'}</span>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3">
+          {/* Stats Banner */}
+          {stats && (
+            <div className="flex gap-4 text-xs text-text-muted border-b border-acid-green/20 pb-2">
+              <span>{stats.total_topics || 0} topics</span>
+              <span>{stats.high_confidence_count || 0} high-confidence</span>
+              <span>Avg: {((stats.avg_confidence || 0) * 100).toFixed(0)}%</span>
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div className="flex gap-1 border-b border-acid-green/20 pb-2">
+            {(['settled', 'search', 'stats'] as TabType[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-2 py-1 text-xs font-mono transition-colors ${
+                  activeTab === tab
+                    ? 'bg-acid-green text-bg'
+                    : 'text-text-muted hover:text-acid-green'
+                }`}
+              >
+                {tab.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          {/* Content */}
+          {loading ? (
+            <div className="text-text-muted text-xs text-center py-4 animate-pulse">
+              Loading...
+            </div>
+          ) : error ? (
+            <div className="text-warning text-xs text-center py-4">{error}</div>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {activeTab === 'settled' && (
+                settledTopics.length === 0 ? (
+                  <div className="text-text-muted text-xs text-center py-4">
+                    No high-confidence topics yet
+                  </div>
+                ) : (
+                  settledTopics.map((topic, idx) => (
+                    <div
+                      key={idx}
+                      className="border border-acid-green/30 bg-surface p-2 text-xs"
+                    >
+                      <div className="flex justify-between items-start">
+                        <span className="font-mono text-acid-cyan truncate max-w-[70%]">
+                          {topic.topic}
+                        </span>
+                        <span className={getConfidenceColor(topic.confidence)}>
+                          {(topic.confidence * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="text-text-muted mt-1 line-clamp-2">
+                        {topic.conclusion}
+                      </div>
+                      <div className="text-text-muted/50 mt-1">
+                        {formatTimestamp(topic.timestamp)}
+                      </div>
+                    </div>
+                  ))
+                )
+              )}
+
+              {activeTab === 'search' && (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && searchSimilar()}
+                      placeholder="Search for similar debates..."
+                      className="flex-1 bg-bg border border-acid-green/30 px-2 py-1 text-xs font-mono text-acid-green placeholder:text-text-muted/50"
+                    />
+                    <button
+                      onClick={searchSimilar}
+                      disabled={!searchQuery.trim()}
+                      className="px-2 py-1 text-xs bg-acid-green/20 text-acid-green hover:bg-acid-green/30 disabled:opacity-50"
+                    >
+                      SEARCH
+                    </button>
+                  </div>
+
+                  {searchResults.length > 0 && (
+                    <div className="space-y-2">
+                      {searchResults.map((result, idx) => (
+                        <div
+                          key={idx}
+                          className="border border-acid-cyan/30 bg-acid-cyan/5 p-2 text-xs"
+                        >
+                          <div className="flex justify-between items-start">
+                            <span className="font-mono text-acid-cyan truncate max-w-[60%]">
+                              {result.topic}
+                            </span>
+                            <span className="text-text-muted">
+                              {(result.similarity * 100).toFixed(0)}% match
+                            </span>
+                          </div>
+                          <div className="text-text-muted mt-1 line-clamp-2">
+                            {result.conclusion}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'stats' && stats && (
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="border border-acid-green/30 p-2">
+                      <div className="text-text-muted">Total Topics</div>
+                      <div className="text-acid-green text-lg font-mono">
+                        {stats.total_topics || 0}
+                      </div>
+                    </div>
+                    <div className="border border-acid-green/30 p-2">
+                      <div className="text-text-muted">High Confidence</div>
+                      <div className="text-acid-cyan text-lg font-mono">
+                        {stats.high_confidence_count || 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  {stats.domains && stats.domains.length > 0 && (
+                    <div className="border border-acid-green/30 p-2">
+                      <div className="text-text-muted mb-1">Domains</div>
+                      <div className="flex flex-wrap gap-1">
+                        {stats.domains.map((domain) => (
+                          <span
+                            key={domain}
+                            className="px-1 py-0.5 bg-acid-green/10 text-acid-green border border-acid-green/30"
+                          >
+                            {domain}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

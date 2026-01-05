@@ -1,6 +1,6 @@
 # Aragora Project Status
 
-*Last updated: January 5, 2026 (07:30 UTC)*
+*Last updated: January 5, 2026 (12:00 UTC)*
 
 ## Current State
 
@@ -129,10 +129,15 @@
 - **NEW**: Added critique and consensus event handling to DebateViewer
 - **NEW**: Added ContraryViewsPanel for displaying dissenting opinions
 - **NEW**: Added RiskWarningsPanel for domain-specific risk assessment
+- **NEW**: Fixed CSP security: removed unsafe-eval from script-src (blocks eval/new Function)
+- **NEW**: Added 8 database indexes to elo.py (elo_history, matches, domain_calibration, relationships)
+- **NEW**: Exported 4 new modules: audience, plugins, nomic, learning (25+ new public APIs)
+- **NEW**: Fixed N+1 query pattern in get_rivals/get_allies (single DB query instead of N+1)
+- **NEW**: Wired AUDIENCE_SUMMARY and INSIGHT_EXTRACTED events to WebSocket stream
 
 ## Feature Integration Status
 
-### Fully Integrated (49)
+### Fully Integrated (51)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -184,6 +189,8 @@
 | Graph Export API | Active | `aragora/server/stream.py` (/api/debate/{loop_id}/graph/*) |
 | Audience Clusters API | Active | `aragora/server/stream.py` (/api/debate/{loop_id}/audience/clusters) |
 | Replay Export API | Active | `aragora/server/stream.py` (/api/replays/*) |
+| Database Query Indexes | Active | `aragora/ranking/elo.py` (8 indexes for common queries) |
+| N+1 Query Optimization | Active | `aragora/ranking/elo.py` (get_rivals/get_allies batch) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |
@@ -212,6 +219,7 @@
 - **Path traversal prevention** (SAFE_ID_PATTERN validation on replay_id, tournament_id)
 - **Thread pool for debates** (max 10 concurrent, prevents resource exhaustion)
 - **Rate limiter memory bounds** (LRU eviction when >10k entries)
+- **CSP hardening** (removed unsafe-eval, blocks eval()/new Function() XSS vectors)
 
 ### Remaining Considerations
 - Token revocation mechanism not implemented

@@ -14,6 +14,7 @@ Features:
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from datetime import datetime
@@ -22,6 +23,8 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from aragora.connectors.base import BaseConnector, Evidence
+
+logger = logging.getLogger(__name__)
 from aragora.reasoning.provenance import ProvenanceManager, SourceType
 
 # Try to import optional dependencies
@@ -126,11 +129,11 @@ class WebConnector(BaseConnector):
 
         # Check dependencies
         if not HTTPX_AVAILABLE:
-            print("Warning: httpx not installed. URL fetching will be limited.")
+            logger.warning("httpx not installed - URL fetching will be limited")
         if not BS4_AVAILABLE:
-            print("Warning: beautifulsoup4 not installed. HTML parsing will be limited.")
+            logger.warning("beautifulsoup4 not installed - HTML parsing will be limited")
         if not DDGS_AVAILABLE:
-            print("Warning: duckduckgo-search not installed. Web search will be unavailable.")
+            logger.warning("duckduckgo-search not installed - web search will be unavailable")
 
     @property
     def source_type(self) -> SourceType:

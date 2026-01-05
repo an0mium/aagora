@@ -26,6 +26,9 @@ import { OperationalModesPanel } from '@/components/OperationalModesPanel';
 import { RedTeamAnalysisPanel } from '@/components/RedTeamAnalysisPanel';
 import { ContraryViewsPanel } from '@/components/ContraryViewsPanel';
 import { RiskWarningsPanel } from '@/components/RiskWarningsPanel';
+import { AnalyticsPanel } from '@/components/AnalyticsPanel';
+import { CalibrationPanel } from '@/components/CalibrationPanel';
+import { ConsensusKnowledgeBase } from '@/components/ConsensusKnowledgeBase';
 import { VerdictCard } from '@/components/VerdictCard';
 import { CompareView, CompareButton } from '@/components/CompareView';
 import { DeepAuditView, DeepAuditToggle } from '@/components/DeepAuditView';
@@ -356,7 +359,10 @@ export default function Home() {
             <CitationsPanel events={events} />
             <HistoryPanel />
             <LeaderboardPanel wsMessages={events} loopId={effectiveLoopId} apiBase={API_URL} />
+            <CalibrationPanel apiBase={API_URL} />
             <TournamentPanel apiBase={API_URL} />
+            <AnalyticsPanel apiBase={API_URL} />
+            <ConsensusKnowledgeBase apiBase={API_URL} />
             <DebateBrowser />
             <InsightsPanel wsMessages={events} />
             <CruxPanel apiBase={API_URL} />
