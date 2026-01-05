@@ -560,3 +560,154 @@ def create_default_tasks() -> list[TournamentTask]:
             difficulty=0.4,
         ),
     ]
+
+
+class TournamentManager:
+    """
+    Read-only manager for accessing tournament data from database.
+
+    Used by API handlers to retrieve tournament results and standings.
+    """
+
+    def __init__(self, db_path: str):
+        """Initialize tournament manager with database path."""
+        self.db_path = Path(db_path)
+
+    def get_tournament(self) -> Optional[dict]:
+        """Get the tournament metadata."""
+        if not self.db_path.exists():
+            return None
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT tournament_id, name, format, champion, started_at, completed_at
+                FROM tournaments LIMIT 1
+            """)
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row:
+                return None
+
+            return {
+                "tournament_id": row[0],
+                "name": row[1],
+                "format": row[2],
+                "champion": row[3],
+                "started_at": row[4],
+                "completed_at": row[5],
+            }
+        except (sqlite3.Error, Exception):
+            return None
+
+    def get_current_standings(self) -> list[TournamentStanding]:
+        """Get current tournament standings sorted by points."""
+        if not self.db_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT standings FROM tournaments LIMIT 1")
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row or not row[0]:
+                return []
+
+            standings_json = json.loads(row[0])
+
+            # Convert to list of TournamentStanding objects
+            standings = []
+            for agent_name, stats in standings_json.items():
+                standing = TournamentStanding(
+                    agent_name=agent_name,
+                    wins=stats.get("wins", 0),
+                    losses=stats.get("losses", 0),
+                    draws=stats.get("draws", 0),
+                    points=stats.get("points", 0.0),
+                    total_score=stats.get("total_score", 0.0),
+                    matches_played=stats.get("wins", 0) + stats.get("losses", 0) + stats.get("draws", 0),
+                )
+                standings.append(standing)
+
+            # Sort by points and total_score (descending)
+            standings.sort(key=lambda s: (s.points, s.total_score), reverse=True)
+            return standings
+        except (sqlite3.Error, json.JSONDecodeError, Exception):
+            return []
+
+    def get_matches(self, limit: Optional[int] = None) -> list[dict]:
+        """Get tournament matches."""
+        if not self.db_path.exists():
+            return []
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            if limit:
+                cursor.execute("""
+                    SELECT match_id, round_num, participants, task_id, scores, winner,
+                           started_at, completed_at
+                    FROM tournament_matches
+                    ORDER BY round_num DESC, match_id DESC
+                    LIMIT ?
+                """, (limit,))
+            else:
+                cursor.execute("""
+                    SELECT match_id, round_num, participants, task_id, scores, winner,
+                           started_at, completed_at
+                    FROM tournament_matches
+                    ORDER BY round_num DESC, match_id DESC
+                """)
+
+            matches = []
+            for row in cursor.fetchall():
+                match_data = {
+                    "match_id": row[0],
+                    "round_num": row[1],
+                    "participants": json.loads(row[2]) if row[2] else [],
+                    "task_id": row[3],
+                    "scores": json.loads(row[4]) if row[4] else {},
+                    "winner": row[5],
+                    "started_at": row[6],
+                    "completed_at": row[7],
+                }
+                matches.append(match_data)
+
+            conn.close()
+            return matches
+        except (sqlite3.Error, json.JSONDecodeError, Exception):
+            return []
+
+    def get_match_summary(self) -> dict:
+        """Get summary statistics about tournament matches."""
+        if not self.db_path.exists():
+            return {"total_matches": 0, "decided_matches": 0, "max_round": 0}
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total_matches,
+                    SUM(CASE WHEN winner IS NOT NULL THEN 1 ELSE 0 END) as decided_matches,
+                    MAX(round_num) as max_round
+                FROM tournament_matches
+            """)
+            row = cursor.fetchone()
+            conn.close()
+
+            return {
+                "total_matches": row[0] or 0,
+                "decided_matches": row[1] or 0,
+                "max_round": row[2] or 0,
+            }
+        except (sqlite3.Error, Exception):
+            return {"total_matches": 0, "decided_matches": 0, "max_round": 0}

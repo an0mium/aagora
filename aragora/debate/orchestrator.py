@@ -724,6 +724,10 @@ class Arena:
                 "judge": StreamEventType.AGENT_MESSAGE,
                 "memory_recall": StreamEventType.MEMORY_RECALL,
                 "audience_drain": StreamEventType.AUDIENCE_DRAIN,
+                # Token streaming events
+                "token_start": StreamEventType.TOKEN_START,
+                "token_delta": StreamEventType.TOKEN_DELTA,
+                "token_end": StreamEventType.TOKEN_END,
             }
 
             stream_type = type_mapping.get(event_type)

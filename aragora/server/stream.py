@@ -1190,14 +1190,131 @@ class AiohttpUnifiedServer:
             )
 
     async def _handle_tournaments(self, request) -> 'aiohttp.web.Response':
-        """GET /api/tournaments - Tournament list."""
+        """GET /api/tournaments - Tournament list with real data."""
         import aiohttp.web as web
         origin = request.headers.get("Origin")
-        # Tournaments not yet implemented
-        return web.json_response(
-            {"tournaments": [], "count": 0},
-            headers=self._cors_headers(origin)
-        )
+
+        if not self.nomic_dir:
+            return web.json_response(
+                {"tournaments": [], "count": 0},
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            tournaments_dir = self.nomic_dir / "tournaments"
+            tournaments_list = []
+
+            if tournaments_dir.exists():
+                for db_file in sorted(tournaments_dir.glob("*.db")):
+                    try:
+                        from aragora.tournaments.tournament import TournamentManager
+                        manager = TournamentManager(db_path=str(db_file))
+
+                        # Get tournament metadata
+                        tournament = manager.get_tournament()
+                        standings = manager.get_current_standings()
+                        match_summary = manager.get_match_summary()
+
+                        if tournament:
+                            tournament["participants"] = len(standings)
+                            tournament["total_matches"] = match_summary["total_matches"]
+                            tournament["top_agent"] = standings[0].agent_name if standings else None
+                            tournaments_list.append(tournament)
+                    except Exception:
+                        continue  # Skip corrupted files
+
+            return web.json_response(
+                {"tournaments": tournaments_list, "count": len(tournaments_list)},
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Tournament list error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch tournaments", "tournaments": [], "count": 0},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
+
+    async def _handle_tournament_details(self, request) -> 'aiohttp.web.Response':
+        """GET /api/tournaments/{tournament_id} - Tournament details with standings."""
+        import aiohttp.web as web
+        import re
+        origin = request.headers.get("Origin")
+
+        # Extract tournament_id from URL
+        tournament_id = request.match_info.get('tournament_id', '')
+
+        # Validate tournament_id format (prevent path traversal)
+        if not re.match(r'^[a-zA-Z0-9_-]+$', tournament_id):
+            return web.json_response(
+                {"error": "Invalid tournament ID format"},
+                status=400,
+                headers=self._cors_headers(origin)
+            )
+
+        if not self.nomic_dir:
+            return web.json_response(
+                {"error": "Nomic directory not configured"},
+                status=503,
+                headers=self._cors_headers(origin)
+            )
+
+        try:
+            tournament_db = self.nomic_dir / "tournaments" / f"{tournament_id}.db"
+
+            if not tournament_db.exists():
+                return web.json_response(
+                    {"error": "Tournament not found"},
+                    status=404,
+                    headers=self._cors_headers(origin)
+                )
+
+            from aragora.tournaments.tournament import TournamentManager
+            manager = TournamentManager(db_path=str(tournament_db))
+
+            tournament = manager.get_tournament()
+            standings = manager.get_current_standings()
+            matches = manager.get_matches(limit=100)
+
+            if not tournament:
+                return web.json_response(
+                    {"error": "Tournament data not found"},
+                    status=404,
+                    headers=self._cors_headers(origin)
+                )
+
+            # Format standings for API response
+            standings_data = [
+                {
+                    "agent": s.agent_name,
+                    "wins": s.wins,
+                    "losses": s.losses,
+                    "draws": s.draws,
+                    "points": s.points,
+                    "total_score": round(s.total_score, 2),
+                    "matches_played": s.matches_played,
+                    "win_rate": round(s.win_rate * 100, 1),
+                }
+                for s in standings
+            ]
+
+            return web.json_response(
+                {
+                    "tournament": tournament,
+                    "standings": standings_data,
+                    "standings_count": len(standings_data),
+                    "recent_matches": matches,
+                    "matches_count": len(matches),
+                },
+                headers=self._cors_headers(origin)
+            )
+        except Exception as e:
+            logger.error(f"Tournament details error: {e}")
+            return web.json_response(
+                {"error": "Failed to fetch tournament details"},
+                status=500,
+                headers=self._cors_headers(origin)
+            )
 
     async def _handle_memory_tier_stats(self, request) -> 'aiohttp.web.Response':
         """GET /api/memory/tier-stats - Continuum memory statistics."""
@@ -1531,6 +1648,7 @@ class AiohttpUnifiedServer:
         app.router.add_get("/api/flips/summary", self._handle_flips_summary)
         app.router.add_get("/api/flips/recent", self._handle_flips_recent)
         app.router.add_get("/api/tournaments", self._handle_tournaments)
+        app.router.add_get("/api/tournaments/{tournament_id}", self._handle_tournament_details)
         app.router.add_get("/api/memory/tier-stats", self._handle_memory_tier_stats)
         app.router.add_get("/api/laboratory/emergent-traits", self._handle_laboratory_emergent_traits)
         app.router.add_get("/api/laboratory/cross-pollinations/suggest", self._handle_laboratory_cross_pollinations)
