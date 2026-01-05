@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { DEFAULT_AGENTS, DEFAULT_ROUNDS, AGENT_DISPLAY_NAMES } from '@/config';
 
 interface DebateInputProps {
   apiBase: string;
@@ -41,8 +42,8 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
   const [question, setQuestion] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [agents, setAgents] = useState('grok,anthropic-api,openai-api,deepseek,gemini');
-  const [rounds, setRounds] = useState(3);
+  const [agents, setAgents] = useState(DEFAULT_AGENTS);
+  const [rounds, setRounds] = useState(DEFAULT_ROUNDS);
   const [apiStatus, setApiStatus] = useState<ApiStatus>('checking');
   const [recommendations, setRecommendations] = useState<AgentRecommendation[]>([]);
   const [detectedDomain, setDetectedDomain] = useState<string>('general');

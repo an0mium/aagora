@@ -14,6 +14,7 @@ import time
 from typing import Optional, Dict, Any
 from urllib.parse import parse_qs
 
+from aragora.config import TOKEN_TTL_SECONDS, DEFAULT_RATE_LIMIT, IP_RATE_LIMIT, SHAREABLE_LINK_TTL
 from aragora.server.cors_config import cors_config
 
 
@@ -23,11 +24,11 @@ class AuthConfig:
     def __init__(self):
         self.enabled = False
         self.api_token: Optional[str] = None
-        self.token_ttl = 3600  # 1 hour default
+        self.token_ttl = TOKEN_TTL_SECONDS
         self.allowed_origins: list[str] = cors_config.get_origins_list()  # Centralized CORS
         # Rate limiting
-        self.rate_limit_per_minute = 60  # Default requests per minute per token
-        self.ip_rate_limit_per_minute = 120  # Default requests per minute per IP (more lenient)
+        self.rate_limit_per_minute = DEFAULT_RATE_LIMIT
+        self.ip_rate_limit_per_minute = IP_RATE_LIMIT
         self._token_request_counts: Dict[str, list] = {}  # token -> timestamps
         self._ip_request_counts: Dict[str, list] = {}  # IP -> timestamps
         self._rate_limit_lock = threading.Lock()  # Thread-safe rate limiting
@@ -318,7 +319,7 @@ def check_auth(headers: Dict[str, Any], query_string: str = "", loop_id: str = "
     return True, remaining
 
 
-def generate_shareable_link(base_url: str, loop_id: str, expires_in: int = 3600) -> str:
+def generate_shareable_link(base_url: str, loop_id: str, expires_in: int = SHAREABLE_LINK_TTL) -> str:
     """Generate a shareable link with embedded token."""
     token = auth_config.generate_token(loop_id, expires_in)
     if not token:
