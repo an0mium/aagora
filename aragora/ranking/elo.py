@@ -579,20 +579,18 @@ class EloSystem:
     def get_leaderboard(self, limit: int = 20, domain: str = None) -> list[AgentRating]:
         """Get top agents by ELO."""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT agent_name, elo, domain_elos, wins, losses, draws,
-                   debates_count, critiques_accepted, critiques_total, updated_at
-            FROM ratings
-            ORDER BY elo DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT agent_name, elo, domain_elos, wins, losses, draws,
+                       debates_count, critiques_accepted, critiques_total, updated_at
+                FROM ratings
+                ORDER BY elo DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
 
         ratings = [
             AgentRating(
