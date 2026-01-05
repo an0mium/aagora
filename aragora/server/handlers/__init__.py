@@ -7,6 +7,7 @@ Each module handles a specific domain of endpoints:
 - system: Health checks, nomic state, modes
 - pulse: Trending topics from multiple sources
 - analytics: Aggregated metrics and statistics
+- consensus: Consensus memory and dissent tracking
 
 Usage:
     from aragora.server.handlers import DebatesHandler, AgentsHandler, SystemHandler
@@ -29,6 +30,8 @@ from .system import SystemHandler
 from .pulse import PulseHandler
 from .analytics import AnalyticsHandler
 from .metrics import MetricsHandler
+from .consensus import ConsensusHandler
+from .belief import BeliefHandler
 
 __all__ = [
     # Base utilities
@@ -43,4 +46,6 @@ __all__ = [
     "PulseHandler",
     "AnalyticsHandler",
     "MetricsHandler",
+    "ConsensusHandler",
+    "BeliefHandler",
 ]
