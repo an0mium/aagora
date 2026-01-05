@@ -767,6 +767,42 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         cls._handlers_initialized = True
         logger.info("[handlers] Modular handlers initialized (19 handlers)")
 
+        # Log resource availability for observability
+        cls._log_resource_availability(nomic_dir)
+
+    @classmethod
+    def _log_resource_availability(cls, nomic_dir) -> None:
+        """Log which optional resources are available at startup."""
+        resources = {
+            "storage": cls.storage is not None,
+            "elo_system": cls.elo_system is not None,
+            "debate_embeddings": cls.debate_embeddings is not None,
+            "document_store": cls.document_store is not None,
+            "nomic_dir": nomic_dir is not None,
+        }
+
+        # Check database files if nomic_dir exists
+        if nomic_dir:
+            db_files = [
+                ("positions_db", "aragora_positions.db"),
+                ("personas_db", "aragora_personas.db"),
+                ("grounded_db", "grounded_positions.db"),
+                ("insights_db", "insights.db"),
+                ("calibration_db", "agent_calibration.db"),
+                ("embeddings_db", "debate_embeddings.db"),
+            ]
+            for name, filename in db_files:
+                resources[name] = (nomic_dir / filename).exists()
+
+        available = [k for k, v in resources.items() if v]
+        unavailable = [k for k, v in resources.items() if not v]
+
+        if unavailable:
+            logger.info(f"[resources] Available: {', '.join(available)}")
+            logger.warning(f"[resources] Unavailable: {', '.join(unavailable)}")
+        else:
+            logger.info(f"[resources] All resources available: {', '.join(available)}")
+
     def _try_modular_handler(self, path: str, query: dict) -> bool:
         """Try to handle request via modular handlers.
 
@@ -826,7 +862,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
         return False
 
-    def _validate_content_length(self, max_size: int = None) -> Optional[int]:
+    def _validate_content_length(self, max_size: int | None = None) -> Optional[int]:
         """Validate Content-Length header for DoS protection.
 
         Returns content length if valid, None if invalid (error already sent).
@@ -1736,10 +1772,19 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             UnifiedHandler._debate_executor.submit(run_debate)
         except RuntimeError as e:
             # Thread pool full or shut down
+            logger.warning(f"Cannot submit debate: {e}")
             self._send_json({
                 "success": False,
                 "error": "Server at capacity. Please try again later.",
             }, status=503)
+            return
+        except (AttributeError, TypeError) as e:
+            # Executor not initialized or invalid state
+            logger.error(f"Failed to submit debate: {type(e).__name__}: {e}")
+            self._send_json({
+                "success": False,
+                "error": "Internal server error",
+            }, status=500)
             return
 
         # Return immediately with debate ID
@@ -2504,7 +2549,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "grounded_persona")}, status=500)
 
-    def _get_identity_prompt(self, agent: str, sections: str = None) -> None:
+    def _get_identity_prompt(self, agent: str, sections: str | None = None) -> None:
         """Get evidence-grounded identity prompt for agent initialization."""
         if not self._check_rate_limit():
             return
@@ -3731,7 +3776,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "genesis_stats")}, status=500)
 
-    def _get_genesis_events(self, limit: int, event_type: str = None) -> None:
+    def _get_genesis_events(self, limit: int, event_type: str | None = None) -> None:
         """Get recent genesis events."""
         if not self._check_rate_limit():
             return
@@ -3977,7 +4022,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "opponent_briefing")}, status=500)
 
-    def _get_calibration_curve(self, agent: str, buckets: int, domain: str = None) -> None:
+    def _get_calibration_curve(self, agent: str, buckets: int, domain: str | None = None) -> None:
         """Get calibration curve (expected vs actual accuracy per bucket)."""
         if not self._check_rate_limit():
             return
@@ -5453,7 +5498,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "load_bearing_claims")}, status=500)
 
-    def _get_calibration_summary(self, agent: str, domain: str = None) -> None:
+    def _get_calibration_summary(self, agent: str, domain: str | None = None) -> None:
         """Get comprehensive calibration summary for an agent."""
         if not self._check_rate_limit():
             return
