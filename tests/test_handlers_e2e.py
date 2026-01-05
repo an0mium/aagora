@@ -81,10 +81,12 @@ def mock_storage():
 def mock_elo_system():
     """Create a mock EloSystem."""
     elo = Mock()
-    elo.get_leaderboard.return_value = [
+    leaderboard_data = [
         {"name": "claude", "rating": 1500, "wins": 10, "losses": 5},
         {"name": "gemini", "rating": 1480, "wins": 8, "losses": 7},
     ]
+    elo.get_leaderboard.return_value = leaderboard_data
+    elo.get_cached_leaderboard.return_value = leaderboard_data  # Same data for cache
     elo.get_rating.return_value = 1500
     elo.get_agent_stats.return_value = {"wins": 10, "losses": 5, "win_rate": 0.67}
     elo.get_agent_history.return_value = [
@@ -326,7 +328,8 @@ class TestAgentsHandlerE2E:
     def test_leaderboard_limit_capped(self, agents_handler, mock_elo_system):
         """Test /api/leaderboard caps limit at 50."""
         agents_handler.handle("/api/leaderboard", {"limit": 100}, None)
-        mock_elo_system.get_leaderboard.assert_called_with(limit=50, domain=None)
+        # When domain=None, handler uses get_cached_leaderboard if available
+        mock_elo_system.get_cached_leaderboard.assert_called_with(limit=50)
 
     def test_recent_matches_returns_array(self, agents_handler):
         """Test /api/matches/recent returns recent matches."""
@@ -432,9 +435,9 @@ class TestHandlerRoutingE2E:
 
     def test_query_param_conversion(self, agents_handler, mock_elo_system):
         """Test query parameters are correctly converted."""
-        # Integer conversion
+        # Integer conversion - when domain=None, uses cached leaderboard
         agents_handler.handle("/api/leaderboard", {"limit": "25"}, None)
-        mock_elo_system.get_leaderboard.assert_called_with(limit=25, domain=None)
+        mock_elo_system.get_cached_leaderboard.assert_called_with(limit=25)
 
     def test_error_response_format(self, debates_handler, mock_storage):
         """Test error responses follow consistent format."""

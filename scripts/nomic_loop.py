@@ -1353,6 +1353,19 @@ class NomicLoop:
         self._cached_meta_observations: list = []
         self._last_meta_quality: float = 1.0
 
+        # Deadlock detection and recovery state
+        self._cycle_history: list = []  # Last N cycle outcomes for pattern detection
+        self._max_cycle_history = 5
+        self._phase_progress: dict = {}  # Progress tracking within phases
+        self._design_recovery_attempts: set = set()  # Track recovery strategies tried
+        self._deadlock_count: int = 0  # Consecutive deadlocks
+        self._warned_50: bool = False  # Timeout warning flags
+        self._warned_75: bool = False
+        self._warned_90: bool = False
+        self._fast_track_mode: bool = False  # Force simplified designs when running out of time
+        self._force_judge_consensus: bool = False  # Break oscillations with judge
+        self._cycle_start_time: datetime = None  # Track cycle start for warnings
+
         # Phase 5: EloSystem for agent skill tracking
         self.elo_system = None
         if ELO_AVAILABLE:
@@ -1722,7 +1735,7 @@ class NomicLoop:
 
     def _check_cycle_deadline(self, cycle_deadline: datetime, current_phase: str) -> bool:
         """
-        Check if cycle has exceeded its time budget.
+        Check if cycle has exceeded its time budget with escalation warnings.
 
         Args:
             cycle_deadline: When this cycle should end
@@ -1731,11 +1744,130 @@ class NomicLoop:
         Returns:
             True if cycle should continue, False if deadline exceeded
         """
-        if datetime.now() > cycle_deadline:
-            elapsed = (datetime.now() - (cycle_deadline - timedelta(seconds=self.max_cycle_seconds))).total_seconds()
+        now = datetime.now()
+
+        # Calculate progress
+        if self._cycle_start_time:
+            elapsed = (now - self._cycle_start_time).total_seconds()
+            remaining = (cycle_deadline - now).total_seconds()
+            progress_pct = elapsed / self.max_cycle_seconds * 100
+
+            # 50% warning
+            if progress_pct >= 50 and not self._warned_50:
+                self._log(f"  [WARNING] Cycle at 50% time budget ({elapsed/60:.0f}m elapsed, phase: {current_phase})")
+                self._warned_50 = True
+
+            # 75% warning
+            if progress_pct >= 75 and not self._warned_75:
+                self._log(f"  [WARNING] Cycle at 75% time budget ({remaining/60:.0f}m remaining, phase: {current_phase})")
+                self._warned_75 = True
+
+            # 90% critical - enable fast-track mode
+            if progress_pct >= 90 and not self._warned_90:
+                self._log(f"  [CRITICAL] Cycle at 90% - enabling fast-track mode (phase: {current_phase})")
+                self._fast_track_mode = True
+                self._warned_90 = True
+
+        if now > cycle_deadline:
+            elapsed = (now - (cycle_deadline - timedelta(seconds=self.max_cycle_seconds))).total_seconds()
             self._log(f"  [TIMEOUT] Cycle exceeded {self.max_cycle_seconds}s limit at phase '{current_phase}' ({elapsed:.0f}s elapsed)")
             return False
         return True
+
+    def _record_cycle_outcome(self, outcome: str, details: dict = None):
+        """Track cycle outcome for deadlock detection."""
+        self._cycle_history.append({
+            "cycle": self.cycle_count,
+            "outcome": outcome,
+            "timestamp": datetime.now().isoformat(),
+            "details": details or {}
+        })
+        if len(self._cycle_history) > self._max_cycle_history:
+            self._cycle_history.pop(0)
+
+    def _detect_cycle_deadlock(self) -> str:
+        """Detect if we're stuck in a cycle pattern. Returns deadlock type or empty string."""
+        if len(self._cycle_history) < 3:
+            return ""
+
+        # Check for repeated same outcome (e.g., design_no_consensus 3 times)
+        recent = [h["outcome"] for h in self._cycle_history[-3:]]
+        if len(set(recent)) == 1 and recent[0] != "success":
+            return f"Repeated failure: {recent[0]} for 3 cycles"
+
+        # Check for oscillating pattern (A-B-A-B)
+        if len(self._cycle_history) >= 4:
+            last4 = [h["outcome"] for h in self._cycle_history[-4:]]
+            if last4[0] == last4[2] and last4[1] == last4[3] and last4[0] != last4[1]:
+                return f"Oscillating pattern: {last4[0]} <-> {last4[1]}"
+
+        return ""
+
+    def _track_phase_progress(self, phase: str, round_num: int, consensus: float, changed: bool) -> bool:
+        """Track progress within a phase to detect stalls. Returns True if stalled."""
+        key = f"{self.cycle_count}_{phase}"
+        if key not in self._phase_progress:
+            self._phase_progress[key] = []
+
+        self._phase_progress[key].append({
+            "round": round_num,
+            "consensus": consensus,
+            "changed": changed,
+            "timestamp": datetime.now()
+        })
+
+        # Detect stall: 3+ rounds with <5% consensus change and no position changes
+        history = self._phase_progress[key]
+        if len(history) >= 3:
+            recent = history[-3:]
+            consensus_change = abs(recent[-1]["consensus"] - recent[0]["consensus"])
+            any_changed = any(r["changed"] for r in recent)
+
+            if consensus_change < 0.05 and not any_changed:
+                self._log(f"  [STALL] {phase} stuck for 3 rounds (consensus: {recent[-1]['consensus']:.0%})")
+                return True
+        return False
+
+    async def _handle_deadlock(self, deadlock_type: str) -> str:
+        """Handle detected deadlock with appropriate action. Returns action taken."""
+        self._log(f"  [DEADLOCK] Detected: {deadlock_type}")
+
+        if "Repeated failure" in deadlock_type:
+            # Clear cached state that might be causing loops
+            self._cached_cruxes = [] if hasattr(self, '_cached_cruxes') else []
+            self._phase_progress = {}
+            self._design_recovery_attempts = set()
+            self._log("  [DEADLOCK] Cleared cached state for fresh attempt")
+
+            # Try different agent configuration after multiple deadlocks
+            if self._deadlock_count >= 2:
+                self._log("  [DEADLOCK] Will rotate agent roles for fresh perspective")
+                self._force_judge_consensus = True  # Force judge to break ties
+
+            self._deadlock_count += 1
+            return "retry_with_reset"
+
+        elif "Oscillating" in deadlock_type:
+            # Force judge consensus to break oscillation
+            self._log("  [DEADLOCK] Forcing judge consensus mode to break oscillation")
+            self._force_judge_consensus = True
+            return "force_judge"
+
+        elif self._deadlock_count >= 3:
+            # After 3 deadlocks, skip to next improvement
+            self._log("  [DEADLOCK] Max retries (3) reached, skipping this improvement")
+            return "skip"
+
+        return "continue"
+
+    def _reset_cycle_state(self):
+        """Reset per-cycle state at the start of each cycle."""
+        self._warned_50 = False
+        self._warned_75 = False
+        self._warned_90 = False
+        self._fast_track_mode = False
+        self._design_recovery_attempts = set()
+        self._phase_progress = {}
 
     async def _check_agent_health(self, agent, agent_name: str) -> bool:
         """
@@ -7551,6 +7683,18 @@ Be concise - this is a quality gate, not a full review."""
         cycle_start = datetime.now()
         cycle_deadline = cycle_start + timedelta(seconds=self.max_cycle_seconds)
 
+        # Reset per-cycle state and track start time
+        self._reset_cycle_state()
+        self._cycle_start_time = cycle_start
+
+        # Check for deadlock pattern from previous cycles
+        deadlock = self._detect_cycle_deadlock()
+        if deadlock:
+            action = await self._handle_deadlock(deadlock)
+            if action == "skip":
+                self._log(f"  [DEADLOCK] Skipping cycle due to repeated failures")
+                return {"outcome": "skipped_deadlock", "cycle": self.cycle_count}
+
         # Update circuit breaker cooldowns at cycle start
         self.circuit_breaker.start_new_cycle()
 
@@ -7653,6 +7797,7 @@ Be concise - this is a quality gate, not a full review."""
         if not debate_result.get("consensus_reached"):
             self._log("No consensus reached. Ending cycle.")
             cycle_result["outcome"] = "no_consensus"
+            self._record_cycle_outcome("no_consensus", {"phase": "debate"})
             return cycle_result
 
         # === Deadline check after debate ===
@@ -7742,6 +7887,7 @@ Be concise - this is a quality gate, not a full review."""
                 cycle_result["outcome"] = "design_no_consensus"
                 cycle_result["vote_counts"] = vote_counts
                 cycle_result["proposals_checked"] = len(individual_proposals) if individual_proposals else 0
+                self._record_cycle_outcome("design_no_consensus", {"vote_counts": vote_counts})
                 return cycle_result
         elif design_confidence < 0.5:
             self._log("  [warning] Design has low confidence - proceeding with caution")
@@ -8341,6 +8487,16 @@ Working directory: {self.aragora_path}
 
         # Phase 4: Agent Evolution - run tournament periodically (every 20 cycles)
         await self._run_tournament_if_due()
+
+        # Record cycle outcome for deadlock detection
+        self._record_cycle_outcome(cycle_result.get("outcome", "unknown"), {
+            "duration": cycle_result.get("duration_seconds"),
+            "phases_completed": list(cycle_result.get("phases", {}).keys()),
+        })
+
+        # Reset deadlock counter on success
+        if cycle_result.get("outcome") == "success":
+            self._deadlock_count = 0
 
         return cycle_result
 
