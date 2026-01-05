@@ -22,6 +22,30 @@ from aragora.memory.store import CritiqueStore
 from aragora.core import Environment
 
 
+def get_event_emitter_if_available(server_url: str = "http://localhost:8080"):
+    """
+    Try to connect to the streaming server for audience participation.
+    Returns event emitter if server is available, None otherwise.
+    """
+    try:
+        import urllib.request
+        import json
+
+        # Quick health check
+        req = urllib.request.Request(f"{server_url}/api/health", method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            if resp.status == 200:
+                # Server is up, try to get emitter
+                try:
+                    from aragora.server.stream import StreamEmitter
+                    return StreamEmitter(server_url=server_url)
+                except ImportError:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
 def parse_agents(agents_str: str) -> list[tuple[str, str]]:
     """Parse agent string like 'codex,claude:critic,openai'."""
     agents = []
@@ -44,6 +68,8 @@ async def run_debate(
     context: str = "",
     learn: bool = True,
     db_path: str = "agora_memory.db",
+    enable_audience: bool = True,
+    server_url: str = "http://localhost:8080",
 ):
     """Run a multi-agent debate."""
 
@@ -85,8 +111,15 @@ async def run_debate(
     # Create memory store
     memory = CritiqueStore(db_path) if learn else None
 
+    # Try to get event emitter for audience participation
+    event_emitter = None
+    if enable_audience:
+        event_emitter = get_event_emitter_if_available(server_url)
+        if event_emitter:
+            print("[audience] Connected to streaming server - audience participation enabled")
+
     # Run debate
-    arena = Arena(env, agents, protocol, memory)
+    arena = Arena(env, agents, protocol, memory, event_emitter=event_emitter)
     result = await arena.run()
 
     # Store result

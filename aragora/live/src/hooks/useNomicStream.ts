@@ -271,8 +271,17 @@ export function useNomicStream(wsUrl: string = DEFAULT_WS_URL) {
     }
   }, []);
 
-  const sendMessage = useCallback((message: object) => {
+  const sendMessage = useCallback((message: Record<string, unknown>) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      // Auto-inject loop_id for audience participation messages
+      const messageType = message.type as string;
+      if (
+        (messageType === 'user_vote' || messageType === 'user_suggestion') &&
+        !message.loop_id &&
+        selectedLoopIdRef.current
+      ) {
+        message = { ...message, loop_id: selectedLoopIdRef.current };
+      }
       wsRef.current.send(JSON.stringify(message));
     }
   }, []);
