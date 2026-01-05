@@ -128,24 +128,27 @@ class BoundedTTLCache:
 _cache = BoundedTTLCache()
 
 
-def ttl_cache(ttl_seconds: float = 60.0, key_prefix: str = ""):
+def ttl_cache(ttl_seconds: float = 60.0, key_prefix: str = "", skip_self: bool = True):
     """
     Decorator for caching function results with TTL expiry.
 
     Args:
         ttl_seconds: How long to cache results (default 60s)
         key_prefix: Prefix for cache key to namespace different functions
+        skip_self: If True, skip first arg (self) when building cache key for methods
 
     Usage:
         @ttl_cache(ttl_seconds=300, key_prefix="leaderboard")
-        def get_expensive_data(limit: int):
+        def _get_leaderboard(self, limit: int):
             ...
     """
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # Skip 'self' when building cache key for methods
+            cache_args = args[1:] if skip_self and args else args
             # Build cache key from function name, args and kwargs
-            cache_key = f"{key_prefix}:{func.__name__}:{args}:{sorted(kwargs.items())}"
+            cache_key = f"{key_prefix}:{func.__name__}:{cache_args}:{sorted(kwargs.items())}"
 
             hit, cached_value = _cache.get(cache_key, ttl_seconds)
             if hit:

@@ -1606,7 +1606,12 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             prompt = self._build_proposal_prompt(agent)
             print(f"  {agent.name}: generating...", flush=True)
             try:
-                result = await self._generate_with_agent(agent, prompt, context)
+                # Per-agent timeout prevents one stalled agent from blocking entire debate
+                result = await self._with_timeout(
+                    self._generate_with_agent(agent, prompt, context),
+                    agent.name,
+                    timeout_seconds=90.0,
+                )
                 return (agent, result)
             except Exception as e:
                 return (agent, e)
@@ -1723,7 +1728,12 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 """Generate critique and return (critic, proposal_agent, result_or_error)."""
                 print(f"  {critic.name} -> {proposal_agent}: critiquing...", flush=True)
                 try:
-                    crit_result = await self._critique_with_agent(critic, proposal, self.env.task, context)
+                    # Per-agent timeout prevents one stalled agent from blocking entire debate
+                    crit_result = await self._with_timeout(
+                        self._critique_with_agent(critic, proposal, self.env.task, context),
+                        critic.name,
+                        timeout_seconds=90.0,
+                    )
                     return (critic, proposal_agent, crit_result)
                 except Exception as e:
                     return (critic, proposal_agent, e)
@@ -1805,14 +1815,21 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
             ]
 
             if agent_critiques:
-                # Build revision tasks for all proposers in parallel
+                # Build revision tasks for all proposers in parallel (with per-agent timeout)
                 revision_tasks = []
                 revision_agents = []
                 for agent in proposers:
                     revision_prompt = self._build_revision_prompt(
                         agent, proposals[agent.name], agent_critiques[-len(critics) :]
                     )
-                    revision_tasks.append(self._generate_with_agent(agent, revision_prompt, context))
+                    # Per-agent timeout prevents one stalled agent from blocking entire debate
+                    revision_tasks.append(
+                        self._with_timeout(
+                            self._generate_with_agent(agent, revision_prompt, context),
+                            agent.name,
+                            timeout_seconds=90.0,
+                        )
+                    )
                     revision_agents.append(agent)
 
                 # Execute all revisions in parallel
@@ -1822,7 +1839,10 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 for agent, revised in zip(revision_agents, revision_results):
                     if isinstance(revised, Exception):
                         print(f"  {agent.name} revision ERROR: {revised}")
+                        self.circuit_breaker.record_failure(agent.name)
                         continue
+
+                    self.circuit_breaker.record_success(agent.name)
 
                     proposals[agent.name] = revised
                     print(f"  {agent.name} revised: {revised}")  # Full content
@@ -2666,6 +2686,22 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                 await self.debate_embeddings.index_debate(artifact)
         except Exception as e:
             logger.debug("Async debate indexing failed: %s", e)
+
+    async def _with_timeout(
+        self, coro, agent_name: str, timeout_seconds: float = 90.0
+    ):
+        """
+        Wrap coroutine with per-agent timeout.
+
+        If the agent times out, records a circuit breaker failure and raises TimeoutError.
+        This prevents a single stalled agent from blocking the entire debate.
+        """
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            self.circuit_breaker.record_failure(agent_name)
+            logger.warning(f"Agent {agent_name} timed out after {timeout_seconds}s")
+            raise TimeoutError(f"Agent {agent_name} timed out after {timeout_seconds}s")
 
     async def _generate_with_agent(
         self, agent: Agent, prompt: str, context: list[Message]
