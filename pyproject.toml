@@ -49,6 +49,7 @@ dev = [
     "black>=23.0",
     "ruff>=0.1",
     "bandit>=1.7",
+    "mypy>=1.8",
 ]
 monitoring = [
     "prometheus-client>=0.19",
@@ -104,3 +105,19 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = [
+    "tests/",
+    "build/",
+    "dist/",
+    ".venv/",
+    "node_modules/",
+]
+# Start non-strict, enable incrementally
+check_untyped_defs = false
+disallow_untyped_defs = false
