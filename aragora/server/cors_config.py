@@ -38,6 +38,13 @@ class CORSConfig:
         else:
             self.allowed_origins = DEFAULT_ORIGINS.copy()
 
+        # Security: Reject wildcard origins which bypass CORS protection
+        if "*" in self.allowed_origins:
+            raise ValueError(
+                "Wildcard origin '*' is not allowed for security. "
+                "Specify explicit origins in ARAGORA_ALLOWED_ORIGINS."
+            )
+
     def is_origin_allowed(self, origin: str) -> bool:
         """Check if an origin is in the allowlist."""
         return origin in self.allowed_origins

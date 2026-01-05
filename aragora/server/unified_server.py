@@ -4561,6 +4561,17 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         self.send_header('X-XSS-Protection', '1; mode=block')
         # Referrer policy - don't leak internal URLs
         self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        # Content Security Policy - prevent XSS and data injection
+        self.send_header('Content-Security-Policy',
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self' wss: https:; "
+            "font-src 'self' data:; "
+            "frame-ancestors 'none'")
+        # HTTP Strict Transport Security - enforce HTTPS
+        self.send_header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
 
     def _add_cors_headers(self) -> None:
         """Add CORS headers with origin validation."""

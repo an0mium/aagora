@@ -713,6 +713,67 @@ except ImportError:
     TrendingTopic = None
 
 
+# =============================================================================
+# Circuit Breaker for Agent Failure Handling
+# =============================================================================
+
+class AgentCircuitBreaker:
+    """
+    Circuit breaker pattern for agent reliability.
+
+    Tracks consecutive failures per agent and temporarily disables
+    agents that fail repeatedly to prevent wasting cycles on broken agents.
+    """
+
+    def __init__(self, failure_threshold: int = 3, cooldown_cycles: int = 2):
+        """
+        Initialize circuit breaker.
+
+        Args:
+            failure_threshold: Number of consecutive failures before tripping
+            cooldown_cycles: Number of cycles to skip after tripping
+        """
+        self.failure_threshold = failure_threshold
+        self.cooldown_cycles = cooldown_cycles
+        self.failures: dict[str, int] = {}  # agent_name -> consecutive failure count
+        self.cooldowns: dict[str, int] = {}  # agent_name -> cycles remaining in cooldown
+
+    def record_success(self, agent_name: str) -> None:
+        """Reset failure count on success."""
+        self.failures[agent_name] = 0
+
+    def record_failure(self, agent_name: str) -> bool:
+        """
+        Record a failure and potentially trip the circuit.
+
+        Returns:
+            True if circuit just tripped (agent now in cooldown)
+        """
+        self.failures[agent_name] = self.failures.get(agent_name, 0) + 1
+        if self.failures[agent_name] >= self.failure_threshold:
+            self.cooldowns[agent_name] = self.cooldown_cycles
+            self.failures[agent_name] = 0  # Reset for next time
+            return True
+        return False
+
+    def is_available(self, agent_name: str) -> bool:
+        """Check if agent is available (not in cooldown)."""
+        return self.cooldowns.get(agent_name, 0) <= 0
+
+    def start_new_cycle(self) -> None:
+        """Decrement cooldowns at start of each cycle."""
+        for agent_name in list(self.cooldowns.keys()):
+            if self.cooldowns[agent_name] > 0:
+                self.cooldowns[agent_name] -= 1
+
+    def get_status(self) -> dict:
+        """Get circuit breaker status for all agents."""
+        return {
+            "failures": dict(self.failures),
+            "cooldowns": dict(self.cooldowns),
+        }
+
+
 class NomicLoop:
     """
     Autonomous self-improvement loop for aragora.
@@ -742,6 +803,7 @@ class NomicLoop:
         use_genesis: bool = False,
         enable_persistence: bool = True,
         disable_rollback: bool = False,  # Disable rollback on verification failure
+        max_cycle_seconds: int = 7200,  # 2 hour cycle timeout
     ):
         self.aragora_path = Path(aragora_path or Path(__file__).parent.parent)
         self.max_cycles = max_cycles
@@ -749,8 +811,12 @@ class NomicLoop:
         self.auto_commit = auto_commit
         self.initial_proposal = initial_proposal
         self.disable_rollback = disable_rollback
+        self.max_cycle_seconds = max_cycle_seconds
         self.cycle_count = 0
         self.history = []
+
+        # Circuit breaker for agent reliability
+        self.circuit_breaker = AgentCircuitBreaker(failure_threshold=3, cooldown_cycles=2)
 
         # Generate unique loop ID for this run
         self.loop_id = f"nomic-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -1287,6 +1353,53 @@ class NomicLoop:
             except Exception:
                 return None
         return None
+
+    def _check_cycle_deadline(self, cycle_deadline: datetime, current_phase: str) -> bool:
+        """
+        Check if cycle has exceeded its time budget.
+
+        Args:
+            cycle_deadline: When this cycle should end
+            current_phase: Name of current phase for logging
+
+        Returns:
+            True if cycle should continue, False if deadline exceeded
+        """
+        if datetime.now() > cycle_deadline:
+            elapsed = (datetime.now() - (cycle_deadline - timedelta(seconds=self.max_cycle_seconds))).total_seconds()
+            self._log(f"  [TIMEOUT] Cycle exceeded {self.max_cycle_seconds}s limit at phase '{current_phase}' ({elapsed:.0f}s elapsed)")
+            return False
+        return True
+
+    async def _check_agent_health(self, agent, agent_name: str) -> bool:
+        """
+        Quick health check to verify agent is responsive.
+
+        Args:
+            agent: The agent object to check
+            agent_name: Name for logging
+
+        Returns:
+            True if agent responded within timeout
+        """
+        try:
+            # Simple health probe with 15 second timeout
+            await asyncio.wait_for(
+                agent.generate("Respond with OK to confirm you are ready.", context=[]),
+                timeout=15
+            )
+            self.circuit_breaker.record_success(agent_name)
+            return True
+        except asyncio.TimeoutError:
+            self._log(f"  [health] Agent {agent_name} health check timed out")
+            tripped = self.circuit_breaker.record_failure(agent_name)
+            if tripped:
+                self._log(f"  [circuit-breaker] Agent {agent_name} disabled for {self.circuit_breaker.cooldown_cycles} cycles")
+            return False
+        except Exception as e:
+            self._log(f"  [health] Agent {agent_name} health check failed: {e}")
+            self.circuit_breaker.record_failure(agent_name)
+            return False
 
     def _create_backup(self, reason: str = "pre_cycle") -> Path:
         """Create a backup of protected files before making changes."""
@@ -2544,11 +2657,20 @@ The most valuable proposals combine deep analysis with actionable implementation
 
             if len(participants) >= 2:
                 domain = self._detect_domain(task)
+
+                # Calculate confidence weight from probe results (P13: probe → ELO feedback)
+                confidence_weight = 1.0
+                if hasattr(self, '_last_probe_weights') and self._last_probe_weights:
+                    weights = [self._last_probe_weights.get(p, 0.7) for p in participants]
+                    confidence_weight = sum(weights) / len(weights) if weights else 1.0
+                    self._log(f"  [elo] Confidence weight from probes: {confidence_weight:.2f}")
+
                 changes = self.elo_system.record_match(
                     debate_id=f"cycle-{self.cycle_count}",
                     participants=participants,
                     scores=scores,
-                    domain=domain
+                    domain=domain,
+                    confidence_weight=confidence_weight,
                 )
                 self._log(f"  [elo] Updated ratings for {len(participants)} agents in {domain}")
 
@@ -4977,8 +5099,11 @@ Recent changes:
                 )
                 reliable_count = sum(1 for w in agent_weights.values() if w >= 0.7)
                 self._log(f"  [integration] Agent weights: {reliable_count}/{len(debate_team)} reliable")
+                # Store for ELO confidence weighting (P13: probe → ELO feedback)
+                self._last_probe_weights = agent_weights
             except Exception as e:
                 self._log(f"  [integration] Probing failed: {e}")
+                self._last_probe_weights = {}
 
         # Phase 9: Inject grounded personas into agent system prompts
         self._inject_grounded_personas(debate_team)
@@ -6600,11 +6725,21 @@ Be concise - this is a quality gate, not a full review."""
         """Run one complete improvement cycle with safety backup/restore."""
         self.cycle_count += 1
         cycle_start = datetime.now()
+        cycle_deadline = cycle_start + timedelta(seconds=self.max_cycle_seconds)
+
+        # Update circuit breaker cooldowns at cycle start
+        self.circuit_breaker.start_new_cycle()
 
         self._log("\n" + "=" * 70)
         self._log(f"NOMIC CYCLE {self.cycle_count}")
         self._log(f"Started: {cycle_start.isoformat()}")
+        self._log(f"Deadline: {cycle_deadline.isoformat()} ({self.max_cycle_seconds}s budget)")
         self._log("=" * 70)
+
+        # Log circuit breaker status
+        cb_status = self.circuit_breaker.get_status()
+        if any(cb_status["cooldowns"].values()):
+            self._log(f"  [circuit-breaker] Agents in cooldown: {[k for k,v in cb_status['cooldowns'].items() if v > 0]}")
 
         # Security: Verify protected files haven't been tampered with
         all_ok, modified = verify_protected_files_unchanged(self.aragora_path)
@@ -6666,6 +6801,12 @@ Be concise - this is a quality gate, not a full review."""
         cycle_result["phases"]["context"] = context_result
         codebase_context = context_result.get("context", "")
 
+        # === Deadline check after context gathering ===
+        if not self._check_cycle_deadline(cycle_deadline, "context_gathering"):
+            cycle_result["outcome"] = "timeout"
+            cycle_result["timeout_phase"] = "context_gathering"
+            return cycle_result
+
         # Phase 1: Debate (all agents, with gathered context)
         debate_result = await self.phase_debate(codebase_context=codebase_context)
         cycle_result["phases"]["debate"] = debate_result
@@ -6673,6 +6814,12 @@ Be concise - this is a quality gate, not a full review."""
         if not debate_result.get("consensus_reached"):
             self._log("No consensus reached. Ending cycle.")
             cycle_result["outcome"] = "no_consensus"
+            return cycle_result
+
+        # === Deadline check after debate ===
+        if not self._check_cycle_deadline(cycle_deadline, "debate"):
+            cycle_result["outcome"] = "timeout"
+            cycle_result["timeout_phase"] = "debate"
             return cycle_result
 
         improvement = debate_result["final_answer"]
@@ -6686,6 +6833,12 @@ Be concise - this is a quality gate, not a full review."""
         design = design_result.get("design", "")
         self._log(f"\nDesign complete")
 
+        # === Deadline check after design ===
+        if not self._check_cycle_deadline(cycle_deadline, "design"):
+            cycle_result["outcome"] = "timeout"
+            cycle_result["timeout_phase"] = "design"
+            return cycle_result
+
         # Phase 3: Implement
         impl_result = await self.phase_implement(design)
         cycle_result["phases"]["implement"] = impl_result
@@ -6693,6 +6846,12 @@ Be concise - this is a quality gate, not a full review."""
         if not impl_result.get("success"):
             self._log("Implementation failed. Ending cycle.")
             cycle_result["outcome"] = "implementation_failed"
+            return cycle_result
+
+        # === Deadline check after implementation ===
+        if not self._check_cycle_deadline(cycle_deadline, "implement"):
+            cycle_result["outcome"] = "timeout"
+            cycle_result["timeout_phase"] = "implement"
             return cycle_result
 
         self._log(f"\nImplementation complete")
@@ -6758,6 +6917,20 @@ Be concise - this is a quality gate, not a full review."""
         best_test_output = ""
 
         while True:
+            # Deadline enforcement: check remaining time before each iteration
+            if cycle_deadline:
+                remaining_seconds = (cycle_deadline - datetime.now()).total_seconds()
+                if remaining_seconds < 300:  # Less than 5 minutes remaining
+                    self._log(f"\n  [deadline] Only {remaining_seconds:.0f}s remaining - exiting fix loop early")
+                    cycle_result["outcome"] = "deadline_reached"
+                    cycle_result["deadline_remaining_seconds"] = remaining_seconds
+                    # Try to preserve any partial progress
+                    if best_test_score > 0:
+                        self._log(f"  [deadline] Preserving partial progress: {best_test_score} passing tests")
+                        cycle_result["partial_success"] = True
+                        cycle_result["best_test_score"] = best_test_score
+                    break
+
             # Phase 4: Verify
             verify_result = await self.phase_verify()
             cycle_result["phases"]["verify"] = verify_result
@@ -6870,6 +7043,9 @@ Be concise - this is a quality gate, not a full review."""
             fix_patterns = self._format_successful_patterns(limit=3)
             avoid_patterns = self._format_failure_patterns(limit=3)
 
+            # Get belief network cruxes for targeted fixing (P18: BeliefNetwork → Fix Guidance)
+            crux_context = self._format_crux_context()
+
             review_prompt = f"""The following code changes caused test failures. Analyze and suggest fixes.
 
 ## Test Failures
@@ -6883,11 +7059,13 @@ Be concise - this is a quality gate, not a full review."""
 ```
 {fix_patterns}
 {avoid_patterns}
+{crux_context}
 Provide specific, actionable fixes. Focus on:
 1. What exactly is broken?
 2. What specific code changes will fix it?
 3. Are there missing imports or dependencies?
 4. Learn from patterns above - apply what's worked, avoid what hasn't.
+5. If pivotal claims are listed above, ensure your fix addresses them directly.
 """
             review_result = await executor.review_with_codex(review_prompt, timeout=2400)  # 40 min for thorough review
             iteration_result["codex_review"] = review_result

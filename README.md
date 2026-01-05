@@ -83,19 +83,33 @@ git clone https://github.com/an0mium/aragora.git
 cd aragora
 pip install -e .
 
-# Run a debate
-aragora ask "Design a rate limiter for 1M requests/sec" --agents codex,claude
+# Set at least one API key
+export ANTHROPIC_API_KEY=your-key  # or OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY
 
-# With more agents and rounds
-aragora ask "Implement a secure auth system" \
-  --agents codex:proposer,claude:critic,openai:synthesizer \
+# Run a debate with API agents (recommended - no CLI tools needed)
+python -m aragora.debate "Design a rate limiter for 1M requests/sec" \
+  --agents anthropic-api openai-api
+
+# With more agents and custom consensus
+python -m aragora.debate "Implement a secure auth system" \
+  --agents anthropic-api openai-api gemini-api grok \
   --rounds 4 \
-  --consensus judge
+  --consensus majority
 ```
 
 ## Prerequisites
 
-You need at least one of these CLI tools installed:
+**API Agents (Recommended):** Just set your API keys - no additional tools needed:
+
+```bash
+# Set one or more API keys in .env or environment
+ANTHROPIC_API_KEY=sk-ant-xxx    # For Claude
+OPENAI_API_KEY=sk-xxx           # For GPT models
+GEMINI_API_KEY=AIzaSy...        # For Gemini
+XAI_API_KEY=xai-xxx             # For Grok
+```
+
+**CLI Agents (Optional):** For local CLI-based agents, install the corresponding tools:
 
 ```bash
 # OpenAI Codex CLI
@@ -109,15 +123,6 @@ npm install -g @google/gemini-cli
 
 # xAI Grok CLI
 npm install -g grok-cli
-
-# Alibaba Qwen Code CLI
-npm install -g @qwen-code/qwen-code
-
-# Deepseek CLI
-pip install deepseek-cli
-
-# OpenAI CLI
-pip install openai
 ```
 
 ## Architecture
