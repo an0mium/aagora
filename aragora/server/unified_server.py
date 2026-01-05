@@ -8,6 +8,7 @@ Provides a single entry point for:
 """
 
 import asyncio
+import atexit
 import json
 import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -441,6 +442,10 @@ except ImportError:
 # Track active ad-hoc debates
 _active_debates: dict[str, dict] = {}
 _active_debates_lock = threading.Lock()  # Thread-safe access to _active_debates
+_debate_cleanup_counter = 0  # Counter for periodic cleanup
+
+# TTL for completed debates (24 hours)
+_DEBATE_TTL_SECONDS = 86400
 
 
 def _update_debate_status(debate_id: str, status: str, **kwargs) -> None:
@@ -448,8 +453,26 @@ def _update_debate_status(debate_id: str, status: str, **kwargs) -> None:
     with _active_debates_lock:
         if debate_id in _active_debates:
             _active_debates[debate_id]["status"] = status
+            # Record completion time for TTL cleanup
+            if status in ("completed", "error"):
+                _active_debates[debate_id]["completed_at"] = time.time()
             for key, value in kwargs.items():
                 _active_debates[debate_id][key] = value
+
+
+def _cleanup_stale_debates() -> None:
+    """Remove completed/errored debates older than TTL."""
+    now = time.time()
+    with _active_debates_lock:
+        stale_ids = [
+            debate_id for debate_id, debate in _active_debates.items()
+            if debate.get("status") in ("completed", "error")
+            and now - debate.get("completed_at", now) > _DEBATE_TTL_SECONDS
+        ]
+        for debate_id in stale_ids:
+            _active_debates.pop(debate_id, None)
+    if stale_ids:
+        logger.debug(f"Cleaned up {len(stale_ids)} stale debate entries")
 
 
 # Server startup time for uptime tracking
@@ -1135,11 +1158,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         # Agent Relationship Network API - NOW HANDLED BY AgentsHandler
         # Agent Moments API - NOW HANDLED BY AgentsHandler
 
-        # System Statistics API
-        elif path == '/api/ranking/stats':
-            self._get_ranking_stats()
-        elif path == '/api/memory/stats' or path == '/api/memory/tier-stats':
-            self._get_memory_stats()
+        # System Statistics API - NOW HANDLED BY AnalyticsHandler
         # Critiques/Reputation API - NOW HANDLED BY CritiqueHandler
 
         # Agent Comparison API - NOW HANDLED BY AgentsHandler
@@ -1543,6 +1562,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 "agents": agents_str,
                 "rounds": rounds,
             }
+
+        # Periodic cleanup of stale debates (every 100 debates)
+        global _debate_cleanup_counter
+        _debate_cleanup_counter += 1
+        if _debate_cleanup_counter >= 100:
+            _debate_cleanup_counter = 0
+            _cleanup_stale_debates()
 
         # Set loop_id on emitter so events are tagged
         self.stream_emitter.set_loop_id(debate_id)
@@ -5570,6 +5596,17 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
         """Suppress default logging."""
         pass
+
+
+def _shutdown_debate_executor():
+    """Shutdown debate executor on process exit."""
+    if UnifiedHandler._debate_executor:
+        logger.info("Shutting down debate executor...")
+        UnifiedHandler._debate_executor.shutdown(wait=True, cancel_futures=False)
+        UnifiedHandler._debate_executor = None
+
+
+atexit.register(_shutdown_debate_executor)
 
 
 class UnifiedServer:
