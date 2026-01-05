@@ -1331,7 +1331,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                     critiques=getattr(self, '_partial_critiques', []),
                     votes=[],
                     dissenting_views=[],
-                    metadata={"timed_out": True, "timeout_seconds": self.protocol.timeout_seconds},
+                    rounds_used=getattr(self, '_partial_rounds', 0),
                 )
         return await self._run_inner()
 

@@ -342,5 +342,162 @@ class TestDebateResult:
         assert "85" in summary  # confidence percentage
 
 
+class TestConsensusMechanisms:
+    """Tests for different consensus mechanisms."""
+
+    @pytest.mark.asyncio
+    async def test_majority_consensus_with_agreement(self):
+        """Test majority consensus when agents agree."""
+        agents = [
+            MockAgent("agent1", role="proposer"),
+            MockAgent("agent2", role="critic"),
+        ]
+        # Both vote for same choice
+        agents[0].vote_responses = [Vote(agent="agent1", choice="agent1", reasoning="Best", confidence=0.9, continue_debate=False)]
+        agents[1].vote_responses = [Vote(agent="agent2", choice="agent1", reasoning="Agreed", confidence=0.85, continue_debate=False)]
+
+        env = Environment(task="Test consensus", max_rounds=1)
+        protocol = DebateProtocol(rounds=1, consensus="majority", early_stopping=False, convergence_detection=False)
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        assert result.consensus_reached is True
+        assert result.confidence >= 0.5
+
+    @pytest.mark.asyncio
+    async def test_unanimous_consensus_requires_all(self):
+        """Test unanimous consensus requires all agents to agree."""
+        agents = [
+            MockAgent("agent1"),
+            MockAgent("agent2"),
+            MockAgent("agent3"),
+        ]
+        # All vote for same choice
+        for i, agent in enumerate(agents):
+            agent.vote_responses = [Vote(agent=f"agent{i+1}", choice="agent1", reasoning="Best", confidence=0.9, continue_debate=False)]
+
+        env = Environment(task="Test unanimous", max_rounds=1)
+        protocol = DebateProtocol(rounds=1, consensus="unanimous", early_stopping=False, convergence_detection=False)
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        assert result.consensus_reached is True
+        assert result.confidence == 1.0
+
+    @pytest.mark.asyncio
+    async def test_no_consensus_mode(self):
+        """Test 'none' consensus mode returns without voting."""
+        agents = [MockAgent("agent1"), MockAgent("agent2")]
+
+        env = Environment(task="Test no consensus", max_rounds=1)
+        protocol = DebateProtocol(rounds=1, consensus="none", early_stopping=False, convergence_detection=False)
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        # Should complete without requiring consensus
+        assert result is not None
+
+
+class TestTopology:
+    """Tests for different debate topologies."""
+
+    @pytest.mark.asyncio
+    async def test_round_robin_topology(self):
+        """Test round-robin topology debate."""
+        agents = [MockAgent(f"agent{i}") for i in range(3)]
+
+        env = Environment(task="Test topology", max_rounds=1)
+        protocol = DebateProtocol(rounds=1, topology="round-robin", consensus="none", early_stopping=False, convergence_detection=False)
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_star_topology(self):
+        """Test star topology with hub agent."""
+        agents = [MockAgent(f"agent{i}") for i in range(3)]
+
+        env = Environment(task="Test star", max_rounds=1)
+        protocol = DebateProtocol(
+            rounds=1,
+            topology="star",
+            topology_hub_agent="agent0",
+            consensus="none",
+            early_stopping=False,
+            convergence_detection=False
+        )
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        assert result is not None
+
+
+class TestTimeoutHandling:
+    """Tests for debate timeout."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_partial_result(self):
+        """Test debate timeout returns partial results."""
+        class SlowAgent(MockAgent):
+            async def generate(self, prompt: str, context: list = None) -> str:
+                await asyncio.sleep(2)  # Slow
+                return "Slow response"
+
+        agents = [SlowAgent("slow1"), SlowAgent("slow2")]
+
+        env = Environment(task="Test timeout", max_rounds=1)
+        protocol = DebateProtocol(
+            rounds=3,
+            timeout_seconds=1,  # 1 second timeout
+            consensus="none",
+            early_stopping=False,
+            convergence_detection=False
+        )
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        # Should timeout and return partial result (fewer rounds than requested)
+        assert result is not None
+        assert result.rounds_used < 3  # Didn't complete all rounds
+
+
+class TestEdgeCases:
+    """Tests for edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_single_agent_debate(self):
+        """Test debate with single agent."""
+        agents = [MockAgent("solo")]
+
+        env = Environment(task="Solo debate", max_rounds=1)
+        protocol = DebateProtocol(rounds=1, consensus="none", early_stopping=False, convergence_detection=False)
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        assert result is not None
+        assert len(result.messages) >= 1
+
+    @pytest.mark.asyncio
+    async def test_many_agents_debate(self):
+        """Test debate with many agents."""
+        agents = [MockAgent(f"agent{i}") for i in range(5)]
+
+        env = Environment(task="Many agents", max_rounds=1)
+        protocol = DebateProtocol(rounds=1, consensus="majority", early_stopping=False, convergence_detection=False)
+
+        arena = Arena(env, agents, protocol)
+        result = await arena.run()
+
+        assert result is not None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

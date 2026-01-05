@@ -2,6 +2,35 @@
 
 This document describes the HTTP and WebSocket APIs for the Aragora debate platform.
 
+## Endpoint Usage Status
+
+**Last audited:** 2026-01-04
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| **Actively Used** | 27 | Called from frontend components |
+| **Unused (High-Value)** | 12 | Ready to wire, significant features |
+| **Unused (Low-Impact)** | 39 | Analytics, plugins, advanced features |
+
+### High-Value Unused Endpoints (Ready to Wire)
+
+These endpoints are fully implemented but not yet connected to the frontend:
+
+| Endpoint | Feature | Priority |
+|----------|---------|----------|
+| `GET /api/debates` | Debate listing/browsing | HIGH |
+| `GET /api/debates/{id}` | Individual debate view | HIGH |
+| `GET /api/agent/{agent}/profile` | Complete agent profile | HIGH |
+| `GET /api/agent/compare` | Side-by-side agent comparison | HIGH |
+| `GET /api/agent/{agent}/head-to-head/{opponent}` | Agent matchup stats | MEDIUM |
+| `GET /api/history/debates` | Historical debate browser | MEDIUM |
+| `GET /api/history/summary` | Historical analytics | MEDIUM |
+| `GET /api/pulse/trending` | Trending topics | MEDIUM |
+| `GET /api/agent/{agent}/history` | Agent debate history | MEDIUM |
+| `GET /api/agent/{agent}/rivals` | Agent rivalries | LOW |
+| `GET /api/agent/{agent}/allies` | Agent alliances | LOW |
+| `GET /api/analytics/disagreements` | Disagreement patterns | LOW |
+
 ## Server Configuration
 
 The unified server runs on port 8080 by default and serves both HTTP API and static files.

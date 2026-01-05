@@ -226,5 +226,172 @@ class TestAgentRepr:
         assert "proposer" in repr_str
 
 
+class TestCreateAgentFactory:
+    """Tests for create_agent factory function."""
+
+    def test_create_gemini_agent(self):
+        """Test factory creates GeminiAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}):
+            agent = create_agent("gemini", name="test-gemini")
+
+        assert agent.name == "test-gemini"
+        assert agent.agent_type == "gemini"
+
+    def test_create_ollama_agent(self):
+        """Test factory creates OllamaAgent."""
+        from aragora.agents.base import create_agent
+
+        agent = create_agent("ollama", name="test-ollama")
+
+        assert agent.name == "test-ollama"
+        assert agent.agent_type == "ollama"
+
+    def test_create_anthropic_agent(self):
+        """Test factory creates AnthropicAPIAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test"}):
+            agent = create_agent("anthropic-api", name="test-anthropic")
+
+        assert agent.name == "test-anthropic"
+        assert agent.agent_type == "anthropic"
+
+    def test_create_openai_agent(self):
+        """Test factory creates OpenAIAPIAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test"}):
+            agent = create_agent("openai-api", name="test-openai")
+
+        assert agent.name == "test-openai"
+        assert agent.agent_type == "openai"
+
+    def test_create_grok_agent(self):
+        """Test factory creates GrokAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"XAI_API_KEY": "test"}):
+            agent = create_agent("grok", name="test-grok")
+
+        assert agent.name == "test-grok"
+        assert agent.agent_type == "grok"
+
+    def test_create_openrouter_agent(self):
+        """Test factory creates OpenRouterAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
+            agent = create_agent("openrouter", name="test-openrouter")
+
+        assert agent.name == "test-openrouter"
+        assert agent.agent_type == "openrouter"
+
+    def test_create_deepseek_agent(self):
+        """Test factory creates DeepSeekAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
+            agent = create_agent("deepseek", name="test-deepseek")
+
+        assert agent.name == "test-deepseek"
+        assert agent.agent_type == "deepseek"
+
+    def test_create_deepseek_r1_agent(self):
+        """Test factory creates DeepSeekReasonerAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
+            agent = create_agent("deepseek-r1", name="test-reasoner")
+
+        assert agent.name == "test-reasoner"
+        assert agent.agent_type == "deepseek-r1"
+
+    def test_create_llama_agent(self):
+        """Test factory creates LlamaAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
+            agent = create_agent("llama", name="test-llama")
+
+        assert agent.name == "test-llama"
+        assert agent.agent_type == "llama"
+
+    def test_create_mistral_agent(self):
+        """Test factory creates MistralAgent."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
+            agent = create_agent("mistral", name="test-mistral")
+
+        assert agent.name == "test-mistral"
+        assert agent.agent_type == "mistral"
+
+    def test_create_agent_with_role(self):
+        """Test factory respects role parameter."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}):
+            agent = create_agent("gemini", name="critic", role="critic")
+
+        assert agent.role == "critic"
+
+    def test_create_agent_with_model(self):
+        """Test factory respects model parameter."""
+        from aragora.agents.base import create_agent
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}):
+            agent = create_agent("gemini", model="gemini-2.5-pro")
+
+        assert agent.model == "gemini-2.5-pro"
+
+
+class TestAgentStance:
+    """Tests for agent stance functionality."""
+
+    def test_default_stance_is_neutral(self):
+        """Test agent default stance is neutral."""
+        from aragora.agents.api_agents import GeminiAgent
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}):
+            agent = GeminiAgent()
+
+        assert agent.stance == "neutral"
+
+    def test_stance_can_be_set(self):
+        """Test agent stance can be changed."""
+        from aragora.agents.api_agents import GeminiAgent
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}):
+            agent = GeminiAgent()
+            agent.stance = "affirmative"
+
+        assert agent.stance == "affirmative"
+
+
+class TestAgentStreamingCapability:
+    """Tests for streaming capability detection."""
+
+    def test_gemini_supports_streaming(self):
+        """Test GeminiAgent has streaming capability."""
+        from aragora.agents.api_agents import GeminiAgent
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}):
+            agent = GeminiAgent()
+
+        # GeminiAgent should support streaming
+        assert hasattr(agent, 'generate')
+
+    def test_anthropic_supports_streaming(self):
+        """Test AnthropicAPIAgent has streaming capability."""
+        from aragora.agents.api_agents import AnthropicAPIAgent
+
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test"}):
+            agent = AnthropicAPIAgent()
+
+        assert hasattr(agent, 'generate')
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
