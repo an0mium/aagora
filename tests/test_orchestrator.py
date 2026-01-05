@@ -499,5 +499,145 @@ class TestEdgeCases:
         assert result is not None
 
 
+class TestUserEventQueue:
+    """Tests for user event queue handling and overflow protection."""
+
+    def test_queue_has_capacity_limit(self):
+        """Verify queue is created with maxsize limit."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test queue", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+
+        # Queue should have a maxsize set
+        assert arena._user_event_queue.maxsize == 10000
+
+    def test_drain_user_events_empty_queue(self):
+        """Draining empty queue should not raise."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test drain", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+
+        # Should not raise on empty queue
+        arena._drain_user_events()
+        assert arena.user_votes == []
+        assert arena.user_suggestions == []
+
+    def test_drain_user_events_processes_votes(self):
+        """Draining queue should populate user_votes list."""
+        from aragora.server.stream import StreamEventType
+
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test drain votes", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+
+        # Manually enqueue some vote events
+        arena._user_event_queue.put_nowait((
+            StreamEventType.USER_VOTE,
+            {"choice": "proposal_a", "user_id": "user1"}
+        ))
+        arena._user_event_queue.put_nowait((
+            StreamEventType.USER_VOTE,
+            {"choice": "proposal_b", "user_id": "user2"}
+        ))
+
+        arena._drain_user_events()
+
+        assert len(arena.user_votes) == 2
+        assert arena.user_votes[0]["choice"] == "proposal_a"
+        assert arena.user_votes[1]["choice"] == "proposal_b"
+
+    def test_drain_user_events_processes_suggestions(self):
+        """Draining queue should populate user_suggestions list."""
+        from aragora.server.stream import StreamEventType
+
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test drain suggestions", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+
+        # Manually enqueue suggestion events
+        arena._user_event_queue.put_nowait((
+            StreamEventType.USER_SUGGESTION,
+            {"text": "Consider X", "user_id": "user1"}
+        ))
+
+        arena._drain_user_events()
+
+        assert len(arena.user_suggestions) == 1
+        assert arena.user_suggestions[0]["text"] == "Consider X"
+
+    def test_queue_overflow_drops_events(self):
+        """Events should be dropped when queue is full."""
+        from aragora.server.stream import StreamEventType, StreamEvent
+        import queue
+
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test overflow", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+
+        # Replace queue with small one for testing
+        arena._user_event_queue = queue.Queue(maxsize=5)
+
+        # Fill the queue
+        for i in range(5):
+            arena._user_event_queue.put_nowait((
+                StreamEventType.USER_VOTE,
+                {"choice": f"choice_{i}"}
+            ))
+
+        # Queue is now full - additional put_nowait should raise
+        with pytest.raises(queue.Full):
+            arena._user_event_queue.put_nowait((
+                StreamEventType.USER_VOTE,
+                {"choice": "overflow"}
+            ))
+
+    def test_handle_user_event_filters_by_loop_id(self):
+        """Events from other loops should be ignored."""
+        from aragora.server.stream import StreamEventType, StreamEvent
+
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test filter", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+        arena.loop_id = "my-loop-123"
+
+        # Event for different loop should be ignored
+        other_event = StreamEvent(
+            type=StreamEventType.USER_VOTE,
+            loop_id="other-loop-456",
+            data={"choice": "proposal_a"}
+        )
+        arena._handle_user_event(other_event)
+
+        # Queue should still be empty
+        assert arena._user_event_queue.empty()
+
+    def test_handle_user_event_accepts_matching_loop(self):
+        """Events for matching loop should be enqueued."""
+        from aragora.server.stream import StreamEventType, StreamEvent
+
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test accept", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+        arena = Arena(env, agents, protocol)
+        arena.loop_id = "my-loop-123"
+
+        # Event for this loop should be enqueued
+        my_event = StreamEvent(
+            type=StreamEventType.USER_VOTE,
+            loop_id="my-loop-123",
+            data={"choice": "proposal_a"}
+        )
+        arena._handle_user_event(my_event)
+
+        # Queue should have the event
+        assert not arena._user_event_queue.empty()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
