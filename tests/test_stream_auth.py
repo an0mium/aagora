@@ -31,7 +31,8 @@ from aragora.server.auth import AuthConfig, check_auth, generate_shareable_link
 class TestBroadcastWithAuthOff:
     """Test that all clients receive events when auth is disabled."""
 
-    def test_all_clients_receive_broadcast_when_auth_disabled(self):
+    @pytest.mark.asyncio
+    async def test_all_clients_receive_broadcast_when_auth_disabled(self):
         """All connected clients should receive broadcast events when auth is off."""
         server = DebateStreamServer(host="localhost", port=0)
 
@@ -49,7 +50,7 @@ class TestBroadcastWithAuthOff:
         )
 
         # Run broadcast
-        asyncio.get_event_loop().run_until_complete(server.broadcast(event))
+        await server.broadcast(event)
 
         # All clients should have received the message
         expected_message = event.to_json()
@@ -57,7 +58,8 @@ class TestBroadcastWithAuthOff:
         client2.send.assert_called_once_with(expected_message)
         client3.send.assert_called_once_with(expected_message)
 
-    def test_broadcast_handles_disconnected_clients(self):
+    @pytest.mark.asyncio
+    async def test_broadcast_handles_disconnected_clients(self):
         """Disconnected clients should be removed from client set."""
         server = DebateStreamServer(host="localhost", port=0)
 
@@ -73,13 +75,14 @@ class TestBroadcastWithAuthOff:
             data={"task": "test"},
         )
 
-        asyncio.get_event_loop().run_until_complete(server.broadcast(event))
+        await server.broadcast(event)
 
         # Bad client should be removed
         assert bad_client not in server.clients
         assert good_client in server.clients
 
-    def test_broadcast_skips_when_no_clients(self):
+    @pytest.mark.asyncio
+    async def test_broadcast_skips_when_no_clients(self):
         """Broadcast should handle empty client set gracefully."""
         server = DebateStreamServer(host="localhost", port=0)
         server.clients = set()
@@ -90,7 +93,7 @@ class TestBroadcastWithAuthOff:
         )
 
         # Should not raise
-        asyncio.get_event_loop().run_until_complete(server.broadcast(event))
+        await server.broadcast(event)
 
 
 class TestLoopIdAutoInjection:
@@ -520,7 +523,8 @@ class TestErrorEventHandling:
         assert result["data"]["code"] == "ERR_CONN"
         assert "timestamp" in result
 
-    def test_error_event_broadcast(self):
+    @pytest.mark.asyncio
+    async def test_error_event_broadcast(self):
         """Error events should broadcast to all clients."""
         server = DebateStreamServer(host="localhost", port=0)
 
@@ -534,7 +538,7 @@ class TestErrorEventHandling:
             loop_id="test_loop"
         )
 
-        asyncio.get_event_loop().run_until_complete(server.broadcast(error_event))
+        await server.broadcast(error_event)
 
         # Both clients should receive the error
         assert client1.send.called

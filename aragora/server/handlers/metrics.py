@@ -5,6 +5,7 @@ Endpoints:
 - GET /api/metrics - Get operational metrics for monitoring
 - GET /api/metrics/health - Detailed health check
 - GET /api/metrics/cache - Cache statistics
+- GET /metrics - Prometheus-format metrics (OpenMetrics)
 """
 
 import os
@@ -14,7 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .base import BaseHandler, HandlerResult, json_response, error_response, _cache
+from .base import BaseHandler, HandlerResult, json_response, error_response, _cache, get_cache_stats
+from ..prometheus import (
+    get_metrics_output,
+    is_prometheus_available,
+    set_cache_size,
+    set_server_info,
+)
 
 
 # Request tracking for metrics
@@ -38,6 +45,7 @@ class MetricsHandler(BaseHandler):
         "/api/metrics/health",
         "/api/metrics/cache",
         "/api/metrics/system",
+        "/metrics",  # Prometheus-format endpoint
     ]
 
     def can_handle(self, path: str) -> bool:
@@ -58,7 +66,36 @@ class MetricsHandler(BaseHandler):
         if path == "/api/metrics/system":
             return self._get_system_info()
 
+        if path == "/metrics":
+            return self._get_prometheus_metrics()
+
         return None
+
+    def _get_prometheus_metrics(self) -> HandlerResult:
+        """Get metrics in Prometheus/OpenMetrics format."""
+        try:
+            import sys
+
+            # Update cache size metric
+            set_cache_size("handler_cache", len(_cache))
+
+            # Update server info
+            set_server_info(
+                version="0.07",
+                python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                start_time=_start_time,
+            )
+
+            # Generate output
+            content, content_type = get_metrics_output()
+
+            return HandlerResult(
+                status_code=200,
+                content_type=content_type,
+                body=content.encode("utf-8"),
+            )
+        except Exception as e:
+            return error_response(f"Failed to get Prometheus metrics: {e}", 500)
 
     def _get_metrics(self) -> HandlerResult:
         """Get comprehensive operational metrics."""
@@ -160,7 +197,10 @@ class MetricsHandler(BaseHandler):
         try:
             now = time.time()
 
-            # Analyze cache entries
+            # Get basic stats from cache
+            cache_stats = get_cache_stats()
+
+            # Analyze cache entries by prefix
             entries_by_prefix = {}
             oldest_entry = now
             newest_entry = 0
@@ -176,10 +216,14 @@ class MetricsHandler(BaseHandler):
                     newest_entry = cached_time
 
             stats = {
-                "total_entries": len(_cache),
+                "total_entries": cache_stats["entries"],
+                "max_entries": cache_stats["max_entries"],
+                "hit_rate": round(cache_stats["hit_rate"], 4),
+                "hits": cache_stats["hits"],
+                "misses": cache_stats["misses"],
                 "entries_by_prefix": entries_by_prefix,
-                "oldest_entry_age_seconds": round(now - oldest_entry, 1) if _cache else 0,
-                "newest_entry_age_seconds": round(now - newest_entry, 1) if _cache else 0,
+                "oldest_entry_age_seconds": round(now - oldest_entry, 1) if len(_cache) > 0 else 0,
+                "newest_entry_age_seconds": round(now - newest_entry, 1) if len(_cache) > 0 else 0,
             }
 
             return json_response(stats)

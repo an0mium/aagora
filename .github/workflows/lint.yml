@@ -1,0 +1,63 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install black ruff
+
+      - name: Check formatting with Black
+        run: |
+          black --check --diff aragora/ tests/ scripts/
+        continue-on-error: true
+
+      - name: Lint with Ruff
+        run: |
+          ruff check aragora/ tests/ scripts/ --output-format=github
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+
+      - name: Run Bandit security scan
+        run: |
+          bandit -r aragora/ -ll -ii --format json --output bandit-report.json || true
+          bandit -r aragora/ -ll -ii
+
+      - name: Check dependencies for vulnerabilities
+        run: |
+          pip install -e .
+          safety check --full-report || true
+        continue-on-error: true
