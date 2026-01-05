@@ -108,7 +108,8 @@ Required:
 - `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` - At least one AI provider
 
 Optional:
-- `GEMINI_API_KEY`, `XAI_API_KEY` - Additional providers
+- `GEMINI_API_KEY`, `XAI_API_KEY`, `GROK_API_KEY` - Additional providers
+- `OPENROUTER_API_KEY` - Fallback provider (auto-used when OpenAI returns 429)
 - `SUPABASE_URL`, `SUPABASE_KEY` - Persistence
 - `ARAGORA_API_TOKEN` - Auth token
 - `ARAGORA_ALLOWED_ORIGINS` - CORS origins
@@ -133,12 +134,22 @@ git status && git diff --stat
 Well-integrated:
 - Memory systems (CritiqueStore, ContinuumMemory)
 - ELO rankings and tournaments
-- Debate templates
+- Debate templates and TrendingTopicsPanel
 - Verification proofs
+- Belief networks (add_claim, propagation)
+- CircuitBreaker for agent failure handling
+- OpenRouter fallback for OpenAI quota errors
+- User participation (votes/suggestions via WebSocket)
+- TTL caching for expensive queries
 
 Partially integrated:
-- Pulse (trending topics)
+- Pulse (trending topics) - works but may need API keys
 - Evidence collection
-- Belief networks
+- Calibration scoring
+
+Recent additions (2026-01):
+- `CircuitBreaker` class in orchestrator.py - handles failing agents gracefully
+- OpenRouter fallback in api_agents.py - auto-fallback when OpenAI returns 429
+- `ttl_cache` decorator in handlers/base.py - simple TTL caching
 
 See `docs/STATUS.md` for detailed feature status.
