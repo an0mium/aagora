@@ -1,11 +1,11 @@
 # Aragora Project Status
 
-*Last updated: January 5, 2026 (05:30 UTC)*
+*Last updated: January 5, 2026 (12:00 UTC)*
 
 ## Current State
 
 ### Test Status
-- **Total Tests**: 789+ passed (754 Python + 35 WebSocket), 6 skipped
+- **Total Tests**: 3,400+ collected (massive expansion via parametrized tests)
 - **Frontend Tests**: 34 Jest tests (DebateListPanel, AgentComparePanel)
 - **Recent Fixes (2026-01-05)**:
   - Fixed `_get_belief_classes()` → `_get_belief_analyzer()` typo in orchestrator.py
@@ -137,6 +137,18 @@
 - **NEW**: Fixed N+1 query pattern in get_rivals/get_allies (single DB query instead of N+1)
 - **NEW**: Wired AUDIENCE_SUMMARY and INSIGHT_EXTRACTED events to WebSocket stream
 
+### Recent Changes (2026-01-05 Session 5)
+- **NEW**: Modular handlers expanded to 20 total (agents, analytics, auditing, belief, consensus, critique, debates, documents, genesis, leaderboard, memory, metrics, moments, pulse, relationship, replays, system, tournaments, verification)
+- **NEW**: Migrated opponent briefing API to AgentsHandler (removed from unified_server.py legacy routes)
+- **NEW**: Fork debate initial messages support (Arena accepts initial_messages parameter)
+- **NEW**: Fork tests added (TestForkInitialMessages - 6 tests)
+- **NEW**: User event queue overflow tests (TestUserEventQueue - 7 tests)
+- **NEW**: Webhook logger fix for atexit shutdown (catches ValueError when logger closed)
+- **NEW**: Resource availability logging at startup (_log_resource_availability)
+- **NEW**: Updated .gitignore for nomic loop state files (.nomic/checkpoints/, .nomic/replays/, *.db files)
+- **NEW**: Comprehensive tests for checkpoint, evolution, laboratory, belief modules
+- **TOTAL TESTS**: 3,400+ collected (expanded via parametrized tests)
+
 ### Recent Changes (2026-01-05 Session 4)
 - **NEW**: Modular HTTP handlers framework (base.py, debates.py, agents.py, system.py)
 - **NEW**: Wired modular handlers into unified_server.py for gradual migration
@@ -174,7 +186,7 @@
 
 ## Feature Integration Status
 
-### Fully Integrated (54)
+### Fully Integrated (57)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -231,6 +243,9 @@
 | Replay Export API | Active | `aragora/server/stream.py` (/api/replays/*) |
 | Database Query Indexes | Active | `aragora/ranking/elo.py` (8 indexes for common queries) |
 | N+1 Query Optimization | Active | `aragora/ranking/elo.py` (get_rivals/get_allies batch) |
+| Fork Initial Messages | Active | `aragora/debate/orchestrator.py` (initial_messages parameter) |
+| Modular HTTP Handlers | Active | `aragora/server/handlers/` (20 handler modules) |
+| Resource Availability Logging | Active | `aragora/server/unified_server.py` (_log_resource_availability) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |
