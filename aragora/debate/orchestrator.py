@@ -407,6 +407,22 @@ class Arena:
         self.continuum_memory = continuum_memory  # For cross-debate learning
         self.relationship_tracker = relationship_tracker  # For agent relationship metrics
         self.moment_detector = moment_detector  # For detecting significant moments
+
+        # Auto-initialize MomentDetector when elo_system available but no detector provided
+        if self.moment_detector is None and self.elo_system:
+            try:
+                from aragora.agents.grounded import MomentDetector as MD
+                self.moment_detector = MD(
+                    elo_system=self.elo_system,
+                    position_ledger=self.position_ledger,
+                    relationship_tracker=self.relationship_tracker,
+                )
+                logger.debug("Auto-initialized MomentDetector for significant moment detection")
+            except ImportError:
+                pass  # MomentDetector not available
+            except Exception as e:
+                logger.debug("MomentDetector auto-init failed: %s", e)
+
         self.loop_id = loop_id  # Loop ID for scoping events
         self.strict_loop_scoping = strict_loop_scoping  # Enforce loop_id on all events
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
@@ -894,6 +910,21 @@ class Arena:
 
         # Update ArgumentCartographer with this event
         self._update_cartographer(event_type, **kwargs)
+
+    def _emit_moment_event(self, moment):
+        """Emit a significant moment event to WebSocket clients."""
+        if not self.event_emitter:
+            return
+        try:
+            from aragora.server.stream import StreamEvent, StreamEventType
+            self.event_emitter.emit(StreamEvent(
+                type=StreamEventType.MOMENT_DETECTED,
+                data=moment.to_dict(),
+                debate_id=self.loop_id or "unknown",
+            ))
+            logger.debug("Emitted moment event: %s for %s", moment.moment_type, moment.agent_name)
+        except Exception as e:
+            logger.debug("Failed to emit moment event: %s", e)
 
     def _update_cartographer(self, event_type: str, **kwargs):
         """Update the ArgumentCartographer graph with debate events."""
@@ -2752,6 +2783,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             )
                             if moment:
                                 self.moment_detector.record_moment(moment)
+                                self._emit_moment_event(moment)
 
                 # Calibration vindications (high-confidence predictions proven correct)
                 for v in result.votes:
@@ -2768,6 +2800,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                             )
                             if moment:
                                 self.moment_detector.record_moment(moment)
+                                self._emit_moment_event(moment)
             except Exception as e:
                 logger.debug("Moment detection failed: %s", e)
 

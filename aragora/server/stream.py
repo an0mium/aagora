@@ -225,6 +225,7 @@ class StreamEventType(Enum):
     MATCH_RECORDED = "match_recorded"    # ELO match recorded, leaderboard updated
     LEADERBOARD_UPDATE = "leaderboard_update"  # Periodic leaderboard snapshot
     GROUNDED_VERDICT = "grounded_verdict"  # Evidence-backed verdict with citations
+    MOMENT_DETECTED = "moment_detected"  # Significant narrative moment detected
 
     # Position tracking events
     FLIP_DETECTED = "flip_detected"      # Agent position reversal detected

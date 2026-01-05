@@ -1032,6 +1032,20 @@ class SignificantMoment:
     metadata: dict = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for JSON transmission."""
+        return {
+            "id": self.id,
+            "moment_type": self.moment_type,
+            "agent_name": self.agent_name,
+            "description": self.description,
+            "significance_score": self.significance_score,
+            "debate_id": self.debate_id,
+            "other_agents": self.other_agents,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+        }
+
 
 class MomentDetector:
     """
