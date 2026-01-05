@@ -2300,6 +2300,18 @@ The most valuable proposals combine deep analysis with actionable implementation
             self._log(f"  [counterfactual] Error: {e}")
             return result
 
+    async def _run_agent_for_probe(self, agent, prompt: str) -> str:
+        """Run an agent with a probe prompt, handling errors gracefully.
+
+        Used by CapabilityProber to execute probes against agents.
+        """
+        try:
+            response = await self._call_agent_with_retry(agent, prompt, max_retries=1)
+            return response if response else "[No response]"
+        except Exception as e:
+            self._log(f"  [prober] Agent {agent.name} probe failed: {e}")
+            return f"[Error: {e}]"
+
     async def _probe_agent_capabilities(self) -> None:
         """Run capability probes on agents to detect weaknesses (P6: CapabilityProber).
 
@@ -2315,17 +2327,25 @@ The most valuable proposals combine deep analysis with actionable implementation
             agents = [self.gemini, self.codex, self.claude, self.grok, self.deepseek]
 
             for agent in agents:
+                if agent is None:
+                    continue
+                # Create a closure to capture the current agent
+                async def run_fn(prompt: str, _agent=agent) -> str:
+                    return await self._run_agent_for_probe(_agent, prompt)
+
                 report = await self.prober.probe_agent(
-                    agent=agent,
-                    probe_types=[ProbeType.CONTRADICTION, ProbeType.HALLUCINATION]
+                    target_agent=agent,
+                    run_agent_fn=run_fn,
+                    probe_types=[ProbeType.CONTRADICTION, ProbeType.HALLUCINATION],
+                    probes_per_type=2,  # Reduced for speed
                 )
-                if report and hasattr(report, 'vulnerabilities') and report.vulnerabilities:
-                    self._log(f"  [prober] {agent.name}: {len(report.vulnerabilities)} issues found")
-                    # Penalize agent reputation
-                    if self.critique_store:
-                        for vuln in report.vulnerabilities:
-                            severity_value = vuln.severity.value if hasattr(vuln.severity, 'value') else str(vuln.severity)
-                            self._log(f"    [prober] {vuln.vulnerability_description} (severity: {severity_value})")
+                if report and report.vulnerabilities_found > 0:
+                    self._log(f"  [prober] {agent.name}: {report.vulnerabilities_found} vulnerabilities found")
+                    # Log detailed findings
+                    if hasattr(report, 'findings') and report.findings:
+                        for finding in report.findings[:3]:  # Top 3
+                            desc = getattr(finding, 'description', str(finding))[:100]
+                            self._log(f"    - {desc}")
         except Exception as e:
             self._log(f"  [prober] Error: {e}")
 

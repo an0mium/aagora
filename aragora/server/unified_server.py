@@ -4168,6 +4168,88 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "capability_probe")}, status=500)
 
+    def _analyze_proposal_for_redteam(
+        self, proposal: str, attack_types: list, debate_data: dict
+    ) -> list:
+        """Analyze a proposal for potential vulnerabilities.
+
+        Returns findings with severity based on text analysis.
+        """
+        from aragora.modes.redteam import AttackType
+
+        findings = []
+        proposal_lower = proposal.lower() if proposal else ""
+
+        # Keyword-based vulnerability detection
+        vulnerability_patterns = {
+            'logical_fallacy': {
+                'keywords': ['always', 'never', 'all', 'none', 'obviously', 'clearly'],
+                'description': 'Absolute language suggests potential logical fallacy',
+                'base_severity': 0.4,
+            },
+            'edge_case': {
+                'keywords': ['usually', 'most', 'typical', 'normal', 'standard'],
+                'description': 'Generalization may miss edge cases',
+                'base_severity': 0.5,
+            },
+            'unstated_assumption': {
+                'keywords': ['should', 'must', 'need', 'require'],
+                'description': 'Prescriptive language may hide unstated assumptions',
+                'base_severity': 0.45,
+            },
+            'counterexample': {
+                'keywords': ['best', 'optimal', 'superior', 'only'],
+                'description': 'Strong claims may be vulnerable to counterexamples',
+                'base_severity': 0.55,
+            },
+            'scalability': {
+                'keywords': ['scale', 'growth', 'expand', 'distributed'],
+                'description': 'Scalability claims require validation',
+                'base_severity': 0.5,
+            },
+            'security': {
+                'keywords': ['secure', 'safe', 'protected', 'auth', 'encrypt'],
+                'description': 'Security claims need rigorous testing',
+                'base_severity': 0.6,
+            },
+        }
+
+        for attack_type in attack_types:
+            try:
+                AttackType(attack_type)
+            except ValueError:
+                continue
+
+            pattern = vulnerability_patterns.get(attack_type, {})
+            keywords = pattern.get('keywords', [])
+            base_severity = pattern.get('base_severity', 0.5)
+
+            # Count keyword matches
+            matches = sum(1 for kw in keywords if kw in proposal_lower)
+            severity = min(0.9, base_severity + (matches * 0.1))
+
+            if matches > 0:
+                findings.append({
+                    "attack_type": attack_type,
+                    "description": pattern.get('description', f"Potential {attack_type} issue"),
+                    "severity": round(severity, 2),
+                    "exploitability": round(severity * 0.8, 2),
+                    "keyword_matches": matches,
+                    "requires_manual_review": severity > 0.6,
+                })
+            else:
+                # Still include attack type but with lower severity
+                findings.append({
+                    "attack_type": attack_type,
+                    "description": f"No obvious {attack_type.replace('_', ' ')} patterns detected",
+                    "severity": round(base_severity * 0.5, 2),
+                    "exploitability": round(base_severity * 0.3, 2),
+                    "keyword_matches": 0,
+                    "requires_manual_review": False,
+                })
+
+        return findings
+
     def _run_red_team_analysis(self, debate_id: str) -> None:
         """Run adversarial red-team analysis on a debate.
 
@@ -4222,22 +4304,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
             session_id = f"redteam-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
-            findings = []
-            for attack_type in attack_type_names:
-                try:
-                    AttackType(attack_type)
-                except ValueError:
-                    continue
+            # Analyze proposal for potential weaknesses
+            findings = self._analyze_proposal_for_redteam(
+                focus_proposal, attack_type_names, debate_data
+            )
 
-                findings.append({
-                    "attack_type": attack_type,
-                    "description": f"Potential {attack_type.replace('_', ' ')} vulnerability",
-                    "severity": 0.5,
-                    "exploitability": 0.4,
-                    "requires_manual_review": True,
-                })
-
-            robustness_score = max(0.0, 1.0 - (len(findings) * 0.1))
+            # Calculate robustness based on finding severity
+            avg_severity = sum(f.get('severity', 0.5) for f in findings) / max(len(findings), 1)
+            robustness_score = max(0.0, 1.0 - avg_severity)
 
             self._send_json({
                 "session_id": session_id,
