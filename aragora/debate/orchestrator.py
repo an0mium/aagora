@@ -2141,6 +2141,29 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         # === Formal Z3 verification for decidable claims ===
         await self._verify_claims_formally(result)
 
+        # === Belief Network analysis for debate cruxes ===
+        BN, BPA = _get_belief_classes()
+        if BPA and result.grounded_verdict and result.grounded_verdict.claims:
+            try:
+                analyzer = BPA()
+                # Add claims from grounded verdict to belief network
+                for claim in result.grounded_verdict.claims[:20]:
+                    claim_id = getattr(claim, 'claim_id', str(hash(claim.statement[:50])))
+                    analyzer.add_claim(
+                        claim_id=claim_id,
+                        statement=claim.statement,
+                        prior=claim.confidence if hasattr(claim, 'confidence') else 0.5,
+                    )
+                # Run belief propagation and identify cruxes
+                cruxes = analyzer.identify_debate_cruxes(threshold=0.6)
+                result.belief_cruxes = cruxes
+                if cruxes:
+                    print(f"  [belief] Identified {len(cruxes)} debate cruxes")
+                    for crux in cruxes[:3]:  # Show top 3
+                        print(f"    - {crux.get('claim', 'unknown')[:60]}... (uncertainty: {crux.get('uncertainty', 0):.2f})")
+            except Exception as e:
+                logger.debug(f"Belief analysis failed: {e}")
+
         print(f"\n{'='*60}")
         print(f"DEBATE COMPLETE in {result.duration_seconds:.1f}s")
         print(f"Consensus: {'Yes' if result.consensus_reached else 'No'} ({result.confidence:.0%})")
@@ -2237,14 +2260,25 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
         if self.debate_embeddings:
             try:
                 # Create minimal debate artifact for indexing
+                # Build transcript from messages for semantic search
+                transcript_parts = []
+                if hasattr(result, 'messages') and result.messages:
+                    for msg in result.messages[:30]:  # Limit to 30 messages
+                        agent_name = getattr(msg, 'agent', 'unknown')
+                        content = getattr(msg, 'content', str(msg))[:500]
+                        transcript_parts.append(f"{agent_name}: {content}")
+
                 artifact = {
                     'id': debate_id,
                     'task': self.env.task,
                     'domain': domain,
                     'winner': result.winner,
-                    'final_answer': result.final_answer,
+                    'final_answer': result.final_answer or '',
                     'confidence': result.confidence,
                     'agents': [a.name for a in self.agents],
+                    'transcript': '\n'.join(transcript_parts),  # For semantic indexing
+                    'rounds_used': result.rounds_used,
+                    'consensus_reached': result.consensus_reached,
                 }
                 asyncio.create_task(self._index_debate_async(artifact))
             except Exception as e:

@@ -426,7 +426,7 @@ def _wrap_agent_for_streaming(agent, emitter: SyncEventEmitter, debate_id: str):
                 data={
                     "debate_id": debate_id,
                     "agent": agent.name,
-                    "error": str(e),
+                    "error": _safe_error_message(e, f"token streaming for {agent.name}"),
                     "full_response": full_response,
                 },
                 agent=agent.name,
@@ -723,6 +723,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             is_valid, error_msg = _validate_query_params(query)
             if not is_valid:
                 self._send_json({"error": error_msg}, status=400)
+                return
+
+        # Rate limit all API GET requests (DoS protection)
+        if path.startswith('/api/'):
+            if not self._check_rate_limit():
                 return
 
         # API routes

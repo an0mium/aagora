@@ -30,6 +30,12 @@ from aragora.server.cors_config import WS_ALLOWED_ORIGINS
 # Maximum WebSocket message size (64KB) - prevents memory exhaustion attacks
 WS_MAX_MESSAGE_SIZE = int(os.getenv("ARAGORA_WS_MAX_SIZE", 65536))
 
+# Trusted proxies for X-Forwarded-For header validation
+# Only trust X-Forwarded-For if request comes from these IPs
+TRUSTED_PROXIES = frozenset(
+    os.getenv('ARAGORA_TRUSTED_PROXIES', '127.0.0.1,::1,localhost').split(',')
+)
+
 
 class StreamEventType(Enum):
     """Types of events emitted during debates and nomic loop execution."""
@@ -1576,12 +1582,15 @@ class AiohttpUnifiedServer:
                 headers = dict(request.headers)
                 query_string = request.url.query_string or ""
 
-                # Get client IP (handle proxies)
-                client_ip = request.headers.get('X-Forwarded-For', '')
-                if client_ip:
-                    client_ip = client_ip.split(',')[0].strip()
+                # Get client IP (validate proxy headers for security)
+                remote_ip = request.remote or ""
+                if remote_ip in TRUSTED_PROXIES:
+                    # Only trust X-Forwarded-For from trusted proxies
+                    forwarded = request.headers.get('X-Forwarded-For', '')
+                    client_ip = forwarded.split(',')[0].strip() if forwarded else remote_ip
                 else:
-                    client_ip = request.remote or ""
+                    # Untrusted source - use direct connection IP
+                    client_ip = remote_ip
 
                 authenticated, remaining = check_auth(
                     headers, query_string, loop_id="", ip_address=client_ip
@@ -1592,7 +1601,11 @@ class AiohttpUnifiedServer:
                     msg = "Rate limit exceeded" if remaining == 0 else "Authentication required"
                     return web.Response(status=status, text=msg)
         except ImportError:
-            pass  # Auth module not available, continue without auth
+            # Log warning if auth is required but module unavailable
+            if os.getenv('ARAGORA_AUTH_REQUIRED'):
+                logger.warning("[ws] Auth required but module unavailable - rejecting connection")
+                return web.Response(status=500, text="Authentication system unavailable")
+            pass  # Auth module not available and not required, continue
 
         ws = web.WebSocketResponse()
         await ws.prepare(request)

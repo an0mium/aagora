@@ -932,6 +932,82 @@ Comprehensive tests in `tests/test_audience_participation.py`:
 
 ---
 
+## Phase 11: Operational Modes
+
+### Modes System
+**File:** `aragora/modes/`
+
+The modes system allows switching between different operational configurations for agents and debates.
+
+### OperationalModes
+**File:** `aragora/modes/operational.py`
+
+Switches between different agent tool configurations:
+
+```python
+from aragora.modes.operational import OperationalMode, set_mode
+
+# Available modes:
+# - default: Standard debate tools
+# - research: Web search + document retrieval enabled
+# - implementation: Code editing + git operations enabled
+
+set_mode(OperationalMode.IMPLEMENTATION)
+```
+
+### CapabilityProber
+**File:** `aragora/modes/prober.py`
+
+Tests agent capabilities for quality assurance and vulnerability detection.
+
+```python
+from aragora.modes.prober import CapabilityProber, ProbeType
+
+prober = CapabilityProber()
+report = await prober.probe_agent(
+    target_agent=agent,
+    probe_types=[
+        ProbeType.CONTRADICTION,
+        ProbeType.HALLUCINATION,
+        ProbeType.CONFIDENCE_CALIBRATION,
+    ],
+)
+print(f"Vulnerability score: {report.vulnerability_score}")
+```
+
+**Probe Types:**
+- `contradiction` - Tests for logical inconsistencies
+- `hallucination` - Tests for fabricated information
+- `sycophancy` - Tests for agreement bias
+- `confidence_calibration` - Tests confidence accuracy
+- `reasoning_depth` - Tests multi-step reasoning
+- `edge_case` - Tests boundary conditions
+
+### RedTeamMode
+**File:** `aragora/modes/redteam.py`
+
+Adversarial analysis mode for stress-testing debate conclusions.
+
+```python
+from aragora.modes.redteam import RedTeamMode, AttackType
+
+mode = RedTeamMode()
+result = await mode.run_redteam(
+    target_proposal="Use microservices architecture",
+    red_team_agents=red_agents,
+    attack_types=[AttackType.DEVILS_ADVOCATE, AttackType.EDGE_CASE],
+)
+```
+
+**Attack Types:**
+- `devils_advocate` - Argue opposite position
+- `edge_case` - Find failure scenarios
+- `assumption_challenge` - Question premises
+- `scale_test` - Test at different scales
+- `adversarial` - Active exploitation attempts
+
+---
+
 ## API Reference
 
 See [API_REFERENCE.md](./API_REFERENCE.md) for complete HTTP and WebSocket API documentation.
