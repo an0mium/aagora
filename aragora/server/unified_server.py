@@ -1275,6 +1275,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             debate_id = self._extract_path_segment(path, 3, "debate_id")
             if debate_id:
                 self._run_red_team_analysis(debate_id)
+        elif path.startswith('/api/debates/') and path.endswith('/verify'):
+            debate_id = self._extract_path_segment(path, 3, "debate_id")
+            if debate_id:
+                self._verify_debate_outcome(debate_id)
         elif path.startswith('/api/plugins/') and path.endswith('/run'):
             # Pattern: /api/plugins/{name}/run
             parts = path.split('/')
@@ -4577,6 +4581,59 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid JSON body"}, status=400)
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "red_team_analysis")}, status=500)
+
+    def _verify_debate_outcome(self, debate_id: str) -> None:
+        """Record verification of whether a debate's winning position was correct.
+
+        POST body:
+            correct: Boolean - whether the winning position was actually correct
+            source: String - verification source (default: "manual")
+
+        Completes the truth-grounding feedback loop by linking positions to outcomes.
+        """
+        if not self._check_rate_limit():
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body) if body else {}
+
+            correct = data.get('correct', False)
+            source = data.get('source', 'manual')
+
+            # Use position_tracker if available
+            if hasattr(self, 'position_tracker') and self.position_tracker:
+                self.position_tracker.record_verification(debate_id, correct, source)
+                self._send_json({
+                    "status": "verified",
+                    "debate_id": debate_id,
+                    "correct": correct,
+                    "source": source,
+                })
+            else:
+                # Try to create a temporary tracker
+                try:
+                    from aragora.agents.truth_grounding import PositionTracker
+                    db_path = self.nomic_dir / "aragora_positions.db" if self.nomic_dir else None
+                    if db_path and db_path.exists():
+                        tracker = PositionTracker(db_path=str(db_path))
+                        tracker.record_verification(debate_id, correct, source)
+                        self._send_json({
+                            "status": "verified",
+                            "debate_id": debate_id,
+                            "correct": correct,
+                            "source": source,
+                        })
+                    else:
+                        self._send_json({"error": "Position tracking not configured"}, status=503)
+                except ImportError:
+                    self._send_json({"error": "PositionTracker module not available"}, status=503)
+
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON body"}, status=400)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "verify_debate")}, status=500)
 
     def _get_tournament_standings(self, tournament_id: str) -> None:
         """Get current tournament standings."""

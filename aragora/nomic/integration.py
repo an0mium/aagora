@@ -714,14 +714,13 @@ class NomicIntegration:
 
             if resumed:
                 checkpoint = resumed.checkpoint
-                extra = checkpoint.extra_state or {}
 
-                # Restore integration state
-                if extra.get("belief_network"):
-                    self._belief_network = BeliefNetwork.from_dict(extra["belief_network"])
-                self._agent_weights = extra.get("agent_weights", {})
+                # Restore integration state from actual DebateCheckpoint fields
+                if checkpoint.belief_network_state:
+                    self._belief_network = BeliefNetwork.from_dict(checkpoint.belief_network_state)
+                self._agent_weights = {}  # Not stored in checkpoint
                 self._current_debate_id = checkpoint.debate_id
-                self._current_cycle = extra.get("cycle", 0)
+                self._current_cycle = checkpoint.current_round  # Use round as cycle proxy
 
                 return PhaseCheckpoint(
                     phase=checkpoint.phase,

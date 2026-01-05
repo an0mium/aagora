@@ -2279,7 +2279,7 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         elo_changes = {}
                         for agent_name in participants:
                             try:
-                                rating = self.elo_system.get_agent_rating(agent_name)
+                                rating = self.elo_system.get_rating(agent_name)
                                 elo_changes[agent_name] = rating.elo if rating else 1500.0
                             except Exception:
                                 elo_changes[agent_name] = 1500.0
