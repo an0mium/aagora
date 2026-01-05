@@ -1273,6 +1273,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._extract_detailed_insights()
         elif path == '/api/probes/run':
             self._run_capability_probe()
+        elif path == '/api/debates/deep-audit':
+            self._run_deep_audit()
         elif path.startswith('/api/debates/') and path.endswith('/red-team'):
             debate_id = self._extract_path_segment(path, 3, "debate_id")
             if debate_id:
@@ -4716,6 +4718,290 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid JSON body"}, status=400)
         except Exception as e:
             self._send_json({"error": _safe_error_message(e, "capability_probe")}, status=500)
+
+    def _run_deep_audit(self) -> None:
+        """Run a deep audit (Heavy3-inspired intensive multi-round debate protocol).
+
+        POST body:
+            task: The question/decision to audit (required)
+            context: Additional context/documents (optional)
+            agent_names: List of agent names to participate (optional, default: all available)
+            model_type: Agent model type (optional, default: anthropic-api)
+            config: Optional configuration object:
+                rounds: Number of rounds (default: 6)
+                enable_research: Enable web research (default: True)
+                cross_examination_depth: Questions per finding (default: 3)
+                risk_threshold: Severity threshold for findings (default: 0.7)
+                audit_type: Pre-configured type: strategy, contract, code_architecture (optional)
+
+        Returns:
+            audit_id: Unique audit report ID
+            task: The audited question
+            recommendation: Final verdict recommendation
+            confidence: Confidence in the recommendation
+            unanimous_issues: Issues all agents agreed on
+            split_opinions: Issues with disagreement
+            risk_areas: Identified risk areas
+            findings: Detailed findings list
+            cross_examination_notes: Synthesizer cross-examination notes
+            rounds_completed: Number of rounds completed
+            duration_ms: Total audit duration
+            agents: Participating agents
+            elo_adjustments: ELO changes per agent
+        """
+        if not self._check_rate_limit():
+            return
+
+        try:
+            from aragora.modes.deep_audit import (
+                DeepAuditOrchestrator,
+                DeepAuditConfig,
+                STRATEGY_AUDIT,
+                CONTRACT_AUDIT,
+                CODE_ARCHITECTURE_AUDIT,
+            )
+        except ImportError:
+            self._send_json({
+                "error": "Deep audit module not available",
+                "hint": "aragora.modes.deep_audit failed to import"
+            }, status=503)
+            return
+
+        if not DEBATE_AVAILABLE or create_agent is None:
+            self._send_json({
+                "error": "Agent system not available",
+                "hint": "Debate module or create_agent failed to import"
+            }, status=503)
+            return
+
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body) if body else {}
+
+            task = data.get('task', '').strip()
+            if not task:
+                self._send_json({"error": "Missing required field: task"}, status=400)
+                return
+
+            context = data.get('context', '')
+            agent_names = data.get('agent_names', [])
+            model_type = data.get('model_type', 'anthropic-api')
+            config_data = data.get('config', {})
+
+            # Use pre-configured audit type if specified
+            audit_type = config_data.get('audit_type', '')
+            if audit_type == 'strategy':
+                config = STRATEGY_AUDIT
+            elif audit_type == 'contract':
+                config = CONTRACT_AUDIT
+            elif audit_type == 'code_architecture':
+                config = CODE_ARCHITECTURE_AUDIT
+            else:
+                # Build custom config
+                config = DeepAuditConfig(
+                    rounds=min(int(config_data.get('rounds', 6)), 10),
+                    enable_research=config_data.get('enable_research', True),
+                    cross_examination_depth=min(int(config_data.get('cross_examination_depth', 3)), 10),
+                    risk_threshold=float(config_data.get('risk_threshold', 0.7)),
+                )
+
+            # Create agents for the audit
+            if not agent_names:
+                # Default to 3 agents with different models
+                agent_names = ['Claude-Analyst', 'Claude-Skeptic', 'Claude-Synthesizer']
+
+            agents = []
+            for name in agent_names[:5]:  # Limit to 5 agents
+                if not re.match(SAFE_ID_PATTERN, name):
+                    continue
+                try:
+                    agent = create_agent(model_type, name=name, role="proposer")
+                    agents.append(agent)
+                except Exception:
+                    pass
+
+            if len(agents) < 2:
+                self._send_json({
+                    "error": "Need at least 2 agents for deep audit",
+                    "hint": f"Only created {len(agents)} agent(s)"
+                }, status=400)
+                return
+
+            # Get stream hooks for real-time updates
+            audit_hooks = None
+            if hasattr(self.server, 'stream_server') and self.server.stream_server:
+                from .nomic_stream import create_nomic_hooks
+                audit_hooks = create_nomic_hooks(self.server.stream_server.emitter)
+
+            audit_id = f"audit-{uuid.uuid4().hex[:8]}"
+            import time
+            start_time = time.time()
+
+            # Emit audit start event
+            if audit_hooks and 'on_audit_start' in audit_hooks:
+                audit_hooks['on_audit_start'](
+                    audit_id=audit_id,
+                    task=task,
+                    agents=[a.name for a in agents],
+                    config={
+                        "rounds": config.rounds,
+                        "enable_research": config.enable_research,
+                        "cross_examination_depth": config.cross_examination_depth,
+                        "risk_threshold": config.risk_threshold,
+                    }
+                )
+
+            # Create orchestrator and run audit
+            orchestrator = DeepAuditOrchestrator(agents, config)
+
+            import asyncio
+
+            async def run_audit():
+                return await orchestrator.run(task, context)
+
+            # Execute in event loop
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                verdict = loop.run_until_complete(run_audit())
+                loop.close()
+            except Exception as e:
+                self._send_json({
+                    "error": f"Deep audit execution failed: {str(e)}"
+                }, status=500)
+                return
+
+            end_time = time.time()
+            duration_ms = (end_time - start_time) * 1000
+
+            # Calculate ELO adjustments based on findings contribution
+            elo_adjustments = {}
+            if self.elo_system:
+                # Agents who identified issues get ELO boost
+                for finding in verdict.findings:
+                    for agent_name in finding.agents_agree:
+                        elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) + 2
+                    for agent_name in finding.agents_disagree:
+                        elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) - 1
+
+                # Record adjustments
+                for agent_name, adjustment in elo_adjustments.items():
+                    try:
+                        if adjustment > 0:
+                            self.elo_system.record_redteam_result(
+                                agent_name=agent_name,
+                                robustness_score=1.0,
+                                successful_attacks=0,
+                                total_attacks=1,
+                                critical_vulnerabilities=0,
+                                session_id=audit_id
+                            )
+                    except Exception:
+                        pass
+
+            # Emit audit verdict event
+            if audit_hooks and 'on_audit_verdict' in audit_hooks:
+                audit_hooks['on_audit_verdict'](
+                    audit_id=audit_id,
+                    task=task,
+                    recommendation=verdict.recommendation[:2000],
+                    confidence=verdict.confidence,
+                    unanimous_issues=verdict.unanimous_issues[:10],
+                    split_opinions=verdict.split_opinions[:10],
+                    risk_areas=verdict.risk_areas[:10],
+                    rounds_completed=config.rounds,
+                    total_duration_ms=duration_ms,
+                    agents=[a.name for a in agents],
+                    elo_adjustments=elo_adjustments,
+                )
+
+            # Save results to .nomic/audits/
+            if self.nomic_dir:
+                try:
+                    from datetime import datetime
+                    audits_dir = self.nomic_dir / "audits"
+                    audits_dir.mkdir(parents=True, exist_ok=True)
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+                    audit_file = audits_dir / f"{date_str}_{audit_id}.json"
+                    audit_file.write_text(json.dumps({
+                        "audit_id": audit_id,
+                        "task": task,
+                        "context": context[:1000],
+                        "agents": [a.name for a in agents],
+                        "recommendation": verdict.recommendation,
+                        "confidence": verdict.confidence,
+                        "unanimous_issues": verdict.unanimous_issues,
+                        "split_opinions": verdict.split_opinions,
+                        "risk_areas": verdict.risk_areas,
+                        "findings": [
+                            {
+                                "category": f.category,
+                                "summary": f.summary,
+                                "details": f.details,
+                                "agents_agree": f.agents_agree,
+                                "agents_disagree": f.agents_disagree,
+                                "confidence": f.confidence,
+                                "severity": f.severity,
+                                "citations": f.citations,
+                            }
+                            for f in verdict.findings
+                        ],
+                        "cross_examination_notes": verdict.cross_examination_notes,
+                        "citations": verdict.citations,
+                        "config": {
+                            "rounds": config.rounds,
+                            "enable_research": config.enable_research,
+                            "cross_examination_depth": config.cross_examination_depth,
+                            "risk_threshold": config.risk_threshold,
+                        },
+                        "duration_ms": duration_ms,
+                        "elo_adjustments": elo_adjustments,
+                        "created_at": datetime.now().isoformat(),
+                    }, indent=2, default=str))
+                except Exception:
+                    pass  # Don't fail if storage fails
+
+            # Build response
+            self._send_json({
+                "audit_id": audit_id,
+                "task": task,
+                "recommendation": verdict.recommendation,
+                "confidence": verdict.confidence,
+                "unanimous_issues": verdict.unanimous_issues,
+                "split_opinions": verdict.split_opinions,
+                "risk_areas": verdict.risk_areas,
+                "findings": [
+                    {
+                        "category": f.category,
+                        "summary": f.summary,
+                        "details": f.details[:500],
+                        "agents_agree": f.agents_agree,
+                        "agents_disagree": f.agents_disagree,
+                        "confidence": f.confidence,
+                        "severity": f.severity,
+                    }
+                    for f in verdict.findings
+                ],
+                "cross_examination_notes": verdict.cross_examination_notes[:2000],
+                "citations": verdict.citations[:20],
+                "rounds_completed": config.rounds,
+                "duration_ms": round(duration_ms, 1),
+                "agents": [a.name for a in agents],
+                "elo_adjustments": elo_adjustments,
+                "summary": {
+                    "unanimous_count": len(verdict.unanimous_issues),
+                    "split_count": len(verdict.split_opinions),
+                    "risk_count": len(verdict.risk_areas),
+                    "findings_count": len(verdict.findings),
+                    "high_severity_count": sum(1 for f in verdict.findings if f.severity >= 0.7),
+                }
+            })
+
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON body"}, status=400)
+        except Exception as e:
+            self._send_json({"error": _safe_error_message(e, "deep_audit")}, status=500)
 
     def _analyze_proposal_for_redteam(
         self, proposal: str, attack_types: list, debate_data: dict

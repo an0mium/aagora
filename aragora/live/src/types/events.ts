@@ -52,7 +52,13 @@ export type StreamEventType =
   // Capability probe events (Adversarial Testing)
   | 'probe_start'
   | 'probe_result'
-  | 'probe_complete';
+  | 'probe_complete'
+  // Deep Audit events (Intensive Multi-Round Analysis)
+  | 'audit_start'
+  | 'audit_round'
+  | 'audit_finding'
+  | 'audit_cross_exam'
+  | 'audit_verdict';
 
 export interface StreamEvent {
   type: StreamEventType;
@@ -142,4 +148,45 @@ export interface AudienceMetricsData {
   total: number;
   histograms?: Record<string, ConvictionHistogram>;  // choice -> intensity histogram
   conviction_distribution?: ConvictionHistogram;  // global intensity distribution
+}
+
+// Deep Audit event data types
+export interface AuditFinding {
+  category: 'unanimous' | 'split' | 'risk' | 'insight';
+  summary: string;
+  details: string;
+  agents_agree: string[];
+  agents_disagree: string[];
+  confidence: number;
+  citations: string[];
+  severity: number;
+}
+
+export interface AuditRoundData {
+  round: number;
+  name: string;
+  cognitive_role: string;
+  messages: Array<{
+    agent: string;
+    content: string;
+    confidence?: number;
+  }>;
+  duration_ms: number;
+}
+
+export interface AuditVerdictData {
+  audit_id: string;
+  task: string;
+  recommendation: string;
+  confidence: number;
+  unanimous_issues: string[];
+  split_opinions: string[];
+  risk_areas: string[];
+  findings: AuditFinding[];
+  citations: string[];
+  cross_examination_notes: string;
+  rounds_completed: number;
+  total_duration_ms: number;
+  agents: string[];
+  elo_adjustments: Record<string, number>;
 }

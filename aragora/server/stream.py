@@ -102,6 +102,13 @@ class StreamEventType(Enum):
     PROBE_RESULT = "probe_result"        # Individual probe result
     PROBE_COMPLETE = "probe_complete"    # All probes complete, report ready
 
+    # Deep Audit events (Intensive Multi-Round Analysis)
+    AUDIT_START = "audit_start"          # Deep audit session started
+    AUDIT_ROUND = "audit_round"          # Audit round completed (1-6)
+    AUDIT_FINDING = "audit_finding"      # Individual finding discovered
+    AUDIT_CROSS_EXAM = "audit_cross_exam"  # Cross-examination phase
+    AUDIT_VERDICT = "audit_verdict"      # Final audit verdict ready
+
 
 @dataclass
 class StreamEvent:

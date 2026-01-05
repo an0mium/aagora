@@ -322,6 +322,120 @@ def create_nomic_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
             },
         ))
 
+    # Deep Audit hooks (Intensive Multi-Round Analysis)
+    def on_audit_start(
+        audit_id: str,
+        task: str,
+        agents: list[str],
+        config: Optional[dict] = None,
+    ) -> None:
+        """Emit when deep audit session begins."""
+        emitter.emit(StreamEvent(
+            type=StreamEventType.AUDIT_START,
+            data={
+                "audit_id": audit_id,
+                "task": task,
+                "agents": agents,
+                "config": config or {},
+                "rounds": config.get("rounds", 6) if config else 6,
+            },
+        ))
+
+    def on_audit_round(
+        audit_id: str,
+        round_num: int,
+        round_name: str,
+        cognitive_role: str,
+        messages: list[dict],
+        duration_ms: float = 0,
+    ) -> None:
+        """Emit when an audit round completes."""
+        emitter.emit(StreamEvent(
+            type=StreamEventType.AUDIT_ROUND,
+            data={
+                "audit_id": audit_id,
+                "round": round_num,
+                "name": round_name,
+                "cognitive_role": cognitive_role,
+                "messages": messages,
+                "duration_ms": duration_ms,
+            },
+            round=round_num,
+        ))
+
+    def on_audit_finding(
+        audit_id: str,
+        category: str,
+        summary: str,
+        details: str,
+        agents_agree: list[str],
+        agents_disagree: list[str],
+        confidence: float,
+        severity: float = 0.0,
+    ) -> None:
+        """Emit when a finding is discovered during audit."""
+        emitter.emit(StreamEvent(
+            type=StreamEventType.AUDIT_FINDING,
+            data={
+                "audit_id": audit_id,
+                "category": category,
+                "summary": summary,
+                "details": details,
+                "agents_agree": agents_agree,
+                "agents_disagree": agents_disagree,
+                "confidence": confidence,
+                "severity": severity,
+            },
+        ))
+
+    def on_audit_cross_exam(
+        audit_id: str,
+        synthesizer: str,
+        questions: list[str],
+        notes: str,
+    ) -> None:
+        """Emit when cross-examination phase completes."""
+        emitter.emit(StreamEvent(
+            type=StreamEventType.AUDIT_CROSS_EXAM,
+            data={
+                "audit_id": audit_id,
+                "synthesizer": synthesizer,
+                "questions": questions,
+                "notes": notes,
+            },
+        ))
+
+    def on_audit_verdict(
+        audit_id: str,
+        task: str,
+        recommendation: str,
+        confidence: float,
+        unanimous_issues: list[str],
+        split_opinions: list[str],
+        risk_areas: list[str],
+        rounds_completed: int,
+        total_duration_ms: float,
+        agents: list[str],
+        elo_adjustments: Optional[dict] = None,
+    ) -> None:
+        """Emit when deep audit completes with final verdict."""
+        emitter.emit(StreamEvent(
+            type=StreamEventType.AUDIT_VERDICT,
+            data={
+                "audit_id": audit_id,
+                "task": task,
+                "recommendation": recommendation,
+                "confidence": confidence,
+                "unanimous_issues": unanimous_issues,
+                "split_opinions": split_opinions,
+                "risk_areas": risk_areas,
+                "rounds_completed": rounds_completed,
+                "total_duration_ms": total_duration_ms,
+                "agents": agents,
+                "elo_adjustments": elo_adjustments or {},
+            },
+        ))
+
     return {
         "on_cycle_start": on_cycle_start,
         "on_cycle_end": on_cycle_end,
@@ -341,4 +455,9 @@ def create_nomic_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
         "on_probe_start": on_probe_start,
         "on_probe_result": on_probe_result,
         "on_probe_complete": on_probe_complete,
+        "on_audit_start": on_audit_start,
+        "on_audit_round": on_audit_round,
+        "on_audit_finding": on_audit_finding,
+        "on_audit_cross_exam": on_audit_cross_exam,
+        "on_audit_verdict": on_audit_verdict,
     }
