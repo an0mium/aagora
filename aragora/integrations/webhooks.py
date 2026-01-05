@@ -5,6 +5,7 @@ Non-blocking, bounded-queue implementation that sends events to external endpoin
 without affecting debate loop performance.
 """
 
+import atexit
 import hashlib
 import hmac
 import json
@@ -233,6 +234,10 @@ class WebhookDispatcher:
             name="aragora-webhook-dispatcher"
         )
         self._worker.start()
+
+        # Register shutdown hook for graceful cleanup
+        atexit.register(self.stop)
+
         logger.info(f"Webhook dispatcher started with {len(self.configs)} endpoint(s)")
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -241,12 +246,16 @@ class WebhookDispatcher:
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=timeout)
         with self._stats_lock:
-            logger.info(
-                f"Webhook dispatcher stopped. "
-                f"Delivered: {self._delivery_count}, "
-                f"Failed: {self._failure_count}, "
-                f"Dropped: {self._drop_count}"
-            )
+            try:
+                logger.info(
+                    f"Webhook dispatcher stopped. "
+                    f"Delivered: {self._delivery_count}, "
+                    f"Failed: {self._failure_count}, "
+                    f"Dropped: {self._drop_count}"
+                )
+            except ValueError:
+                # Logger may be closed during interpreter shutdown (atexit)
+                pass
 
     def enqueue(self, event_dict: Dict[str, Any]) -> bool:
         """Non-blocking enqueue of an event for delivery.
