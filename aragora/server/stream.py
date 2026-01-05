@@ -73,6 +73,7 @@ class StreamEventType(Enum):
     USER_SUGGESTION = "user_suggestion"  # Audience member submitted suggestion
     AUDIENCE_SUMMARY = "audience_summary"  # Clustered audience input summary
     AUDIENCE_METRICS = "audience_metrics"  # Vote counts, histograms, conviction distribution
+    AUDIENCE_DRAIN = "audience_drain"    # Audience events processed by arena
 
     # Memory/learning events
     MEMORY_RECALL = "memory_recall"      # Historical context retrieved from memory
@@ -1295,7 +1296,7 @@ class AiohttpUnifiedServer:
         return web.json_response(state, headers=self._cors_headers(origin))
 
     async def _websocket_handler(self, request) -> 'aiohttp.web.WebSocketResponse':
-        """Handle WebSocket connections with security validation."""
+        """Handle WebSocket connections with security validation and optional auth."""
         import aiohttp
         import aiohttp.web as web
 
@@ -1304,6 +1305,33 @@ class AiohttpUnifiedServer:
         if origin and origin not in WS_ALLOWED_ORIGINS:
             # Reject connection from unauthorized origin
             return web.Response(status=403, text="Origin not allowed")
+
+        # Optional authentication (controlled by ARAGORA_API_TOKEN env var)
+        try:
+            from aragora.server.auth import auth_config, check_auth
+
+            if auth_config.enabled:
+                # Convert headers to dict for check_auth
+                headers = dict(request.headers)
+                query_string = request.url.query_string or ""
+
+                # Get client IP (handle proxies)
+                client_ip = request.headers.get('X-Forwarded-For', '')
+                if client_ip:
+                    client_ip = client_ip.split(',')[0].strip()
+                else:
+                    client_ip = request.remote or ""
+
+                authenticated, remaining = check_auth(
+                    headers, query_string, loop_id="", ip_address=client_ip
+                )
+
+                if not authenticated:
+                    status = 429 if remaining == 0 else 401
+                    msg = "Rate limit exceeded" if remaining == 0 else "Authentication required"
+                    return web.Response(status=status, text=msg)
+        except ImportError:
+            pass  # Auth module not available, continue without auth
 
         ws = web.WebSocketResponse()
         await ws.prepare(request)

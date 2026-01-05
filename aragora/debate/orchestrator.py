@@ -104,6 +104,21 @@ def _get_insight_classes():
     return InsightExtractor, InsightStore
 
 
+# Lazy import for CritiqueStore (pattern retrieval)
+CritiqueStore = None
+
+def _get_critique_store():
+    """Lazy-load CritiqueStore to avoid circular imports."""
+    global CritiqueStore
+    if CritiqueStore is None:
+        try:
+            from aragora.memory.store import CritiqueStore as _CS
+            CritiqueStore = _CS
+        except ImportError:
+            pass
+    return CritiqueStore
+
+
 @dataclass
 class DebateProtocol:
     """Configuration for how debates are conducted."""
@@ -677,9 +692,59 @@ class Arena:
             )
 
     def _notify_spectator(self, event_type: str, **kwargs):
-        """Helper method to emit spectator events."""
+        """Helper method to emit spectator events and bridge to WebSocket.
+
+        Emits to both SpectatorStream (console/file) and SyncEventEmitter (WebSocket)
+        to provide real-time updates to connected clients.
+        """
         if self.spectator:
             self.spectator.emit(event_type, **kwargs)
+
+        # Bridge to WebSocket if event_emitter is available
+        if self.event_emitter:
+            self._emit_spectator_to_websocket(event_type, **kwargs)
+
+    def _emit_spectator_to_websocket(self, event_type: str, **kwargs):
+        """Convert spectator event to StreamEvent and emit to WebSocket clients."""
+        try:
+            from aragora.server.stream import StreamEvent, StreamEventType
+
+            # Map spectator event types to StreamEventType
+            type_mapping = {
+                "debate_start": StreamEventType.DEBATE_START,
+                "debate_end": StreamEventType.DEBATE_END,
+                "round": StreamEventType.ROUND_START,
+                "round_start": StreamEventType.ROUND_START,
+                "propose": StreamEventType.AGENT_MESSAGE,
+                "proposal": StreamEventType.AGENT_MESSAGE,
+                "critique": StreamEventType.CRITIQUE,
+                "vote": StreamEventType.VOTE,
+                "consensus": StreamEventType.CONSENSUS,
+                "convergence": StreamEventType.CONSENSUS,
+                "judge": StreamEventType.AGENT_MESSAGE,
+                "memory_recall": StreamEventType.MEMORY_RECALL,
+                "audience_drain": StreamEventType.AUDIENCE_DRAIN,
+            }
+
+            stream_type = type_mapping.get(event_type)
+            if not stream_type:
+                return  # Skip unmapped event types
+
+            # Build StreamEvent from spectator kwargs
+            stream_event = StreamEvent(
+                type=stream_type,
+                data={
+                    "details": kwargs.get("details", ""),
+                    "metric": kwargs.get("metric"),
+                    "event_source": "spectator",
+                },
+                round=kwargs.get("round_number", 0),
+                agent=kwargs.get("agent", ""),
+                loop_id=getattr(self, 'loop_id', ''),
+            )
+            self.event_emitter.emit(stream_event)
+        except Exception:
+            pass  # Fail silently to not disrupt debate flow
 
     def _record_grounded_position(
         self, agent_name: str, content: str, debate_id: str, round_num: int,
@@ -1009,6 +1074,41 @@ class Arena:
         lines.append("\nAddress these proactively to improve debate quality.")
         return "\n".join(lines)
 
+    def _get_successful_patterns_from_memory(self, limit: int = 5) -> str:
+        """Retrieve successful patterns from CritiqueStore memory.
+
+        Patterns are historical argument patterns that led to consensus.
+        Injecting them into debate context helps agents avoid past mistakes
+        and reuse successful approaches.
+
+        Returns:
+            Formatted string to inject into debate context, or empty string
+        """
+        if not self.memory:
+            return ""
+
+        try:
+            # CritiqueStore.retrieve_patterns returns Pattern objects
+            patterns = self.memory.retrieve_patterns(min_success=1, limit=limit)
+            if not patterns:
+                return ""
+
+            # Convert Pattern objects to dict format expected by _format_patterns_for_prompt
+            pattern_dicts = [
+                {
+                    "category": p.issue_type,
+                    "pattern": f"{p.issue_text} → {p.suggestion_text}" if p.suggestion_text else p.issue_text,
+                    "occurrences": p.success_count,
+                    "avg_severity": p.avg_severity,
+                }
+                for p in patterns
+            ]
+
+            return self._format_patterns_for_prompt(pattern_dicts)
+        except Exception as e:
+            logger.debug(f"Failed to retrieve patterns: {e}")
+            return ""
+
     async def _perform_research(self, task: str) -> str:
         """Perform web research for the debate topic and return formatted context.
 
@@ -1194,6 +1294,19 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         self.env.context += "\n\n" + pattern_context
                     else:
                         self.env.context = pattern_context
+            except Exception:
+                pass  # Pattern injection failure shouldn't break debate
+
+        # Inject successful critique patterns from CritiqueStore memory
+        if self.memory:
+            try:
+                memory_patterns = self._get_successful_patterns_from_memory(limit=3)
+                if memory_patterns:
+                    if self.env.context:
+                        self.env.context += "\n\n" + memory_patterns
+                    else:
+                        self.env.context = memory_patterns
+                    logger.info("  [memory] Injected successful critique patterns into debate context")
             except Exception:
                 pass  # Pattern injection failure shouldn't break debate
 
