@@ -3264,7 +3264,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                     {
                         "agent": r.agent_name,
                         "score": r.reputation_score,
-                        "vote_weight": store.get_vote_weight(r.agent_name),
+                        "vote_weight": r.vote_weight,  # Use property directly (avoids N+1 query)
                         "proposal_acceptance_rate": r.proposal_acceptance_rate,
                         "critique_value": r.critique_value,
                         "debates_participated": r.debates_participated,
@@ -3297,7 +3297,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 self._send_json({
                     "agent": agent,
                     "score": rep.reputation_score,
-                    "vote_weight": store.get_vote_weight(agent),
+                    "vote_weight": rep.vote_weight,  # Use property directly (avoids extra query)
                     "proposal_acceptance_rate": rep.proposal_acceptance_rate,
                     "critique_value": rep.critique_value,
                     "debates_participated": rep.debates_participated,

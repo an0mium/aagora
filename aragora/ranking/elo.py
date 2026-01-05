@@ -241,9 +241,12 @@ class EloSystem:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_elo_history_debate ON elo_history(debate_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_matches_winner ON matches(winner)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_matches_created ON matches(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_matches_domain ON matches(domain)")  # For domain filtering
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_domain_cal_agent ON domain_calibration(agent_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_relationships_a ON agent_relationships(agent_a)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_relationships_b ON agent_relationships(agent_b)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_calibration_pred_tournament ON calibration_predictions(tournament_id)")  # For tournament resolution
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ratings_agent ON ratings(agent_name)")  # For rating lookups
 
 
     def get_rating(self, agent_name: str) -> AgentRating:
@@ -801,19 +804,27 @@ class EloSystem:
 
         brier_scores = {}
 
+        # Batch load all predictor ratings upfront (avoids N+1 query)
+        predictor_names = [p[0] for p in predictions]
+        ratings = {name: self.get_rating(name) for name in predictor_names}
+
+        now = datetime.now().isoformat()
         for predictor, predicted, confidence in predictions:
             # Brier score: (confidence - outcome)^2 where outcome is 1 if correct, 0 if wrong
             correct = 1.0 if predicted == actual_winner else 0.0
             brier = (confidence - correct) ** 2
             brier_scores[predictor] = brier
 
-            # Update the predictor's calibration stats
-            rating = self.get_rating(predictor)
+            # Update the predictor's calibration stats in memory
+            rating = ratings[predictor]
             rating.calibration_total += 1
             if predicted == actual_winner:
                 rating.calibration_correct += 1
             rating.calibration_brier_sum += brier
-            rating.updated_at = datetime.now().isoformat()
+            rating.updated_at = now
+
+        # Batch save all updated ratings
+        for rating in ratings.values():
             self._save_rating(rating)
 
         return brier_scores

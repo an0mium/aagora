@@ -71,6 +71,30 @@ class AgentReputation:
         return 0.6 * acceptance + 0.4 * critique_quality
 
     @property
+    def reputation_score(self) -> float:
+        """Alias for score property (for API compatibility)."""
+        return self.score
+
+    @property
+    def proposal_acceptance_rate(self) -> float:
+        """Rate of proposals accepted (0-1)."""
+        if self.proposals_made == 0:
+            return 0.0
+        return self.proposals_accepted / self.proposals_made
+
+    @property
+    def critique_value(self) -> float:
+        """Rate of valuable critiques (0-1)."""
+        if self.critiques_given == 0:
+            return 0.0
+        return self.critiques_valuable / self.critiques_given
+
+    @property
+    def debates_participated(self) -> int:
+        """Estimated debates participated (based on proposals made)."""
+        return self.proposals_made
+
+    @property
     def vote_weight(self) -> float:
         """
         Vote weight multiplier (0.4-1.6 range).
@@ -192,6 +216,9 @@ class CritiqueStore:
             )
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_reputation_score ON agent_reputation(proposals_accepted DESC)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reputation_agent ON agent_reputation(agent_name)"
             )
 
             # === Titans/MIRAS Migrations ===

@@ -662,7 +662,7 @@ except ImportError:
 try:
     from aragora.agents.grounded import (
         PositionLedger, RelationshipTracker, PersonaSynthesizer,
-        GroundedPersona, Position as GroundedPosition
+        GroundedPersona, Position as GroundedPosition, MomentDetector
     )
     GROUNDED_PERSONAS_AVAILABLE = True
 except ImportError:
@@ -671,6 +671,7 @@ except ImportError:
     RelationshipTracker = None
     PersonaSynthesizer = None
     GroundedPersona = None
+    MomentDetector = None
 
 # =============================================================================
 # Citation Grounding (Heavy3-inspired scholarly evidence)
@@ -1190,6 +1191,16 @@ class NomicLoop:
             relationship_db_path = self.nomic_dir / "agent_relationships.db"
             self.relationship_tracker = RelationshipTracker(str(relationship_db_path))
             print(f"[relationships] Agent relationship tracking enabled")
+
+        # Phase 9: MomentDetector for significant debate moments
+        self.moment_detector = None
+        if GROUNDED_PERSONAS_AVAILABLE and MomentDetector:
+            self.moment_detector = MomentDetector(
+                elo_system=self.elo_system,
+                position_ledger=self.position_ledger,
+                relationship_tracker=self.relationship_tracker,
+            )
+            print(f"[moments] Significant moment detection enabled")
 
         # Phase 9: PersonaSynthesizer for grounded identity prompts
         self.persona_synthesizer = None
@@ -2615,6 +2626,8 @@ The most valuable proposals combine deep analysis with actionable implementation
                     position_tracker=self.position_tracker,
                     event_hooks=self._create_arena_hooks("tournament"),
                     persona_manager=self.persona_manager,
+                    relationship_tracker=self.relationship_tracker,
+                    moment_detector=self.moment_detector,
                 )
                 return await arena.run()  # run() takes no arguments
 
@@ -3035,6 +3048,16 @@ The most valuable proposals combine deep analysis with actionable implementation
         else:
             self._log("    RelationshipTracker: not initialized")
 
+        # Moment Detector stats
+        if self.moment_detector:
+            try:
+                count = sum(len(m) for m in self.moment_detector._moment_cache.values())
+                self._log(f"    MomentDetector: {count} significant moments recorded")
+            except Exception:
+                self._log("    MomentDetector: unavailable")
+        else:
+            self._log("    MomentDetector: not initialized")
+
         # ELO domain calibration stats
         if self.elo_system:
             try:
@@ -3407,6 +3430,8 @@ The most valuable proposals combine deep analysis with actionable implementation
                     position_tracker=self.position_tracker,
                     event_hooks=self._create_arena_hooks("scenario"),
                     persona_manager=self.persona_manager,
+                    relationship_tracker=self.relationship_tracker,
+                    moment_detector=self.moment_detector,
                 )
                 return await arena.run()  # run() takes no arguments
 
@@ -4851,6 +4876,8 @@ Start directly with "## 1. FILE CHANGES" or similar."""
                 event_emitter=self.stream_emitter, loop_id=self.loop_id,
                 event_hooks=self._create_arena_hooks("fractal"),
                 persona_manager=self.persona_manager,
+                relationship_tracker=self.relationship_tracker,
+                moment_detector=self.moment_detector,
             )
             return await self._run_arena_with_logging(arena, phase_name)
 
@@ -4926,6 +4953,8 @@ Start directly with "## 1. FILE CHANGES" or similar."""
                 event_emitter=self.stream_emitter, loop_id=self.loop_id,
                 event_hooks=self._create_arena_hooks("fractal_fallback"),
                 persona_manager=self.persona_manager,
+                relationship_tracker=self.relationship_tracker,
+                moment_detector=self.moment_detector,
             )
             return await self._run_arena_with_logging(arena, phase_name)
 
@@ -5353,6 +5382,8 @@ Recent changes:
             event_emitter=self.stream_emitter, loop_id=self.loop_id,
             event_hooks=self._create_arena_hooks("debate"),  # Enable real-time streaming
             persona_manager=self.persona_manager,
+            relationship_tracker=self.relationship_tracker,
+            moment_detector=self.moment_detector,
         )
 
         # P1-Phase2: Use graph-based debate for complex multi-agent reasoning if available
@@ -6047,6 +6078,8 @@ Your design will be evaluated on:
             event_emitter=self.stream_emitter, loop_id=self.loop_id,
             event_hooks=self._create_arena_hooks("design"),  # Enable real-time streaming
             persona_manager=self.persona_manager,
+            relationship_tracker=self.relationship_tracker,
+            moment_detector=self.moment_detector,
         )
         result = await self._run_arena_with_logging(arena, "design")
 
