@@ -157,15 +157,25 @@ class ForkBridgeHandler:
             )
 
             def _on_task_done(t: asyncio.Task):
-                """Cleanup task from active_loops when done."""
-                with self.active_loops_lock:
-                    self.active_loops.pop(loop_id, None)
-                if t.cancelled():
-                    logger.debug(f"Fork debate '{loop_id}' was cancelled")
-                elif t.exception():
-                    logger.warning(f"Fork debate '{loop_id}' failed: {t.exception()}")
-                else:
-                    logger.info(f"Fork debate '{loop_id}' completed successfully")
+                """Cleanup task from active_loops when done - with exception safety."""
+                try:
+                    # Cleanup MUST happen even if logging fails
+                    try:
+                        with self.active_loops_lock:
+                            self.active_loops.pop(loop_id, None)
+                    except Exception as cleanup_err:
+                        logger.error(f"Failed to cleanup fork '{loop_id}': {cleanup_err}")
+                        return
+
+                    # Log status
+                    if t.cancelled():
+                        logger.debug(f"Fork debate '{loop_id}' was cancelled")
+                    elif t.exception():
+                        logger.warning(f"Fork debate '{loop_id}' failed: {t.exception()}")
+                    else:
+                        logger.info(f"Fork debate '{loop_id}' completed successfully")
+                except Exception as e:
+                    logger.error(f"Exception in callback for '{loop_id}': {e}")
 
             task_obj.add_done_callback(_on_task_done)
 
