@@ -1,6 +1,6 @@
 # Aragora Project Status
 
-*Last updated: January 4, 2026 (19:30 UTC)*
+*Last updated: January 4, 2026 (20:15 UTC)*
 
 ## Current State
 
@@ -85,10 +85,15 @@
 - **NEW**: Wired SpectatorStream events to WebSocket broadcast (real-time UI updates)
 - **NEW**: Added optional WebSocket authentication (check_auth integration)
 - **NEW**: Added AUDIENCE_DRAIN event type for audience event processing
+- **NEW**: Fixed security: path traversal protection in code.py (CodeReader)
+- **NEW**: Added deadline enforcement to nomic loop verify-fix cycle (prevents infinite hangs)
+- **NEW**: Exported 50+ new classes to main __init__.py (modes, spectate, pipeline, visualization, replay, introspection)
+- **NEW**: Connected belief network cruxes to fix guidance prompts (targeted fixing)
+- **NEW**: Added ELO confidence weighting from probe results (low-confidence debates = reduced ELO impact)
 
 ## Feature Integration Status
 
-### Fully Integrated (25)
+### Fully Integrated (29)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -116,6 +121,10 @@
 | Introspection API | Active | `aragora/server/unified_server.py` (/api/introspection/*) |
 | Plugins API | Active | `aragora/server/unified_server.py` (/api/plugins/*) |
 | Genesis API | Active | `aragora/server/unified_server.py` (/api/genesis/*) |
+| Deadline Enforcement | Active | `scripts/nomic_loop.py` (verify-fix cycle timeout) |
+| Crux → Fix Guidance | Active | `scripts/nomic_loop.py` (belief network → fix prompts) |
+| Probe → ELO Weighting | Active | `aragora/ranking/elo.py` (confidence_weight parameter) |
+| Path Traversal Protection | Active | `aragora/tools/code.py` (_resolve_path validation) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |

@@ -334,6 +334,7 @@ class EloSystem:
         participants: list[str],
         scores: dict[str, float],
         domain: str = None,
+        confidence_weight: float = 1.0,
     ) -> dict[str, float]:
         """
         Record a match result and update ELO ratings.
@@ -343,10 +344,14 @@ class EloSystem:
             participants: List of agent names
             scores: Dict of agent -> score (higher is better)
             domain: Optional domain for domain-specific ELO
+            confidence_weight: Weight for ELO change (0-1). Lower values reduce
+                               ELO impact for low-confidence debates. Default 1.0.
 
         Returns:
             Dict of agent -> ELO change
         """
+        # Clamp confidence_weight to valid range
+        confidence_weight = max(0.1, min(1.0, confidence_weight))
         if len(participants) < 2:
             return {}
 
@@ -378,9 +383,10 @@ class EloSystem:
                 else:
                     actual_a = actual_b = 0.5
 
-                # Update ELOs
-                change_a = K_FACTOR * (actual_a - expected_a)
-                change_b = K_FACTOR * (actual_b - expected_b)
+                # Update ELOs (scale by confidence_weight to reduce impact of uncertain debates)
+                effective_k = K_FACTOR * confidence_weight
+                change_a = effective_k * (actual_a - expected_a)
+                change_b = effective_k * (actual_b - expected_b)
 
                 elo_changes[agent_a] = elo_changes.get(agent_a, 0) + change_a
                 elo_changes[agent_b] = elo_changes.get(agent_b, 0) + change_b

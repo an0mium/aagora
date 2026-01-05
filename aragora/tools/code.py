@@ -235,11 +235,19 @@ class CodeReader:
         return build_tree(self.root, 0)
 
     def _resolve_path(self, file_path: str) -> Path:
-        """Resolve file path relative to root."""
+        """Resolve file path relative to root with path traversal protection."""
         path = Path(file_path)
         if not path.is_absolute():
             path = self.root / path
-        return path.resolve()
+        resolved = path.resolve()
+
+        # Security: Verify resolved path is within root directory
+        try:
+            resolved.relative_to(self.root.resolve())
+        except ValueError:
+            raise PermissionError(f"Access denied: path '{file_path}' escapes root directory")
+
+        return resolved
 
     def _detect_language(self, path: Path) -> str:
         """Detect programming language from extension."""

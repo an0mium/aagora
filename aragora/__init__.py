@@ -248,7 +248,7 @@ from aragora.integrations import (
     AragoraJSONEncoder,
 )
 
-# Modes
+# Modes (Operational + Debate)
 from aragora.modes import RedTeamMode, RedTeamResult, Attack, AttackType
 from aragora.modes import (
     DeepAuditOrchestrator,
@@ -259,6 +259,33 @@ from aragora.modes import (
     STRATEGY_AUDIT,
     CONTRACT_AUDIT,
     CODE_ARCHITECTURE_AUDIT,
+)
+# Operational Mode System (Kilocode-inspired)
+from aragora.modes import (
+    ToolGroup,
+    can_use_tool,
+    get_required_group,
+    Mode,
+    ModeRegistry,
+    HandoffContext,
+    ModeHandoff,
+    CustomMode,
+    CustomModeLoader,
+    ArchitectMode,
+    CoderMode,
+    ReviewerMode,
+    DebuggerMode,
+    OrchestratorMode,
+)
+# Capability Probing
+from aragora.modes import (
+    CapabilityProber,
+    VulnerabilityReport,
+    ProbeResult,
+    ProbeType,
+    ProbeStrategy,
+    ProbeBeforePromote,
+    generate_probe_report_markdown,
 )
 
 # Tools
@@ -294,6 +321,49 @@ from aragora.verification import (
     FormalVerificationManager,
     FormalProofStatus,
     FormalLanguage,
+)
+
+# Spectate (Terminal Visualization)
+from aragora.spectate import SpectatorStream, SpectatorEvents
+
+# Pipeline (Decision-to-PR)
+from aragora.pipeline import (
+    PRGenerator,
+    DecisionMemo,
+    PatchPlan,
+    RiskRegister,
+    Risk,
+    TestPlan,
+    TestCase,
+)
+
+# Visualization (Argument Mapping)
+from aragora.visualization import (
+    ArgumentCartographer,
+    ArgumentNode,
+    ArgumentEdge,
+    NodeType as ArgNodeType,  # Avoid conflict with graph.NodeType
+    EdgeRelation,
+    ReplayGenerator,
+    ReplayArtifact,
+    ReplayScene,
+)
+
+# Replay (Session Recording)
+from aragora.replay import (
+    ReplayEvent,
+    ReplayMeta,
+    ReplayRecorder,
+    ReplayReader,
+    ReplayStorage,
+)
+
+# Introspection (Agent Self-Awareness)
+from aragora.introspection import (
+    IntrospectionSnapshot,
+    IntrospectionCache,
+    get_agent_introspection,
+    format_introspection_section,
 )
 
 __version__ = "0.8.0"
@@ -524,4 +594,58 @@ __all__ = [
     "FormalVerificationManager",
     "FormalProofStatus",
     "FormalLanguage",
+    # Operational Mode System
+    "ToolGroup",
+    "can_use_tool",
+    "get_required_group",
+    "Mode",
+    "ModeRegistry",
+    "HandoffContext",
+    "ModeHandoff",
+    "CustomMode",
+    "CustomModeLoader",
+    "ArchitectMode",
+    "CoderMode",
+    "ReviewerMode",
+    "DebuggerMode",
+    "OrchestratorMode",
+    # Capability Probing
+    "CapabilityProber",
+    "VulnerabilityReport",
+    "ProbeResult",
+    "ProbeType",
+    "ProbeStrategy",
+    "ProbeBeforePromote",
+    "generate_probe_report_markdown",
+    # Spectate
+    "SpectatorStream",
+    "SpectatorEvents",
+    # Pipeline
+    "PRGenerator",
+    "DecisionMemo",
+    "PatchPlan",
+    "RiskRegister",
+    "Risk",
+    "TestPlan",
+    "TestCase",
+    # Visualization
+    "ArgumentCartographer",
+    "ArgumentNode",
+    "ArgumentEdge",
+    "ArgNodeType",
+    "EdgeRelation",
+    "ReplayGenerator",
+    "ReplayArtifact",
+    "ReplayScene",
+    # Replay
+    "ReplayEvent",
+    "ReplayMeta",
+    "ReplayRecorder",
+    "ReplayReader",
+    "ReplayStorage",
+    # Introspection
+    "IntrospectionSnapshot",
+    "IntrospectionCache",
+    "get_agent_introspection",
+    "format_introspection_section",
 ]
