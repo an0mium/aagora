@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { ErrorWithRetry } from './RetryButton';
+import { fetchWithRetry } from '@/utils/retry';
 
 interface EmergentTrait {
   agent: string;
@@ -57,38 +59,49 @@ export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE }: LaboratoryPanelP
     setLoading(true);
     setError(null);
 
-    try {
-      const [traitsRes, pollinationsRes, genesisRes, patternsRes] = await Promise.all([
-        fetch(`${apiBase}/api/laboratory/emergent-traits?min_confidence=0.3&limit=10`),
-        fetch(`${apiBase}/api/laboratory/cross-pollinations/suggest`),
-        fetch(`${apiBase}/api/genesis/stats`),
-        fetch(`${apiBase}/api/critiques/patterns?limit=15&min_success=0.5`),
-      ]);
+    // Use allSettled to handle partial failures gracefully
+    const results = await Promise.allSettled([
+      fetchWithRetry(`${apiBase}/api/laboratory/emergent-traits?min_confidence=0.3&limit=10`, undefined, { maxRetries: 2 }),
+      fetchWithRetry(`${apiBase}/api/laboratory/cross-pollinations/suggest`, undefined, { maxRetries: 2 }),
+      fetchWithRetry(`${apiBase}/api/genesis/stats`, undefined, { maxRetries: 2 }),
+      fetchWithRetry(`${apiBase}/api/critiques/patterns?limit=15&min_success=0.5`, undefined, { maxRetries: 2 }),
+    ]);
 
-      if (traitsRes.ok) {
-        const data = await traitsRes.json();
-        setTraits(data.emergent_traits || []);
-      }
+    const [traitsResult, pollinationsResult, genesisResult, patternsResult] = results;
+    let hasError = false;
 
-      if (pollinationsRes.ok) {
-        const data = await pollinationsRes.json();
-        setPollinations(data.suggestions || []);
-      }
-
-      if (genesisRes.ok) {
-        const data = await genesisRes.json();
-        setGenesisStats(data);
-      }
-
-      if (patternsRes.ok) {
-        const data = await patternsRes.json();
-        setPatterns(data.patterns || []);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch laboratory data');
-    } finally {
-      setLoading(false);
+    if (traitsResult.status === 'fulfilled' && traitsResult.value.ok) {
+      const data = await traitsResult.value.json();
+      setTraits(data.emergent_traits || []);
+    } else {
+      hasError = true;
     }
+
+    if (pollinationsResult.status === 'fulfilled' && pollinationsResult.value.ok) {
+      const data = await pollinationsResult.value.json();
+      setPollinations(data.suggestions || []);
+    } else {
+      hasError = true;
+    }
+
+    if (genesisResult.status === 'fulfilled' && genesisResult.value.ok) {
+      const data = await genesisResult.value.json();
+      setGenesisStats(data);
+    } else {
+      hasError = true;
+    }
+
+    if (patternsResult.status === 'fulfilled' && patternsResult.value.ok) {
+      const data = await patternsResult.value.json();
+      setPatterns(data.patterns || []);
+    } else {
+      hasError = true;
+    }
+
+    if (hasError) {
+      setError('Some data failed to load. Partial results shown.');
+    }
+    setLoading(false);
   }, [apiBase]);
 
   // Use ref to store latest fetchData to avoid interval recreation
@@ -171,9 +184,7 @@ export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE }: LaboratoryPanelP
       </div>
 
       {error && (
-        <div className="mb-4 p-2 bg-warning/10 border border-warning/30 rounded text-sm text-warning font-mono">
-          {error}
-        </div>
+        <ErrorWithRetry error={error} onRetry={fetchData} className="mb-4" />
       )}
 
       {expanded && (

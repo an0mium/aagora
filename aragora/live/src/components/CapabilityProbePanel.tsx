@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { fetchWithRetry } from '@/utils/retry';
 
 interface ProbeResult {
   probe_id: string;
@@ -91,7 +92,7 @@ export function CapabilityProbePanel({
 
   // Fetch available agents
   useEffect(() => {
-    fetch(`${apiBase}/api/leaderboard?limit=20`)
+    fetchWithRetry(`${apiBase}/api/leaderboard?limit=20`, undefined, { maxRetries: 2 })
       .then((res) => res.json())
       .then((data: { agents?: Array<{ name: string }> }) => {
         const agents = (data.agents || []).map((a) => a.name);
@@ -117,15 +118,19 @@ export function CapabilityProbePanel({
     setReport(null);
 
     try {
-      const response = await fetch(`${apiBase}/api/probes/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agent_name: selectedAgent,
-          probe_types: selectedProbes.length > 0 ? selectedProbes : undefined,
-          probes_per_type: probesPerType,
-        }),
-      });
+      const response = await fetchWithRetry(
+        `${apiBase}/api/probes/run`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent_name: selectedAgent,
+            probe_types: selectedProbes.length > 0 ? selectedProbes : undefined,
+            probes_per_type: probesPerType,
+          }),
+        },
+        { maxRetries: 2, baseDelayMs: 2000 } // Longer delay for heavy operations
+      );
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));

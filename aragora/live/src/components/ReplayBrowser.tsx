@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { ErrorWithRetry } from './RetryButton';
+import { fetchWithRetry } from '@/utils/retry';
 
 interface Replay {
   id: string;
@@ -51,35 +53,45 @@ export function ReplayBrowser() {
   const [replays, setReplays] = useState<Replay[]>([]);
   const [selectedReplay, setSelectedReplay] = useState<ReplayDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [forking, setForking] = useState<string | null>(null);
   const [highlightedEvents, setHighlightedEvents] = useState<Set<number>>(new Set());
+
+  const fetchReplays = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetchWithRetry('/api/replays', undefined, { maxRetries: 2 });
+      if (response.ok) {
+        const data = await response.json();
+        setReplays(data);
+      } else {
+        throw new Error(`Failed to fetch: ${response.statusText}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch replays');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchReplays();
   }, []);
 
-  const fetchReplays = async () => {
-    try {
-      const response = await fetch('/api/replays');
-      if (response.ok) {
-        const data = await response.json();
-        setReplays(data);
-      }
-    } catch (error) {
-      console.error('Failed to fetch replays:', error);
-    }
-  };
-
   const loadReplay = async (replayId: string) => {
     setLoading(true);
+    setError(null);
     try {
-      const response = await fetch(`/api/replays/${replayId}`);
+      const response = await fetchWithRetry(`/api/replays/${replayId}`, undefined, { maxRetries: 2 });
       if (response.ok) {
         const data = await response.json();
         setSelectedReplay(data);
+      } else {
+        throw new Error(`Failed to load: ${response.statusText}`);
       }
-    } catch (error) {
-      console.error('Failed to load replay:', error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load replay');
     } finally {
       setLoading(false);
     }
@@ -88,19 +100,23 @@ export function ReplayBrowser() {
   const forkReplay = async (replayId: string, eventId: string) => {
     setForking(eventId);
     try {
-      const response = await fetch(`/api/replays/${replayId}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: eventId }),
-      });
+      const response = await fetchWithRetry(
+        `/api/replays/${replayId}/fork`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_id: eventId }),
+        },
+        { maxRetries: 2 }
+      );
       if (response.ok) {
         const forkData = await response.json();
         alert(`Fork created: ${forkData.fork_id}. Use this to start a new debate.`);
       } else {
         alert('Fork failed');
       }
-    } catch (error) {
-      console.error('Fork error:', error);
+    } catch (err) {
+      console.error('Fork error:', err);
       alert('Fork failed');
     } finally {
       setForking(null);
@@ -110,6 +126,8 @@ export function ReplayBrowser() {
   return (
     <div className="bg-surface border border-border rounded-lg p-4">
       <h3 className="text-lg font-semibold mb-4">Replay Browser</h3>
+
+      {error && <ErrorWithRetry error={error} onRetry={fetchReplays} className="mb-4" />}
 
       {!selectedReplay ? (
         <div>

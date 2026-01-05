@@ -689,6 +689,7 @@ class GraphDebateOrchestrator:
         self,
         task: str,
         max_rounds: int = 5,
+        run_agent_fn: Optional[Callable] = None,
         on_node: Optional[Callable[[DebateNode], None]] = None,
         on_branch: Optional[Callable[[Branch], None]] = None,
         on_merge: Optional[Callable[[MergeResult], None]] = None,
@@ -696,7 +697,15 @@ class GraphDebateOrchestrator:
         """
         Run a graph-based debate with automatic branching.
 
-        This is a placeholder for the full implementation which would:
+        Args:
+            task: The debate topic/question
+            max_rounds: Maximum rounds per branch
+            run_agent_fn: Async function(agent, prompt, context) -> str
+            on_node: Callback for new nodes
+            on_branch: Callback for new branches
+            on_merge: Callback for merges
+
+        Flow:
         1. Start with a root proposal
         2. Have agents critique and respond
         3. Detect disagreements and create branches
@@ -704,6 +713,8 @@ class GraphDebateOrchestrator:
         5. Detect convergence and merge branches
         6. Produce a final synthesis
         """
+        import asyncio
+
         # Create root node
         root = self.graph.add_node(
             node_type=NodeType.ROOT,
@@ -715,9 +726,293 @@ class GraphDebateOrchestrator:
         if on_node:
             on_node(root)
 
-        # The actual debate loop would go here
-        # For now, return the initialized graph
+        # If no run function provided, return initialized graph
+        if run_agent_fn is None:
+            return self.graph
+
+        # Track active branch heads (branch_id -> current_node_id)
+        branch_heads: dict[str, str] = {self.graph.main_branch_id: root.id}
+
+        for round_num in range(max_rounds):
+            # Process each active branch
+            active_branches = self.graph.get_active_branches()
+
+            for branch in active_branches:
+                if branch.id not in branch_heads:
+                    continue
+
+                current_node_id = branch_heads[branch.id]
+                current_node = self.graph.nodes[current_node_id]
+
+                # Build context from branch history
+                branch_nodes = self.graph.get_branch_nodes(branch.id)
+                context = self._build_context(branch_nodes)
+
+                # Collect responses from all agents
+                responses: list[tuple[str, str, float]] = []
+
+                for agent in self.agents:
+                    prompt = self._build_prompt(
+                        task=task,
+                        round_num=round_num,
+                        current_content=current_node.content,
+                        branch_hypothesis=branch.hypothesis,
+                    )
+
+                    try:
+                        response = await run_agent_fn(agent, prompt, context)
+                        confidence = self._extract_confidence(response)
+                        responses.append((agent.name, response, confidence))
+                    except Exception as e:
+                        responses.append((agent.name, f"Error: {e}", 0.0))
+
+                # Evaluate disagreement
+                disagreement, alternative = self.evaluate_disagreement(responses)
+
+                # Check if we should branch
+                should_branch, branch_reason = self.policy.should_branch(
+                    disagreement=disagreement,
+                    uncertainty=1.0 - max(r[2] for r in responses) if responses else 1.0,
+                    current_branches=len(active_branches),
+                    current_depth=round_num,
+                    alternative_score=0.5 if alternative else 0.0,
+                )
+
+                if should_branch and branch_reason and alternative:
+                    # Create a new branch for the divergent view
+                    new_branch = self.graph.create_branch(
+                        from_node_id=current_node_id,
+                        reason=branch_reason,
+                        name=f"Branch-{len(self.graph.branches)}",
+                        hypothesis=alternative[:200] if alternative else "",
+                    )
+
+                    if on_branch:
+                        on_branch(new_branch)
+
+                    # Add first node to new branch
+                    divergent_agent = next(
+                        (r[0] for r in responses if r[1] == alternative),
+                        responses[0][0] if responses else "unknown"
+                    )
+                    branch_node = self.graph.add_node(
+                        node_type=NodeType.COUNTERFACTUAL,
+                        agent_id=divergent_agent,
+                        content=alternative,
+                        parent_id=current_node_id,
+                        branch_id=new_branch.id,
+                        confidence=self._extract_confidence(alternative),
+                    )
+                    branch_heads[new_branch.id] = branch_node.id
+
+                    if on_node:
+                        on_node(branch_node)
+
+                # Add main response to current branch
+                if responses:
+                    # Pick highest confidence response for main branch
+                    best_response = max(responses, key=lambda r: r[2])
+                    node_type = NodeType.PROPOSAL if round_num == 0 else NodeType.SYNTHESIS
+
+                    new_node = self.graph.add_node(
+                        node_type=node_type,
+                        agent_id=best_response[0],
+                        content=best_response[1],
+                        parent_id=current_node_id,
+                        branch_id=branch.id,
+                        confidence=best_response[2],
+                        claims=self._extract_claims(best_response[1]),
+                    )
+                    branch_heads[branch.id] = new_node.id
+
+                    if on_node:
+                        on_node(new_node)
+
+            # Check for convergence and merge
+            convergent_pairs = self.graph.check_convergence()
+            for branch_a, branch_b, score in convergent_pairs:
+                if branch_a.is_active and branch_b.is_active:
+                    # Synthesize the merge
+                    nodes_a = self.graph.get_branch_nodes(branch_a.id)
+                    nodes_b = self.graph.get_branch_nodes(branch_b.id)
+
+                    synthesis = self._synthesize_branches(nodes_a, nodes_b)
+
+                    merge_result = self.graph.merge_branches(
+                        branch_ids=[branch_a.id, branch_b.id],
+                        strategy=MergeStrategy.SYNTHESIS,
+                        synthesizer_agent_id="system",
+                        synthesis_content=synthesis,
+                    )
+
+                    # Update branch heads
+                    if branch_a.id in branch_heads:
+                        del branch_heads[branch_a.id]
+                    if branch_b.id in branch_heads:
+                        del branch_heads[branch_b.id]
+                    branch_heads[self.graph.main_branch_id] = merge_result.merged_node_id
+
+                    if on_merge:
+                        on_merge(merge_result)
+
+            # Check if all branches have converged
+            if len(self.graph.get_active_branches()) <= 1:
+                break
+
+        # Create final conclusion node
+        leaf_nodes = self.graph.get_leaf_nodes()
+        if leaf_nodes:
+            final_content = self._create_final_synthesis(leaf_nodes)
+            self.graph.add_node(
+                node_type=NodeType.CONCLUSION,
+                agent_id="system",
+                content=final_content,
+                parent_id=leaf_nodes[0].id if leaf_nodes else None,
+                branch_id=self.graph.main_branch_id,
+                confidence=max(n.confidence for n in leaf_nodes) if leaf_nodes else 0.5,
+            )
+
         return self.graph
+
+    def _build_context(self, nodes: list[DebateNode]) -> str:
+        """Build context string from branch nodes."""
+        if not nodes:
+            return ""
+
+        context_parts = []
+        for node in nodes[-5:]:  # Last 5 nodes
+            context_parts.append(f"[{node.agent_id}]: {node.content[:500]}")
+
+        return "\n\n".join(context_parts)
+
+    def _build_prompt(
+        self,
+        task: str,
+        round_num: int,
+        current_content: str,
+        branch_hypothesis: str = "",
+    ) -> str:
+        """Build prompt for agent response."""
+        prompt_parts = [f"Task: {task}"]
+
+        if round_num == 0:
+            prompt_parts.append("Provide your initial analysis and position on this topic.")
+        else:
+            prompt_parts.append(f"Previous response: {current_content[:500]}")
+            prompt_parts.append("Critique or build upon this response. State your confidence (0-100%).")
+
+        if branch_hypothesis:
+            prompt_parts.append(f"Explore this alternative view: {branch_hypothesis}")
+
+        return "\n\n".join(prompt_parts)
+
+    def _extract_confidence(self, response: str) -> float:
+        """Extract confidence score from response."""
+        import re
+
+        # Look for explicit confidence
+        match = re.search(r"confidence[:\s]+(\d+)%?", response.lower())
+        if match:
+            return min(1.0, int(match.group(1)) / 100.0)
+
+        # Look for percentage
+        match = re.search(r"(\d+)%\s*(?:confident|certain|sure)", response.lower())
+        if match:
+            return min(1.0, int(match.group(1)) / 100.0)
+
+        # Default based on tone
+        high_conf_words = ["certain", "definitely", "clearly", "obviously", "undoubtedly"]
+        low_conf_words = ["perhaps", "maybe", "might", "possibly", "uncertain"]
+
+        response_lower = response.lower()
+        if any(w in response_lower for w in high_conf_words):
+            return 0.8
+        if any(w in response_lower for w in low_conf_words):
+            return 0.4
+
+        return 0.6  # Default moderate confidence
+
+    def _extract_claims(self, response: str) -> list[str]:
+        """Extract key claims from response."""
+        import re
+
+        claims = []
+
+        # Look for numbered claims
+        numbered = re.findall(r"(?:^|\n)\s*\d+[.)]\s*(.+?)(?:\n|$)", response)
+        claims.extend(numbered[:5])
+
+        # Look for bullet points
+        bullets = re.findall(r"(?:^|\n)\s*[-*]\s*(.+?)(?:\n|$)", response)
+        claims.extend(bullets[:5])
+
+        # If no structured claims, take first sentence
+        if not claims:
+            sentences = re.split(r"[.!?]+", response)
+            if sentences:
+                claims.append(sentences[0].strip()[:200])
+
+        return claims[:5]  # Limit to 5 claims
+
+    def _synthesize_branches(
+        self,
+        nodes_a: list[DebateNode],
+        nodes_b: list[DebateNode],
+    ) -> str:
+        """Create synthesis content from merging branches."""
+        claims_a = set()
+        claims_b = set()
+
+        for node in nodes_a:
+            claims_a.update(node.claims)
+        for node in nodes_b:
+            claims_b.update(node.claims)
+
+        common = claims_a & claims_b
+        unique_a = claims_a - claims_b
+        unique_b = claims_b - claims_a
+
+        synthesis_parts = ["## Branch Synthesis"]
+
+        if common:
+            synthesis_parts.append(f"**Agreed upon:** {', '.join(list(common)[:3])}")
+
+        if unique_a:
+            synthesis_parts.append(f"**From Branch A:** {', '.join(list(unique_a)[:2])}")
+
+        if unique_b:
+            synthesis_parts.append(f"**From Branch B:** {', '.join(list(unique_b)[:2])}")
+
+        if nodes_a:
+            synthesis_parts.append(f"**Final position from A:** {nodes_a[-1].content[:200]}")
+        if nodes_b:
+            synthesis_parts.append(f"**Final position from B:** {nodes_b[-1].content[:200]}")
+
+        return "\n\n".join(synthesis_parts)
+
+    def _create_final_synthesis(self, leaf_nodes: list[DebateNode]) -> str:
+        """Create final conclusion from all leaf nodes."""
+        if not leaf_nodes:
+            return "No conclusion reached."
+
+        if len(leaf_nodes) == 1:
+            return f"**Conclusion:** {leaf_nodes[0].content}"
+
+        # Multiple endpoints - summarize all
+        parts = ["## Final Synthesis", ""]
+        for i, node in enumerate(leaf_nodes[:5], 1):
+            conf_str = f"({node.confidence:.0%} confidence)" if node.confidence else ""
+            parts.append(f"**Path {i}** {conf_str}: {node.content[:300]}")
+
+        # Find common claims
+        all_claims = set()
+        for node in leaf_nodes:
+            all_claims.update(node.claims)
+
+        if all_claims:
+            parts.append(f"\n**Key claims across paths:** {', '.join(list(all_claims)[:5])}")
+
+        return "\n\n".join(parts)
 
     def evaluate_disagreement(
         self,

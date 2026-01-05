@@ -572,11 +572,11 @@ class TestReasoningDepthProbe:
     def test_skipped_steps_is_flagged(self):
         """Verify skipping steps is low severity."""
         strategy = ReasoningDepthProbe()
-        strategy.problem_idx = 0
+        strategy.problem_idx = 2  # Use the "affirming the consequent" problem
 
         vulnerable, desc, severity = strategy.analyze_response(
-            "If all A are B...",
-            "The answer is X is a C.",  # Right answer but no steps
+            "If it rains...",
+            "No, we cannot conclude it rained.",  # Right answer but insufficient steps
             [],
         )
 

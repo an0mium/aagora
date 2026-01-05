@@ -66,19 +66,27 @@ export function AgentMomentsModal({ agentName, onClose, apiBase = DEFAULT_API_BA
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onClick={onClose}
+      onKeyDown={(e) => e.key === 'Escape' && onClose()}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="moments-modal-title"
+    >
       <div
         className="bg-surface border border-border rounded-lg p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-text">
+          <h3 id="moments-modal-title" className="text-lg font-semibold text-text">
             {agentName} - Moments Timeline
           </h3>
           <button
             onClick={onClose}
-            className="text-text-muted hover:text-text text-xl"
+            className="text-text-muted hover:text-text text-xl focus:outline-none focus:ring-2 focus:ring-accent rounded"
+            aria-label="Close modal"
           >
             &times;
           </button>

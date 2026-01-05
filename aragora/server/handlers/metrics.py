@@ -1,0 +1,268 @@
+"""
+Operational metrics endpoint handlers.
+
+Endpoints:
+- GET /api/metrics - Get operational metrics for monitoring
+- GET /api/metrics/health - Detailed health check
+- GET /api/metrics/cache - Cache statistics
+"""
+
+import os
+import platform
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from .base import BaseHandler, HandlerResult, json_response, error_response, _cache
+
+
+# Request tracking for metrics
+_request_counts: dict[str, int] = {}
+_error_counts: dict[str, int] = {}
+_start_time = time.time()
+
+
+def track_request(endpoint: str, is_error: bool = False):
+    """Track a request for metrics."""
+    _request_counts[endpoint] = _request_counts.get(endpoint, 0) + 1
+    if is_error:
+        _error_counts[endpoint] = _error_counts.get(endpoint, 0) + 1
+
+
+class MetricsHandler(BaseHandler):
+    """Handler for operational metrics endpoints."""
+
+    ROUTES = [
+        "/api/metrics",
+        "/api/metrics/health",
+        "/api/metrics/cache",
+        "/api/metrics/system",
+    ]
+
+    def can_handle(self, path: str) -> bool:
+        """Check if this handler can process the given path."""
+        return path in self.ROUTES
+
+    def handle(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
+        """Route metrics requests to appropriate methods."""
+        if path == "/api/metrics":
+            return self._get_metrics()
+
+        if path == "/api/metrics/health":
+            return self._get_health()
+
+        if path == "/api/metrics/cache":
+            return self._get_cache_stats()
+
+        if path == "/api/metrics/system":
+            return self._get_system_info()
+
+        return None
+
+    def _get_metrics(self) -> HandlerResult:
+        """Get comprehensive operational metrics."""
+        try:
+            uptime = time.time() - _start_time
+
+            # Calculate request rates
+            total_requests = sum(_request_counts.values())
+            total_errors = sum(_error_counts.values())
+            error_rate = total_errors / total_requests if total_requests > 0 else 0.0
+
+            # Top endpoints by request count
+            top_endpoints = sorted(
+                _request_counts.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:10]
+
+            # Database sizes
+            db_stats = self._get_database_sizes()
+
+            # Cache stats
+            cache_size = len(_cache)
+
+            metrics = {
+                "uptime_seconds": round(uptime, 1),
+                "uptime_human": self._format_uptime(uptime),
+                "requests": {
+                    "total": total_requests,
+                    "errors": total_errors,
+                    "error_rate": round(error_rate, 4),
+                    "top_endpoints": [
+                        {"endpoint": ep, "count": count}
+                        for ep, count in top_endpoints
+                    ],
+                },
+                "cache": {
+                    "entries": cache_size,
+                },
+                "databases": db_stats,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            return json_response(metrics)
+        except Exception as e:
+            return error_response(f"Failed to get metrics: {e}", 500)
+
+    def _get_health(self) -> HandlerResult:
+        """Get detailed health check status."""
+        try:
+            health = {
+                "status": "healthy",
+                "checks": {},
+            }
+
+            # Check storage
+            storage = self.get_storage()
+            if storage:
+                try:
+                    storage.list_debates(limit=1)
+                    health["checks"]["storage"] = {"status": "healthy"}
+                except Exception as e:
+                    health["checks"]["storage"] = {"status": "unhealthy", "error": str(e)}
+                    health["status"] = "degraded"
+            else:
+                health["checks"]["storage"] = {"status": "unavailable"}
+
+            # Check ELO system
+            elo = self.get_elo_system()
+            if elo:
+                try:
+                    elo.get_leaderboard(limit=1)
+                    health["checks"]["elo_system"] = {"status": "healthy"}
+                except Exception as e:
+                    health["checks"]["elo_system"] = {"status": "unhealthy", "error": str(e)}
+                    health["status"] = "degraded"
+            else:
+                health["checks"]["elo_system"] = {"status": "unavailable"}
+
+            # Check nomic directory
+            nomic_dir = self.get_nomic_dir()
+            if nomic_dir and nomic_dir.exists():
+                health["checks"]["nomic_dir"] = {
+                    "status": "healthy",
+                    "path": str(nomic_dir),
+                }
+            else:
+                health["checks"]["nomic_dir"] = {"status": "unavailable"}
+
+            # Overall status code
+            status_code = 200 if health["status"] == "healthy" else 503
+
+            return json_response(health, status=status_code)
+        except Exception as e:
+            return error_response(f"Health check failed: {e}", 500)
+
+    def _get_cache_stats(self) -> HandlerResult:
+        """Get cache statistics."""
+        try:
+            now = time.time()
+
+            # Analyze cache entries
+            entries_by_prefix = {}
+            oldest_entry = now
+            newest_entry = 0
+
+            for key, (cached_time, _) in _cache.items():
+                # Extract prefix from cache key
+                prefix = key.split(":")[0] if ":" in key else "default"
+                entries_by_prefix[prefix] = entries_by_prefix.get(prefix, 0) + 1
+
+                if cached_time < oldest_entry:
+                    oldest_entry = cached_time
+                if cached_time > newest_entry:
+                    newest_entry = cached_time
+
+            stats = {
+                "total_entries": len(_cache),
+                "entries_by_prefix": entries_by_prefix,
+                "oldest_entry_age_seconds": round(now - oldest_entry, 1) if _cache else 0,
+                "newest_entry_age_seconds": round(now - newest_entry, 1) if _cache else 0,
+            }
+
+            return json_response(stats)
+        except Exception as e:
+            return error_response(f"Failed to get cache stats: {e}", 500)
+
+    def _get_system_info(self) -> HandlerResult:
+        """Get system information."""
+        try:
+            import sys
+
+            info = {
+                "python_version": sys.version,
+                "platform": platform.platform(),
+                "machine": platform.machine(),
+                "processor": platform.processor(),
+                "pid": os.getpid(),
+            }
+
+            # Memory usage (if psutil available)
+            try:
+                import psutil
+                process = psutil.Process()
+                info["memory"] = {
+                    "rss_mb": round(process.memory_info().rss / 1024 / 1024, 2),
+                    "vms_mb": round(process.memory_info().vms / 1024 / 1024, 2),
+                }
+            except ImportError:
+                info["memory"] = {"available": False, "reason": "psutil not installed"}
+
+            return json_response(info)
+        except Exception as e:
+            return error_response(f"Failed to get system info: {e}", 500)
+
+    def _get_database_sizes(self) -> dict:
+        """Get database file sizes."""
+        sizes = {}
+        nomic_dir = self.get_nomic_dir()
+
+        if not nomic_dir or not nomic_dir.exists():
+            return sizes
+
+        # Common database files
+        db_files = [
+            "aragora_elo.db",
+            "debate_storage.db",
+            "debate_embeddings.db",
+            "aragora_insights.db",
+            "continuum_memory.db",
+            "grounded_positions.db",
+        ]
+
+        for db_file in db_files:
+            db_path = nomic_dir / db_file
+            if db_path.exists():
+                size_bytes = db_path.stat().st_size
+                sizes[db_file] = {
+                    "bytes": size_bytes,
+                    "human": self._format_size(size_bytes),
+                }
+
+        return sizes
+
+    def _format_uptime(self, seconds: float) -> str:
+        """Format uptime as human-readable string."""
+        days = int(seconds // 86400)
+        hours = int((seconds % 86400) // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+
+        if days > 0:
+            return f"{days}d {hours}h {minutes}m"
+        elif hours > 0:
+            return f"{hours}h {minutes}m {secs}s"
+        elif minutes > 0:
+            return f"{minutes}m {secs}s"
+        else:
+            return f"{secs}s"
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size as human-readable string."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} TB"

@@ -163,12 +163,22 @@ export function DocumentUpload({ onDocumentsChange, apiBase = '' }: DocumentUplo
       <div className="p-4 space-y-4">
         {/* Drop zone */}
         <div
+          role="button"
+          tabIndex={status === 'uploading' ? -1 : 0}
+          aria-label="Upload a document. Click or press Enter to select a file, or drag and drop."
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
           className={`
             border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all
+            focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface
             ${isDragging
               ? 'border-accent bg-accent/10'
               : 'border-border hover:border-accent/50 hover:bg-surface'

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
+import { VirtualList } from './VirtualList';
 
 interface DebateSummary {
   id: string;
@@ -135,71 +136,77 @@ export function DebateListPanel({ onSelectDebate, limit = 20 }: DebateListPanelP
         </div>
       )}
 
-      <div className="space-y-2 max-h-96 overflow-y-auto">
+      <div className="max-h-96">
         {filteredDebates.length === 0 && !loading ? (
           <div className="text-gray-400 text-center py-8">
             No debates found
           </div>
         ) : (
-          filteredDebates.map((debate) => (
-            <div
-              key={debate.id}
-              onClick={() => onSelectDebate?.(debate.id)}
-              className="p-3 bg-gray-800 rounded border border-gray-700 hover:border-gray-500 cursor-pointer transition-colors"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1 min-w-0">
-                  <p className="text-white text-sm font-medium truncate">
-                    {debate.task}
-                  </p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-gray-400 text-xs">
-                      {formatDate(debate.created_at)}
-                    </span>
-                    <span className="text-gray-500">|</span>
-                    <span className="text-gray-400 text-xs">
-                      {debate.rounds_used} rounds
-                    </span>
-                    <span className="text-gray-500">|</span>
-                    <span className="text-gray-400 text-xs">
-                      {formatDuration(debate.duration_seconds)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 mt-2">
-                    {debate.agents.slice(0, 4).map((agent, i) => (
-                      <span
-                        key={i}
-                        className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300"
-                      >
-                        {agent}
+          <VirtualList
+            items={filteredDebates}
+            height={384}
+            itemHeight={120}
+            className="overflow-hidden"
+            renderItem={(debate) => (
+              <div
+                key={debate.id}
+                onClick={() => onSelectDebate?.(debate.id)}
+                className="p-3 mb-2 bg-gray-800 rounded border border-gray-700 hover:border-gray-500 cursor-pointer transition-colors"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium truncate">
+                      {debate.task}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-gray-400 text-xs">
+                        {formatDate(debate.created_at)}
                       </span>
-                    ))}
-                    {debate.agents.length > 4 && (
-                      <span className="text-gray-500 text-xs">
-                        +{debate.agents.length - 4}
+                      <span className="text-gray-500">|</span>
+                      <span className="text-gray-400 text-xs">
+                        {debate.rounds_used} rounds
+                      </span>
+                      <span className="text-gray-500">|</span>
+                      <span className="text-gray-400 text-xs">
+                        {formatDuration(debate.duration_seconds)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 mt-2">
+                      {debate.agents.slice(0, 4).map((agent, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-300"
+                        >
+                          {agent}
+                        </span>
+                      ))}
+                      {debate.agents.length > 4 && (
+                        <span className="text-gray-500 text-xs">
+                          +{debate.agents.length - 4}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="ml-3 flex-shrink-0">
+                    {debate.consensus_reached ? (
+                      <span className="px-2 py-1 bg-green-900/50 text-green-400 text-xs rounded">
+                        Consensus
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-yellow-900/50 text-yellow-400 text-xs rounded">
+                        No Consensus
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="ml-3 flex-shrink-0">
-                  {debate.consensus_reached ? (
-                    <span className="px-2 py-1 bg-green-900/50 text-green-400 text-xs rounded">
-                      Consensus
-                    </span>
-                  ) : (
-                    <span className="px-2 py-1 bg-yellow-900/50 text-yellow-400 text-xs rounded">
-                      No Consensus
-                    </span>
-                  )}
-                </div>
+                {debate.winner && (
+                  <div className="mt-2 text-xs text-gray-400">
+                    Winner: <span className="text-blue-400">{debate.winner}</span>
+                  </div>
+                )}
               </div>
-              {debate.winner && (
-                <div className="mt-2 text-xs text-gray-400">
-                  Winner: <span className="text-blue-400">{debate.winner}</span>
-                </div>
-              )}
-            </div>
-          ))
+            )}
+          />
         )}
       </div>
 

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { LearningEvolution } from './LearningEvolution';
+import { ErrorWithRetry } from './RetryButton';
+import { fetchWithRetry } from '@/utils/retry';
 import type { StreamEvent } from '@/types/events';
 
 interface Insight {
@@ -59,7 +61,11 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
   const fetchInsights = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${apiBase}/api/insights/recent?limit=10`);
+      const response = await fetchWithRetry(
+        `${apiBase}/api/insights/recent?limit=10`,
+        undefined,
+        { maxRetries: 2 }
+      );
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -74,23 +80,20 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
   }, [apiBase]);
 
   const fetchFlips = useCallback(async () => {
-    try {
-      const [flipsRes, summaryRes] = await Promise.all([
-        fetch(`${apiBase}/api/flips/recent?limit=15`),
-        fetch(`${apiBase}/api/flips/summary`),
-      ]);
+    // Use allSettled to handle partial failures gracefully
+    const [flipsResult, summaryResult] = await Promise.allSettled([
+      fetchWithRetry(`${apiBase}/api/flips/recent?limit=15`, undefined, { maxRetries: 2 }),
+      fetchWithRetry(`${apiBase}/api/flips/summary`, undefined, { maxRetries: 2 }),
+    ]);
 
-      if (flipsRes.ok) {
-        const flipsData = await flipsRes.json();
-        setFlips(flipsData.flips || []);
-      }
+    if (flipsResult.status === 'fulfilled' && flipsResult.value.ok) {
+      const flipsData = await flipsResult.value.json();
+      setFlips(flipsData.flips || []);
+    }
 
-      if (summaryRes.ok) {
-        const summaryData = await summaryRes.json();
-        setFlipSummary(summaryData.summary || null);
-      }
-    } catch (err) {
-      console.error('Failed to fetch flips:', err);
+    if (summaryResult.status === 'fulfilled' && summaryResult.value.ok) {
+      const summaryData = await summaryResult.value.json();
+      setFlipSummary(summaryData.summary || null);
     }
   }, [apiBase]);
 
@@ -225,10 +228,14 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-bg border border-border rounded p-1 mb-4">
+      <div role="tablist" aria-label="Insights categories" className="flex space-x-1 bg-bg border border-border rounded p-1 mb-4">
         <button
+          role="tab"
+          aria-selected={activeTab === 'insights'}
+          aria-controls="insights-panel"
+          id="insights-tab"
           onClick={() => setActiveTab('insights')}
-          className={`px-3 py-1 rounded text-sm transition-colors flex-1 ${
+          className={`px-3 py-1 rounded text-sm transition-colors flex-1 focus:outline-none focus:ring-2 focus:ring-accent ${
             activeTab === 'insights'
               ? 'bg-accent text-bg font-medium'
               : 'text-text-muted hover:text-text'
@@ -237,8 +244,12 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
           Insights ({insights.length})
         </button>
         <button
+          role="tab"
+          aria-selected={activeTab === 'memory'}
+          aria-controls="memory-panel"
+          id="memory-tab"
           onClick={() => setActiveTab('memory')}
-          className={`px-3 py-1 rounded text-sm transition-colors flex-1 ${
+          className={`px-3 py-1 rounded text-sm transition-colors flex-1 focus:outline-none focus:ring-2 focus:ring-accent ${
             activeTab === 'memory'
               ? 'bg-accent text-bg font-medium'
               : 'text-text-muted hover:text-text'
@@ -247,8 +258,12 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
           Memory ({memoryRecalls.length})
         </button>
         <button
+          role="tab"
+          aria-selected={activeTab === 'flips'}
+          aria-controls="flips-panel"
+          id="flips-tab"
           onClick={() => setActiveTab('flips')}
-          className={`px-3 py-1 rounded text-sm transition-colors flex-1 ${
+          className={`px-3 py-1 rounded text-sm transition-colors flex-1 focus:outline-none focus:ring-2 focus:ring-accent ${
             activeTab === 'flips'
               ? 'bg-accent text-bg font-medium'
               : 'text-text-muted hover:text-text'
@@ -257,8 +272,12 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
           Flips ({flips.length})
         </button>
         <button
+          role="tab"
+          aria-selected={activeTab === 'learning'}
+          aria-controls="learning-panel"
+          id="learning-tab"
           onClick={() => setActiveTab('learning')}
-          className={`px-3 py-1 rounded text-sm transition-colors flex-1 ${
+          className={`px-3 py-1 rounded text-sm transition-colors flex-1 focus:outline-none focus:ring-2 focus:ring-accent ${
             activeTab === 'learning'
               ? 'bg-accent text-bg font-medium'
               : 'text-text-muted hover:text-text'
@@ -270,15 +289,13 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
 
       {/* Insights Tab */}
       {activeTab === 'insights' && (
-        <div className="space-y-3 max-h-96 overflow-y-auto">
+        <div id="insights-panel" role="tabpanel" aria-labelledby="insights-tab" className="space-y-3 max-h-96 overflow-y-auto">
           {loading && (
             <div className="text-center text-text-muted py-4">Loading insights...</div>
           )}
 
           {error && (
-            <div className="text-center text-red-400 py-4">
-              <div className="text-sm">{error}</div>
-            </div>
+            <ErrorWithRetry error={error} onRetry={fetchInsights} />
           )}
 
           {!loading && !error && insights.length === 0 && (
@@ -330,7 +347,7 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
 
       {/* Memory Recalls Tab */}
       {activeTab === 'memory' && (
-        <div className="space-y-3 max-h-96 overflow-y-auto">
+        <div id="memory-panel" role="tabpanel" aria-labelledby="memory-tab" className="space-y-3 max-h-96 overflow-y-auto">
           {memoryRecalls.length === 0 && (
             <div className="text-center text-text-muted py-4">
               No memory recalls yet. Historical context will appear here during debates.
@@ -378,7 +395,7 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
 
       {/* Flips Tab */}
       {activeTab === 'flips' && (
-        <div className="space-y-3 max-h-96 overflow-y-auto">
+        <div id="flips-panel" role="tabpanel" aria-labelledby="flips-tab" className="space-y-3 max-h-96 overflow-y-auto">
           {/* Summary Header */}
           {flipSummary && flipSummary.total_flips > 0 && (
             <div className="p-3 bg-bg border border-border rounded-lg mb-3">
@@ -472,7 +489,7 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
 
       {/* Learning Tab */}
       {activeTab === 'learning' && (
-        <div className="max-h-[500px] overflow-y-auto">
+        <div id="learning-panel" role="tabpanel" aria-labelledby="learning-tab" className="max-h-[500px] overflow-y-auto">
           <LearningEvolution />
         </div>
       )}
