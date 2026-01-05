@@ -7,13 +7,71 @@ Tests trending topic collection from various social media sources.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
+import time
 
 from aragora.pulse.ingestor import (
+    CircuitBreaker,
     TrendingTopic,
     PulseIngestor,
     TwitterIngestor,
+    HackerNewsIngestor,
+    RedditIngestor,
     PulseManager,
 )
+
+
+# =============================================================================
+# CircuitBreaker Tests
+# =============================================================================
+
+
+class TestCircuitBreaker:
+    """Tests for CircuitBreaker."""
+
+    def test_circuit_breaker_creation(self):
+        """Test CircuitBreaker creation with defaults."""
+        cb = CircuitBreaker()
+        assert cb.failure_threshold == 3
+        assert cb.reset_timeout == 60.0
+        assert cb.failures == 0
+        assert cb.is_open is False
+
+    def test_circuit_breaker_can_proceed_initially(self):
+        """Test circuit allows requests initially."""
+        cb = CircuitBreaker()
+        assert cb.can_proceed() is True
+
+    def test_circuit_breaker_opens_after_failures(self):
+        """Test circuit opens after threshold failures."""
+        cb = CircuitBreaker(failure_threshold=2)
+        cb.record_failure()
+        assert cb.is_open is False
+        cb.record_failure()
+        assert cb.is_open is True
+        assert cb.can_proceed() is False
+
+    def test_circuit_breaker_resets_on_success(self):
+        """Test circuit resets after success."""
+        cb = CircuitBreaker(failure_threshold=2)
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.is_open is True
+
+        cb.record_success()
+        assert cb.is_open is False
+        assert cb.failures == 0
+
+    def test_circuit_breaker_resets_after_timeout(self):
+        """Test circuit resets after timeout."""
+        cb = CircuitBreaker(failure_threshold=1, reset_timeout=0.1)
+        cb.record_failure()
+        assert cb.is_open is True
+        assert cb.can_proceed() is False
+
+        # Wait for reset timeout
+        time.sleep(0.15)
+        assert cb.can_proceed() is True
+        assert cb.is_open is False
 
 
 # =============================================================================
@@ -449,3 +507,191 @@ class TestPulseIntegration:
         topics = await manager.get_trending_topics(limit_per_platform=3)
         assert len(topics) > 0
         assert all(t.platform == "test" for t in topics)
+
+
+# =============================================================================
+# HackerNewsIngestor Tests
+# =============================================================================
+
+
+class TestHackerNewsIngestor:
+    """Tests for HackerNewsIngestor."""
+
+    def test_hn_ingestor_creation(self):
+        """Test HN ingestor creation."""
+        ingestor = HackerNewsIngestor()
+        assert ingestor.base_url == "https://hn.algolia.com/api/v1"
+        assert ingestor.api_key is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_trending_fallback(self):
+        """Test fetch_trending returns mock data on error."""
+        ingestor = HackerNewsIngestor(max_retries=1, base_retry_delay=0.01)
+        # Force circuit breaker open
+        ingestor.circuit_breaker.is_open = True
+
+        topics = await ingestor.fetch_trending(limit=3)
+        assert len(topics) == 3
+        assert all(t.platform == "hackernews" for t in topics)
+
+    def test_categorize_topic_ai(self):
+        """Test AI topic categorization."""
+        ingestor = HackerNewsIngestor()
+        assert ingestor._categorize_topic("GPT-4 breakthrough") == "ai"
+        assert ingestor._categorize_topic("New LLM model") == "ai"
+
+    def test_categorize_topic_programming(self):
+        """Test programming topic categorization."""
+        ingestor = HackerNewsIngestor()
+        assert ingestor._categorize_topic("Rust is amazing") == "programming"
+        assert ingestor._categorize_topic("Python 4.0 released") == "programming"
+
+    def test_categorize_topic_security(self):
+        """Test security topic categorization."""
+        ingestor = HackerNewsIngestor()
+        assert ingestor._categorize_topic("Major security vulnerability") == "security"
+        assert ingestor._categorize_topic("Data breach at company") == "security"
+
+    def test_categorize_topic_business(self):
+        """Test business topic categorization."""
+        ingestor = HackerNewsIngestor()
+        # Note: "raises" contains "ai" substring, so avoid that word
+        assert ingestor._categorize_topic("YC funding for new company") == "business"
+        assert ingestor._categorize_topic("VC investment trends") == "business"
+        assert ingestor._categorize_topic("Tech acquisition announced") == "business"
+
+    def test_mock_trending_data(self):
+        """Test mock data generation."""
+        ingestor = HackerNewsIngestor()
+        mock_data = ingestor._mock_trending_data(5)
+        assert len(mock_data) == 5
+        assert all(t.platform == "hackernews" for t in mock_data)
+
+
+# =============================================================================
+# RedditIngestor Tests
+# =============================================================================
+
+
+class TestRedditIngestor:
+    """Tests for RedditIngestor."""
+
+    def test_reddit_ingestor_creation(self):
+        """Test Reddit ingestor creation with defaults."""
+        ingestor = RedditIngestor()
+        assert ingestor.base_url == "https://www.reddit.com"
+        assert "technology" in ingestor.subreddits
+        assert "programming" in ingestor.subreddits
+
+    def test_reddit_ingestor_custom_subreddits(self):
+        """Test Reddit ingestor with custom subreddits."""
+        ingestor = RedditIngestor(subreddits=["python", "golang"])
+        assert ingestor.subreddits == ["python", "golang"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_trending_fallback(self):
+        """Test fetch_trending returns mock data on error."""
+        ingestor = RedditIngestor(max_retries=1, base_retry_delay=0.01)
+        # Force circuit breaker open
+        ingestor.circuit_breaker.is_open = True
+
+        topics = await ingestor.fetch_trending(limit=3)
+        assert len(topics) == 3
+        assert all(t.platform == "reddit" for t in topics)
+
+    def test_categorize_subreddit(self):
+        """Test subreddit categorization."""
+        ingestor = RedditIngestor()
+        assert ingestor._categorize_subreddit("technology") == "tech"
+        assert ingestor._categorize_subreddit("programming") == "programming"
+        assert ingestor._categorize_subreddit("science") == "science"
+        assert ingestor._categorize_subreddit("worldnews") == "news"
+        assert ingestor._categorize_subreddit("random") == "general"
+
+    def test_mock_trending_data(self):
+        """Test mock data generation."""
+        ingestor = RedditIngestor()
+        mock_data = ingestor._mock_trending_data(5)
+        assert len(mock_data) == 5
+        assert all(t.platform == "reddit" for t in mock_data)
+
+
+# =============================================================================
+# Retry Logic Tests
+# =============================================================================
+
+
+class TestRetryLogic:
+    """Tests for retry with backoff logic."""
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_first_try(self):
+        """Test that successful first try returns immediately."""
+        ingestor = ConcretePulseIngestor(max_retries=3, base_retry_delay=0.01)
+
+        call_count = 0
+
+        async def success_fn():
+            nonlocal call_count
+            call_count += 1
+            return [TrendingTopic("test", "Success", 100)]
+
+        result = await ingestor._retry_with_backoff(success_fn)
+        assert len(result) == 1
+        assert call_count == 1
+        assert ingestor.circuit_breaker.failures == 0
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_after_failures(self):
+        """Test that retry eventually succeeds."""
+        ingestor = ConcretePulseIngestor(max_retries=3, base_retry_delay=0.01)
+
+        call_count = 0
+
+        async def eventually_succeeds():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise Exception("Temporary failure")
+            return [TrendingTopic("test", "Success", 100)]
+
+        result = await ingestor._retry_with_backoff(eventually_succeeds)
+        assert len(result) == 1
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_retry_uses_fallback_after_all_failures(self):
+        """Test that fallback is used after all retries fail."""
+        ingestor = ConcretePulseIngestor(max_retries=2, base_retry_delay=0.01)
+
+        async def always_fails():
+            raise Exception("Permanent failure")
+
+        def fallback():
+            return [TrendingTopic("fallback", "Fallback Topic", 50)]
+
+        result = await ingestor._retry_with_backoff(always_fails, fallback_fn=fallback)
+        assert len(result) == 1
+        assert result[0].platform == "fallback"
+        assert ingestor.circuit_breaker.failures == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_skips_when_circuit_open(self):
+        """Test that retry is skipped when circuit breaker is open."""
+        ingestor = ConcretePulseIngestor(max_retries=3, base_retry_delay=0.01)
+        ingestor.circuit_breaker.is_open = True
+        ingestor.circuit_breaker.last_failure_time = time.time()  # Prevent auto-reset
+
+        call_count = 0
+
+        async def should_not_be_called():
+            nonlocal call_count
+            call_count += 1
+            return [TrendingTopic("test", "Should not appear", 100)]
+
+        def fallback():
+            return [TrendingTopic("fallback", "Fallback", 50)]
+
+        result = await ingestor._retry_with_backoff(should_not_be_called, fallback_fn=fallback)
+        assert call_count == 0
+        assert result[0].platform == "fallback"

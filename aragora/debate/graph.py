@@ -185,6 +185,18 @@ class MergeResult:
     insights_preserved: list[str] = field(default_factory=list)
     conflicts_resolved: list[str] = field(default_factory=list)
 
+    def to_dict(self) -> dict:
+        """Serialize merge result to dictionary."""
+        return {
+            "merged_node_id": self.merged_node_id,
+            "source_branch_ids": self.source_branch_ids,
+            "strategy": self.strategy.value,
+            "synthesis": self.synthesis,
+            "confidence": self.confidence,
+            "insights_preserved": self.insights_preserved,
+            "conflicts_resolved": self.conflicts_resolved,
+        }
+
 
 @dataclass
 class BranchPolicy:
@@ -685,6 +697,25 @@ class GraphDebateOrchestrator:
         self.policy = policy or BranchPolicy()
         self.graph = DebateGraph(branch_policy=self.policy)
 
+    def _emit_graph_event(self, event_emitter, event_type: str, data: dict, debate_id: str):
+        """Emit a graph debate event via WebSocket."""
+        try:
+            from aragora.server.stream import StreamEvent, StreamEventType
+            type_map = {
+                "node": StreamEventType.GRAPH_NODE_ADDED,
+                "branch": StreamEventType.GRAPH_BRANCH_CREATED,
+                "merge": StreamEventType.GRAPH_BRANCH_MERGED,
+            }
+            stream_type = type_map.get(event_type)
+            if stream_type and event_emitter:
+                event_emitter.emit(StreamEvent(
+                    type=stream_type,
+                    data=data,
+                    debate_id=debate_id,
+                ))
+        except Exception:
+            pass  # Fail silently to not disrupt debate
+
     async def run_debate(
         self,
         task: str,
@@ -693,6 +724,8 @@ class GraphDebateOrchestrator:
         on_node: Optional[Callable[[DebateNode], None]] = None,
         on_branch: Optional[Callable[[Branch], None]] = None,
         on_merge: Optional[Callable[[MergeResult], None]] = None,
+        event_emitter=None,
+        debate_id: str = "",
     ) -> DebateGraph:
         """
         Run a graph-based debate with automatic branching.
@@ -704,6 +737,8 @@ class GraphDebateOrchestrator:
             on_node: Callback for new nodes
             on_branch: Callback for new branches
             on_merge: Callback for merges
+            event_emitter: Optional WebSocket event emitter for real-time streaming
+            debate_id: Debate ID for event scoping
 
         Flow:
         1. Start with a root proposal
@@ -715,6 +750,25 @@ class GraphDebateOrchestrator:
         """
         import asyncio
 
+        # Create event-emitting wrapper callbacks
+        def emit_node(node: DebateNode):
+            if on_node:
+                on_node(node)
+            if event_emitter:
+                self._emit_graph_event(event_emitter, "node", node.to_dict(), debate_id)
+
+        def emit_branch(branch: Branch):
+            if on_branch:
+                on_branch(branch)
+            if event_emitter:
+                self._emit_graph_event(event_emitter, "branch", branch.to_dict(), debate_id)
+
+        def emit_merge(merge_result: MergeResult):
+            if on_merge:
+                on_merge(merge_result)
+            if event_emitter:
+                self._emit_graph_event(event_emitter, "merge", merge_result.to_dict(), debate_id)
+
         # Create root node
         root = self.graph.add_node(
             node_type=NodeType.ROOT,
@@ -723,8 +777,8 @@ class GraphDebateOrchestrator:
             confidence=1.0,
         )
 
-        if on_node:
-            on_node(root)
+        # Emit root node event
+        emit_node(root)
 
         # If no run function provided, return initialized graph
         if run_agent_fn is None:
@@ -787,8 +841,7 @@ class GraphDebateOrchestrator:
                         hypothesis=alternative[:200] if alternative else "",
                     )
 
-                    if on_branch:
-                        on_branch(new_branch)
+                    emit_branch(new_branch)
 
                     # Add first node to new branch
                     divergent_agent = next(
@@ -805,8 +858,7 @@ class GraphDebateOrchestrator:
                     )
                     branch_heads[new_branch.id] = branch_node.id
 
-                    if on_node:
-                        on_node(branch_node)
+                    emit_node(branch_node)
 
                 # Add main response to current branch
                 if responses:
@@ -825,8 +877,7 @@ class GraphDebateOrchestrator:
                     )
                     branch_heads[branch.id] = new_node.id
 
-                    if on_node:
-                        on_node(new_node)
+                    emit_node(new_node)
 
             # Check for convergence and merge
             convergent_pairs = self.graph.check_convergence()
@@ -852,8 +903,7 @@ class GraphDebateOrchestrator:
                         del branch_heads[branch_b.id]
                     branch_heads[self.graph.main_branch_id] = merge_result.merged_node_id
 
-                    if on_merge:
-                        on_merge(merge_result)
+                    emit_merge(merge_result)
 
             # Check if all branches have converged
             if len(self.graph.get_active_branches()) <= 1:

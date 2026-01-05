@@ -3,10 +3,18 @@ Trending Pulse Ingestor.
 
 Fetches real-time trending topics from social media platforms
 for dynamic debate topic generation.
+
+Production features:
+- Exponential backoff with configurable retries
+- Circuit breaker for failing APIs
+- Proper logging (no print statements)
+- Input validation
+- Multiple platform support (Twitter, HackerNews, Reddit)
 """
 
 import asyncio
 import json
+import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -14,6 +22,48 @@ from typing import Dict, List, Optional, Any
 import httpx
 
 from aragora.core import Message, Environment
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CircuitBreaker:
+    """Circuit breaker for API calls to prevent repeated failures."""
+
+    failure_threshold: int = 3
+    reset_timeout: float = 60.0  # seconds
+
+    # State tracking
+    failures: int = 0
+    last_failure_time: float = 0.0
+    is_open: bool = False
+
+    def record_failure(self):
+        """Record a failure and potentially open the circuit."""
+        self.failures += 1
+        self.last_failure_time = time.time()
+        if self.failures >= self.failure_threshold:
+            self.is_open = True
+            logger.warning(f"Circuit breaker opened after {self.failures} failures")
+
+    def record_success(self):
+        """Record a success and reset failure count."""
+        self.failures = 0
+        self.is_open = False
+
+    def can_proceed(self) -> bool:
+        """Check if we can proceed with a request."""
+        if not self.is_open:
+            return True
+
+        # Check if reset timeout has elapsed
+        if time.time() - self.last_failure_time >= self.reset_timeout:
+            logger.info("Circuit breaker reset timeout elapsed, allowing retry")
+            self.is_open = False
+            self.failures = 0
+            return True
+
+        return False
 
 
 @dataclass
@@ -34,12 +84,21 @@ class TrendingTopic:
 class PulseIngestor(ABC):
     """Abstract base class for social media ingestors."""
 
-    def __init__(self, api_key: Optional[str] = None, rate_limit_delay: float = 1.0):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        rate_limit_delay: float = 1.0,
+        max_retries: int = 3,
+        base_retry_delay: float = 1.0,
+    ):
         self.api_key = api_key
         self.rate_limit_delay = rate_limit_delay
+        self.max_retries = max_retries
+        self.base_retry_delay = base_retry_delay
         self.last_request_time = 0
         self.cache: Dict[str, List[TrendingTopic]] = {}
         self.cache_ttl = 300  # 5 minutes
+        self.circuit_breaker = CircuitBreaker()
 
     async def _rate_limit(self):
         """Enforce rate limiting."""
@@ -48,6 +107,45 @@ class PulseIngestor(ABC):
         if elapsed < self.rate_limit_delay:
             await asyncio.sleep(self.rate_limit_delay - elapsed)
         self.last_request_time = now
+
+    async def _retry_with_backoff(self, coro_factory, fallback_fn=None):
+        """Execute a coroutine with exponential backoff retry.
+
+        Args:
+            coro_factory: Callable that returns a new coroutine on each call
+            fallback_fn: Optional fallback function if all retries fail
+
+        Returns:
+            Result from successful coroutine or fallback
+        """
+        if not self.circuit_breaker.can_proceed():
+            logger.debug("Circuit breaker open, using fallback")
+            return fallback_fn() if fallback_fn else []
+
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                await self._rate_limit()
+                result = await coro_factory()
+                self.circuit_breaker.record_success()
+                return result
+            except Exception as e:
+                last_error = e
+                delay = self.base_retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"Attempt {attempt + 1}/{self.max_retries} failed: {e}. "
+                    f"Retrying in {delay:.1f}s"
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(delay)
+
+        # All retries failed
+        self.circuit_breaker.record_failure()
+        logger.error(f"All {self.max_retries} retries failed: {last_error}")
+
+        if fallback_fn:
+            return fallback_fn()
+        return []
 
     @abstractmethod
     async def fetch_trending(self, limit: int = 10) -> List[TrendingTopic]:
@@ -119,14 +217,15 @@ class TwitterIngestor(PulseIngestor):
 
     async def fetch_trending(self, limit: int = 10) -> List[TrendingTopic]:
         """Fetch trending topics from Twitter."""
+        # Validate limit
+        limit = max(1, min(limit, 50))
+
         if not self.api_key:
-            # Fallback to mock data for development
+            logger.debug("No Twitter API key, using mock data")
             return self._mock_trending_data(limit)
 
-        await self._rate_limit()
-
-        try:
-            async with httpx.AsyncClient() as client:
+        async def _fetch():
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 # Get trending topics for a location (WOEID 1 = worldwide)
                 url = f"{self.base_url}/trends/place.json"
                 params = {"id": 1}  # Worldwide
@@ -136,13 +235,19 @@ class TwitterIngestor(PulseIngestor):
                 response.raise_for_status()
 
                 data = response.json()
-                topics = []
 
+                # Validate response structure
+                if not isinstance(data, list) or len(data) == 0:
+                    raise ValueError("Invalid Twitter API response format")
+                if "trends" not in data[0]:
+                    raise ValueError("Missing 'trends' key in response")
+
+                topics = []
                 for trend in data[0]["trends"][:limit]:
                     topic = TrendingTopic(
                         platform="twitter",
                         topic=trend["name"],
-                        volume=trend.get("tweet_volume", 0),
+                        volume=trend.get("tweet_volume") or 0,
                         category=self._categorize_topic(trend["name"]),
                         raw_data=trend
                     )
@@ -150,9 +255,10 @@ class TwitterIngestor(PulseIngestor):
 
                 return topics
 
-        except Exception as e:
-            print(f"Twitter API error: {e}")
-            return self._mock_trending_data(limit)
+        return await self._retry_with_backoff(
+            _fetch,
+            fallback_fn=lambda: self._mock_trending_data(limit)
+        )
 
     def _categorize_topic(self, topic: str) -> str:
         """Simple categorization based on keywords."""
@@ -174,6 +280,171 @@ class TwitterIngestor(PulseIngestor):
             TrendingTopic("twitter", "#Election2024", 200000, "politics"),
             TrendingTopic("twitter", "#QuantumComputing", 45000, "tech"),
             TrendingTopic("twitter", "#RenewableEnergy", 78000, "environment"),
+        ]
+        return mock_topics[:limit]
+
+
+class HackerNewsIngestor(PulseIngestor):
+    """Hacker News trending stories ingestor using Algolia API (free, no auth)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.base_url = "https://hn.algolia.com/api/v1"
+
+    async def fetch_trending(self, limit: int = 10) -> List[TrendingTopic]:
+        """Fetch top stories from Hacker News."""
+        limit = max(1, min(limit, 50))
+
+        async def _fetch():
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Get front page stories sorted by popularity
+                url = f"{self.base_url}/search"
+                params = {
+                    "tags": "front_page",
+                    "hitsPerPage": limit,
+                }
+
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+
+                data = response.json()
+
+                # Validate response
+                if "hits" not in data:
+                    raise ValueError("Invalid HN API response format")
+
+                topics = []
+                for story in data["hits"][:limit]:
+                    topic = TrendingTopic(
+                        platform="hackernews",
+                        topic=story.get("title", "Untitled"),
+                        volume=story.get("points", 0),
+                        category=self._categorize_topic(story.get("title", "")),
+                        raw_data={
+                            "url": story.get("url"),
+                            "author": story.get("author"),
+                            "num_comments": story.get("num_comments", 0),
+                            "objectID": story.get("objectID"),
+                        }
+                    )
+                    topics.append(topic)
+
+                return topics
+
+        return await self._retry_with_backoff(
+            _fetch,
+            fallback_fn=lambda: self._mock_trending_data(limit)
+        )
+
+    def _categorize_topic(self, title: str) -> str:
+        """Categorize HN story based on title keywords."""
+        title_lower = title.lower()
+        if any(word in title_lower for word in ["ai", "gpt", "llm", "machine learning", "neural"]):
+            return "ai"
+        elif any(word in title_lower for word in ["startup", "funding", "vc", "acquisition"]):
+            return "business"
+        elif any(word in title_lower for word in ["rust", "python", "javascript", "go ", "code"]):
+            return "programming"
+        elif any(word in title_lower for word in ["security", "hack", "vulnerability", "breach"]):
+            return "security"
+        return "tech"
+
+    def _mock_trending_data(self, limit: int) -> List[TrendingTopic]:
+        """Mock HN data for development/testing."""
+        mock_topics = [
+            TrendingTopic("hackernews", "Show HN: I built an AI debate platform", 342, "ai"),
+            TrendingTopic("hackernews", "Why Rust is the future of systems programming", 256, "programming"),
+            TrendingTopic("hackernews", "The hidden costs of technical debt", 189, "tech"),
+            TrendingTopic("hackernews", "OpenAI announces GPT-5 preview", 521, "ai"),
+            TrendingTopic("hackernews", "Startup raises $50M for quantum computing", 134, "business"),
+        ]
+        return mock_topics[:limit]
+
+
+class RedditIngestor(PulseIngestor):
+    """Reddit trending posts ingestor using public JSON API (no auth required)."""
+
+    DEFAULT_SUBREDDITS = ["technology", "programming", "science", "worldnews"]
+
+    def __init__(self, subreddits: Optional[List[str]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.subreddits = subreddits or self.DEFAULT_SUBREDDITS
+        self.base_url = "https://www.reddit.com"
+
+    async def fetch_trending(self, limit: int = 10) -> List[TrendingTopic]:
+        """Fetch hot posts from configured subreddits."""
+        limit = max(1, min(limit, 50))
+        per_sub_limit = max(1, limit // len(self.subreddits))
+
+        async def _fetch():
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                client.headers["User-Agent"] = "Aragora/1.0 (debate-platform)"
+
+                all_topics = []
+                for subreddit in self.subreddits:
+                    try:
+                        url = f"{self.base_url}/r/{subreddit}/hot.json"
+                        params = {"limit": per_sub_limit}
+
+                        response = await client.get(url, params=params)
+                        response.raise_for_status()
+
+                        data = response.json()
+
+                        # Validate response
+                        if "data" not in data or "children" not in data["data"]:
+                            logger.warning(f"Invalid Reddit response for r/{subreddit}")
+                            continue
+
+                        for post in data["data"]["children"][:per_sub_limit]:
+                            post_data = post["data"]
+                            topic = TrendingTopic(
+                                platform="reddit",
+                                topic=post_data.get("title", "Untitled"),
+                                volume=post_data.get("score", 0),
+                                category=self._categorize_subreddit(subreddit),
+                                raw_data={
+                                    "subreddit": subreddit,
+                                    "url": post_data.get("url"),
+                                    "author": post_data.get("author"),
+                                    "num_comments": post_data.get("num_comments", 0),
+                                    "permalink": post_data.get("permalink"),
+                                }
+                            )
+                            all_topics.append(topic)
+                    except Exception as e:
+                        logger.warning(f"Error fetching r/{subreddit}: {e}")
+                        continue
+
+                return all_topics[:limit]
+
+        return await self._retry_with_backoff(
+            _fetch,
+            fallback_fn=lambda: self._mock_trending_data(limit)
+        )
+
+    def _categorize_subreddit(self, subreddit: str) -> str:
+        """Map subreddit to category."""
+        mapping = {
+            "technology": "tech",
+            "programming": "programming",
+            "science": "science",
+            "worldnews": "news",
+            "politics": "politics",
+            "askscience": "science",
+            "machinelearning": "ai",
+            "artificial": "ai",
+        }
+        return mapping.get(subreddit.lower(), "general")
+
+    def _mock_trending_data(self, limit: int) -> List[TrendingTopic]:
+        """Mock Reddit data for development/testing."""
+        mock_topics = [
+            TrendingTopic("reddit", "Scientists discover high-temperature superconductor", 15420, "science"),
+            TrendingTopic("reddit", "New programming language gains traction", 8934, "programming"),
+            TrendingTopic("reddit", "EU passes sweeping AI regulation", 12567, "news"),
+            TrendingTopic("reddit", "Major tech company announces layoffs", 9823, "tech"),
+            TrendingTopic("reddit", "Breakthrough in fusion energy announced", 18234, "science"),
         ]
         return mock_topics[:limit]
 
@@ -211,7 +482,7 @@ class PulseManager:
 
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"Ingestor error: {result}")
+                    logger.warning(f"Ingestor error: {result}")
                 else:
                     all_topics.extend(result)
 

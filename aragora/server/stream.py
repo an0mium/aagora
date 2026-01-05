@@ -227,6 +227,11 @@ class StreamEventType(Enum):
     GROUNDED_VERDICT = "grounded_verdict"  # Evidence-backed verdict with citations
     MOMENT_DETECTED = "moment_detected"  # Significant narrative moment detected
 
+    # Graph debate events (branching/merging visualization)
+    GRAPH_NODE_ADDED = "graph_node_added"  # New node added to debate graph
+    GRAPH_BRANCH_CREATED = "graph_branch_created"  # New branch created
+    GRAPH_BRANCH_MERGED = "graph_branch_merged"  # Branches merged/synthesized
+
     # Position tracking events
     FLIP_DETECTED = "flip_detected"      # Agent position reversal detected
 
