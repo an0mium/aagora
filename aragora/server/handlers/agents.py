@@ -131,7 +131,7 @@ class AgentsHandler(BaseHandler):
 
         try:
             # Use cached leaderboard when available (no domain filter needed for cache)
-            if domain is None and hasattr(elo, 'get_cached_leaderboard'):
+            if domain is None:
                 rankings = elo.get_cached_leaderboard(limit=min(limit, 50))
             else:
                 rankings = elo.get_leaderboard(limit=min(limit, 50), domain=domain)
