@@ -14,12 +14,34 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 import hashlib
 
+from aragora.config import DB_MEMORY_PATH, DB_TIMEOUT_SECONDS
+from aragora.utils.json_helpers import safe_json_loads
+
 if TYPE_CHECKING:
     from aragora.memory.embeddings import EmbeddingProvider
+
+# Module-level reference for embedding provider (used by cached function)
+_embedding_provider_ref: Optional["EmbeddingProvider"] = None
+
+
+@lru_cache(maxsize=1000)
+def _get_cached_embedding(content: str) -> tuple[float, ...]:
+    """
+    Get embedding with bounded LRU caching (max 1000 entries ~6MB).
+
+    Uses module-level provider reference to enable @lru_cache decorator.
+    Returns tuple for hashability in cache.
+    """
+    if _embedding_provider_ref is None:
+        raise RuntimeError("Embedding provider not initialized")
+    # Use asyncio.run() for proper event loop lifecycle management
+    result = asyncio.run(_embedding_provider_ref.embed(content))
+    return tuple(result)
 
 logger = logging.getLogger(__name__)
 
@@ -75,17 +97,20 @@ class MemoryStream:
 
     def __init__(
         self,
-        db_path: str = "aragora_memory.db",
+        db_path: str = DB_MEMORY_PATH,
         embedding_provider: Optional["EmbeddingProvider"] = None,
     ):
+        global _embedding_provider_ref
         self.db_path = Path(db_path)
         self.embedding_provider = embedding_provider
-        self._embedding_cache: dict[str, list[float]] = {}
+        # Set module-level reference for cached embedding function
+        if embedding_provider is not None:
+            _embedding_provider_ref = embedding_provider
         self._init_db()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize database schema."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -134,8 +159,8 @@ class MemoryStream:
         content: str,
         memory_type: str = "observation",
         importance: float = 0.5,
-        debate_id: str = None,
-        metadata: dict = None,
+        debate_id: str | None = None,
+        metadata: dict | None = None,
     ) -> Memory:
         """
         Add a memory to the stream.
@@ -154,7 +179,7 @@ class MemoryStream:
         memory_id = self._generate_id(agent_name, content)
         created_at = datetime.now().isoformat()
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -198,7 +223,7 @@ class MemoryStream:
             metadata=metadata or {},
         )
 
-    def observe(self, agent_name: str, content: str, debate_id: str = None, importance: float = 0.5) -> Memory:
+    def observe(self, agent_name: str, content: str, debate_id: str | None = None, importance: float = 0.5) -> Memory:
         """Record an observation (convenience method)."""
         return self.add(agent_name, content, "observation", importance, debate_id)
 
@@ -213,8 +238,8 @@ class MemoryStream:
     def retrieve(
         self,
         agent_name: str,
-        query: str = None,
-        memory_type: str = None,
+        query: str | None = None,
+        memory_type: str | None = None,
         limit: int = 10,
         min_importance: float = 0.0,
     ) -> list[RetrievedMemory]:
@@ -231,7 +256,7 @@ class MemoryStream:
         Returns:
             List of RetrievedMemory objects sorted by score
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             sql = """
@@ -260,7 +285,7 @@ class MemoryStream:
                 content=row[3],
                 importance=row[4],
                 debate_id=row[5],
-                metadata=json.loads(row[6]) if row[6] else {},
+                metadata=safe_json_loads(row[6], {}),
                 created_at=row[7],
             )
 
@@ -314,39 +339,16 @@ class MemoryStream:
         """Calculate cosine similarity between content and query embeddings."""
         from aragora.memory.embeddings import cosine_similarity
 
-        # Get or compute embeddings (with caching)
-        content_key = hashlib.md5(content[:500].encode()).hexdigest()
-        query_key = hashlib.md5(query.encode()).hexdigest()
+        # Get embeddings using bounded LRU cache (max 1000 entries)
+        content_embedding = _get_cached_embedding(content[:500])
+        query_embedding = _get_cached_embedding(query)
 
-        # Check cache
-        if content_key not in self._embedding_cache:
-            # Run embedding synchronously (provider.embed is async)
-            loop = asyncio.new_event_loop()
-            try:
-                self._embedding_cache[content_key] = loop.run_until_complete(
-                    self.embedding_provider.embed(content[:500])
-                )
-            finally:
-                loop.close()
-
-        if query_key not in self._embedding_cache:
-            loop = asyncio.new_event_loop()
-            try:
-                self._embedding_cache[query_key] = loop.run_until_complete(
-                    self.embedding_provider.embed(query)
-                )
-            finally:
-                loop.close()
-
-        # Compute similarity
-        return cosine_similarity(
-            self._embedding_cache[content_key],
-            self._embedding_cache[query_key]
-        )
+        # Compute similarity (convert tuples back to lists for cosine_similarity)
+        return cosine_similarity(list(content_embedding), list(query_embedding))
 
     def get_recent(self, agent_name: str, limit: int = 20) -> list[Memory]:
         """Get most recent memories for an agent."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -368,7 +370,7 @@ class MemoryStream:
                     content=row[3],
                     importance=row[4],
                     debate_id=row[5],
-                    metadata=json.loads(row[6]) if row[6] else {},
+                    metadata=safe_json_loads(row[6], {}),
                     created_at=row[7],
                 )
                 for row in cursor.fetchall()
@@ -378,7 +380,7 @@ class MemoryStream:
 
     def should_reflect(self, agent_name: str, threshold: int = 10) -> bool:
         """Check if agent should perform reflection."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -389,9 +391,9 @@ class MemoryStream:
 
         return row is not None and row[0] >= threshold
 
-    def mark_reflected(self, agent_name: str):
+    def mark_reflected(self, agent_name: str) -> None:
         """Mark that agent has performed reflection."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -477,7 +479,7 @@ Format each insight on a new line starting with "INSIGHT:"
 
     def get_stats(self, agent_name: str) -> dict:
         """Get memory statistics for an agent."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(

@@ -21,7 +21,10 @@ class ReplayEvent:
     
     @classmethod
     def from_jsonl(cls, line: str) -> "ReplayEvent":
-        data = json.loads(line.strip())
+        try:
+            data = json.loads(line.strip())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in replay event: {e}") from e
         return cls(**data)
 
 @dataclass
@@ -46,4 +49,8 @@ class ReplayMeta:
     
     @classmethod
     def from_json(cls, data: str) -> "ReplayMeta":
-        return cls(**json.loads(data))
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in replay metadata: {e}") from e
+        return cls(**parsed)

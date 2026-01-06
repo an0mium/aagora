@@ -36,6 +36,37 @@ def _env_bool(key: str, default: bool) -> bool:
     return val in ("true", "1", "yes", "on")
 
 
+def get_api_key(*env_vars: str, required: bool = True) -> Optional[str]:
+    """Get and validate API key from environment variables.
+
+    Checks each environment variable in order, returning the first valid
+    (non-empty, non-whitespace) value found. Strips whitespace from the result.
+
+    Args:
+        *env_vars: Environment variable names to check (in order of preference)
+        required: If True, raise ValueError when no valid key found
+
+    Returns:
+        The stripped API key, or None if not required and not found
+
+    Raises:
+        ValueError: If required=True and no valid key found
+
+    Example:
+        >>> api_key = get_api_key("GEMINI_API_KEY", "GOOGLE_API_KEY")
+        >>> optional_key = get_api_key("BACKUP_KEY", required=False)
+    """
+    for var in env_vars:
+        value = os.getenv(var)
+        if value and value.strip():
+            return value.strip()
+
+    if required:
+        var_names = " or ".join(env_vars)
+        raise ValueError(f"{var_names} environment variable required")
+    return None
+
+
 # === Authentication ===
 TOKEN_TTL_SECONDS = _env_int("ARAGORA_TOKEN_TTL", 3600)
 SHAREABLE_LINK_TTL = _env_int("ARAGORA_SHAREABLE_LINK_TTL", 3600)
@@ -74,12 +105,24 @@ CACHE_TTL_ANALYTICS = _env_int("ARAGORA_CACHE_ANALYTICS", 600)  # 10 min
 CACHE_TTL_CONSENSUS = _env_int("ARAGORA_CACHE_CONSENSUS", 240)  # 4 min
 
 # === WebSocket ===
-WS_MAX_MESSAGE_SIZE = _env_int("ARAGORA_WS_MAX_MESSAGE_SIZE", 16 * 1024 * 1024)  # 16MB
+# Note: 64KB default prevents memory exhaustion from malicious large messages
+# Increase for deployments with trusted clients/large message payloads
+WS_MAX_MESSAGE_SIZE = _env_int("ARAGORA_WS_MAX_MESSAGE_SIZE", 64 * 1024)  # 64KB default
 WS_HEARTBEAT_INTERVAL = _env_int("ARAGORA_WS_HEARTBEAT", 30)
 
 # === Storage ===
 DEFAULT_STORAGE_DIR = _env_str("ARAGORA_STORAGE_DIR", ".aragora")
 MAX_LOG_BYTES = _env_int("ARAGORA_MAX_LOG_BYTES", 100 * 1024)  # 100KB
+
+# === Database ===
+DB_TIMEOUT_SECONDS = _env_float("ARAGORA_DB_TIMEOUT", 30.0)
+DB_ELO_PATH = _env_str("ARAGORA_DB_ELO", "aragora_elo.db")
+DB_MEMORY_PATH = _env_str("ARAGORA_DB_MEMORY", "aragora_memory.db")
+DB_INSIGHTS_PATH = _env_str("ARAGORA_DB_INSIGHTS", "aragora_insights.db")
+DB_CONSENSUS_PATH = _env_str("ARAGORA_DB_CONSENSUS", "consensus_memory.db")
+DB_CALIBRATION_PATH = _env_str("ARAGORA_DB_CALIBRATION", "aragora_calibration.db")
+DB_LAB_PATH = _env_str("ARAGORA_DB_LAB", "aragora_lab.db")
+DB_PERSONAS_PATH = _env_str("ARAGORA_DB_PERSONAS", "aragora_personas.db")
 
 # === Evidence Collection ===
 MAX_SNIPPETS_PER_CONNECTOR = _env_int("ARAGORA_MAX_SNIPPETS_CONNECTOR", 3)

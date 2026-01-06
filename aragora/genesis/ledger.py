@@ -11,12 +11,16 @@ Provides:
 
 import hashlib
 import json
+import logging
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Generator, Optional
+
+logger = logging.getLogger(__name__)
 
 from aragora.reasoning.provenance import (
     ProvenanceChain,
@@ -27,6 +31,9 @@ from aragora.reasoning.provenance import (
 )
 from aragora.debate.consensus import ConsensusProof
 from aragora.genesis.genome import AgentGenome
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 class GenesisEventType(Enum):
@@ -166,34 +173,42 @@ class GenesisLedger:
         self._events: list[GenesisEvent] = []
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Initialize database tables."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS genesis_events (
-                event_id TEXT PRIMARY KEY,
-                event_type TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                parent_event_id TEXT,
-                content_hash TEXT NOT NULL,
-                data TEXT,
-                FOREIGN KEY (parent_event_id) REFERENCES genesis_events(event_id)
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS genesis_events (
+                    event_id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    parent_event_id TEXT,
+                    content_hash TEXT NOT NULL,
+                    data TEXT,
+                    FOREIGN KEY (parent_event_id) REFERENCES genesis_events(event_id)
+                )
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_events_type
-            ON genesis_events(event_type)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_events_timestamp
-            ON genesis_events(timestamp)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_events_type
+                ON genesis_events(event_type)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_events_timestamp
+                ON genesis_events(timestamp)
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def _generate_event_id(self) -> str:
         """Generate a unique event ID."""
@@ -204,23 +219,22 @@ class GenesisLedger:
         """Record an event to database and memory."""
         self._events.append(event)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO genesis_events (event_id, event_type, timestamp, parent_event_id, content_hash, data)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            event.event_id,
-            event.event_type.value,
-            event.timestamp.isoformat(),
-            event.parent_event_id,
-            event.content_hash,
-            json.dumps(event.data),
-        ))
+            cursor.execute("""
+                INSERT INTO genesis_events (event_id, event_type, timestamp, parent_event_id, content_hash, data)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                event.event_id,
+                event.event_type.value,
+                event.timestamp.isoformat(),
+                event.parent_event_id,
+                event.content_hash,
+                json.dumps(event.data),
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         # Also add to provenance chain
         self.provenance.add_record(
@@ -447,63 +461,70 @@ class GenesisLedger:
         """Get the fractal tree structure for a debate."""
         tree = FractalTree(root_id=root_debate_id)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Get all spawn events
-        cursor.execute("""
-            SELECT data FROM genesis_events
-            WHERE event_type IN ('debate_spawn', 'debate_merge', 'debate_start')
-            ORDER BY timestamp
-        """)
+            # Get all spawn events
+            cursor.execute("""
+                SELECT data FROM genesis_events
+                WHERE event_type IN ('debate_spawn', 'debate_merge', 'debate_start')
+                ORDER BY timestamp
+            """)
 
-        for (data_json,) in cursor.fetchall():
-            data = json.loads(data_json)
+            for (data_json,) in cursor.fetchall():
+                try:
+                    data = json.loads(data_json)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Skipping corrupted genesis event: {e}")
+                    continue
 
-            if "child_debate_id" in data:
-                # This is a spawn or merge event
-                tree.add_node(
-                    debate_id=data["child_debate_id"],
-                    parent_id=data.get("parent_debate_id"),
-                    tension=data.get("tension"),
-                    success=data.get("success", False),
-                    depth=len(tree.get_children(data.get("parent_debate_id", ""))) + 1,
-                )
-            elif data.get("debate_id") == root_debate_id:
-                # Root debate
-                tree.add_node(
-                    debate_id=root_debate_id,
-                    parent_id=None,
-                    depth=0,
-                )
+                if "child_debate_id" in data:
+                    # This is a spawn or merge event
+                    tree.add_node(
+                        debate_id=data["child_debate_id"],
+                        parent_id=data.get("parent_debate_id"),
+                        tension=data.get("tension"),
+                        success=data.get("success", False),
+                        depth=len(tree.get_children(data.get("parent_debate_id", ""))) + 1,
+                    )
+                elif data.get("debate_id") == root_debate_id:
+                    # Root debate
+                    tree.add_node(
+                        debate_id=root_debate_id,
+                        parent_id=None,
+                        depth=0,
+                    )
 
-        conn.close()
         return tree
 
     def get_events_by_type(self, event_type: GenesisEventType) -> list[GenesisEvent]:
         """Get all events of a specific type."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT event_id, event_type, timestamp, parent_event_id, content_hash, data
-            FROM genesis_events
-            WHERE event_type = ?
-            ORDER BY timestamp
-        """, (event_type.value,))
+            cursor.execute("""
+                SELECT event_id, event_type, timestamp, parent_event_id, content_hash, data
+                FROM genesis_events
+                WHERE event_type = ?
+                ORDER BY timestamp
+            """, (event_type.value,))
 
-        events = []
-        for row in cursor.fetchall():
-            events.append(GenesisEvent(
-                event_id=row[0],
-                event_type=GenesisEventType(row[1]),
-                timestamp=datetime.fromisoformat(row[2]),
-                parent_event_id=row[3],
-                content_hash=row[4],
-                data=json.loads(row[5]) if row[5] else {},
-            ))
+            events = []
+            for row in cursor.fetchall():
+                try:
+                    data = json.loads(row[5]) if row[5] else {}
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Skipping event with corrupted data: {e}")
+                    continue
+                events.append(GenesisEvent(
+                    event_id=row[0],
+                    event_type=GenesisEventType(row[1]),
+                    timestamp=datetime.fromisoformat(row[2]),
+                    parent_event_id=row[3],
+                    content_hash=row[4],
+                    data=data,
+                ))
 
-        conn.close()
         return events
 
     def _get_last_event_id(self, debate_id: Optional[str]) -> Optional[str]:
@@ -511,18 +532,17 @@ class GenesisLedger:
         if not debate_id:
             return None
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT event_id FROM genesis_events
-            WHERE data LIKE ?
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """, (f'%"debate_id": "{debate_id}"%',))
+            cursor.execute("""
+                SELECT event_id FROM genesis_events
+                WHERE data LIKE ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (f'%"debate_id": "{debate_id}"%',))
 
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
 
         return row[0] if row else None
 
@@ -561,23 +581,21 @@ class GenesisLedger:
 
     def _export_json(self, include_lineage: bool) -> str:
         """Export as JSON."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM genesis_events ORDER BY timestamp")
-        events = [
-            {
-                "event_id": row[0],
-                "event_type": row[1],
-                "timestamp": row[2],
-                "parent_event_id": row[3],
-                "content_hash": row[4],
-                "data": json.loads(row[5]) if row[5] else {},
-            }
-            for row in cursor.fetchall()
-        ]
-
-        conn.close()
+            cursor.execute("SELECT * FROM genesis_events ORDER BY timestamp")
+            events = [
+                {
+                    "event_id": row[0],
+                    "event_type": row[1],
+                    "timestamp": row[2],
+                    "parent_event_id": row[3],
+                    "content_hash": row[4],
+                    "data": json.loads(row[5]) if row[5] else {},
+                }
+                for row in cursor.fetchall()
+            ]
 
         output = {
             "ledger_id": self.provenance.chain_id,
@@ -600,30 +618,28 @@ class GenesisLedger:
             "",
         ]
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM genesis_events ORDER BY timestamp")
+            cursor.execute("SELECT * FROM genesis_events ORDER BY timestamp")
 
-        for row in cursor.fetchall():
-            event_type = row[1]
-            timestamp = row[2]
-            data = json.loads(row[5]) if row[5] else {}
+            for row in cursor.fetchall():
+                event_type = row[1]
+                timestamp = row[2]
+                data = json.loads(row[5]) if row[5] else {}
 
-            lines.append(f"### {event_type}")
-            lines.append(f"*{timestamp}*")
-            lines.append("")
+                lines.append(f"### {event_type}")
+                lines.append(f"*{timestamp}*")
+                lines.append("")
 
-            for key, value in data.items():
-                if isinstance(value, dict):
-                    value = json.dumps(value)[:100]
-                elif isinstance(value, list):
-                    value = ", ".join(str(v) for v in value[:5])
-                lines.append(f"- **{key}:** {value}")
+                for key, value in data.items():
+                    if isinstance(value, dict):
+                        value = json.dumps(value)[:100]
+                    elif isinstance(value, list):
+                        value = ", ".join(str(v) for v in value[:5])
+                    lines.append(f"- **{key}:** {value}")
 
-            lines.append("")
-
-        conn.close()
+                lines.append("")
 
         return "\n".join(lines)
 

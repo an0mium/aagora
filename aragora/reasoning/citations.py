@@ -110,11 +110,13 @@ class ScholarlyEvidence:
     def format_inline(self) -> str:
         """Format as inline citation."""
         if self.authors:
-            first_author = self.authors[0].split()[-1]  # Last name
+            first_parts = self.authors[0].split()
+            first_author = first_parts[-1] if first_parts else "Unknown"  # Last name
             if len(self.authors) > 2:
                 return f"({first_author} et al., {self.year or 'n.d.'})"
             elif len(self.authors) == 2:
-                second_author = self.authors[1].split()[-1]
+                second_parts = self.authors[1].split()
+                second_author = second_parts[-1] if second_parts else "Unknown"
                 return f"({first_author} & {second_author}, {self.year or 'n.d.'})"
             else:
                 return f"({first_author}, {self.year or 'n.d.'})"

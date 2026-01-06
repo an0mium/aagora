@@ -14,11 +14,16 @@ Rationale (from aragora self-debate):
 - Can connect with ProvenanceManager for "verified provenance"
 """
 
+import asyncio
+import hashlib
+import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional, Protocol, runtime_checkable
-import hashlib
+
+logger = logging.getLogger(__name__)
 
 
 class FormalProofStatus(Enum):
@@ -259,19 +264,36 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status != 200:
+                        logger.warning(f"LLM API returned status {response.status} for Lean translation")
                         return None
-                    data = await response.json()
 
-                    if os.environ.get("ANTHROPIC_API_KEY"):
-                        result = data["content"][0]["text"].strip()
-                    else:
-                        result = data["choices"][0]["message"]["content"].strip()
+                    try:
+                        data = await response.json()
+                    except (json.JSONDecodeError, aiohttp.ContentTypeError) as e:
+                        logger.warning(f"Failed to parse LLM API response as JSON: {e}")
+                        return None
+
+                    try:
+                        if os.environ.get("ANTHROPIC_API_KEY"):
+                            result = data["content"][0]["text"].strip()
+                        else:
+                            result = data["choices"][0]["message"]["content"].strip()
+                    except (KeyError, IndexError, TypeError) as e:
+                        logger.warning(f"Unexpected LLM response format for Lean translation: {e}")
+                        return None
 
                     if "UNTRANSLATABLE" in result:
                         return None
                     return result
 
-        except Exception:
+        except aiohttp.ClientError as e:
+            logger.warning(f"Network error translating claim to Lean 4: {e}")
+            return None
+        except asyncio.TimeoutError:
+            logger.warning("Timeout translating claim to Lean 4")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to translate claim to Lean 4: {type(e).__name__}: {e}")
             return None
 
     async def prove(self, formal_statement: str, timeout_seconds: float = 60.0) -> FormalProofResult:
@@ -493,8 +515,8 @@ Return ONLY the SMT-LIB2 code, no explanation."""
                     return smtlib
 
             except Exception as e:
-                # LLM translation failed, continue to return None
-                pass
+                # LLM translation failed, log and continue to return None
+                logger.debug(f"LLM translation to SMT-LIB2 failed: {e}")
 
         return None
 

@@ -15,31 +15,56 @@ class ReplayStorage:
     
     def list_recordings(self, limit: int = 50) -> List[Dict[str, Any]]:
         recordings = []
-        for session_dir in self.storage_dir.iterdir():
-            if session_dir.is_dir():
+        try:
+            dir_entries = list(self.storage_dir.iterdir())
+        except OSError as e:
+            logger.warning(f"Failed to list replay directory {self.storage_dir}: {e}")
+            return []
+
+        for session_dir in dir_entries:
+            try:
+                if not session_dir.is_dir():
+                    continue
                 meta_path = session_dir / "meta.json"
-                if meta_path.exists():
-                    try:
-                        with open(meta_path, 'r') as f:
-                            meta = json.load(f)
-                        recordings.append({
-                            "id": meta.get("debate_id"),
-                            "topic": meta.get("topic"),
-                            "status": meta.get("status"),
-                            "event_count": meta.get("event_count"),
-                            "started_at": meta.get("started_at")
-                        })
-                    except Exception as e:
-                        logger.debug(f"Skipping invalid replay metadata {meta_path}: {e}")
+                if not meta_path.exists():
+                    continue
+                with open(meta_path, 'r') as f:
+                    meta = json.load(f)
+                recordings.append({
+                    "id": meta.get("debate_id"),
+                    "topic": meta.get("topic"),
+                    "status": meta.get("status"),
+                    "event_count": meta.get("event_count"),
+                    "started_at": meta.get("started_at")
+                })
+            except (OSError, json.JSONDecodeError) as e:
+                logger.debug(f"Skipping invalid replay {session_dir}: {e}")
         recordings.sort(key=lambda x: x.get("started_at", ""), reverse=True)
         return recordings[:limit]
     
-    def prune(self, keep_last: int = 100) -> None:
+    def prune(self, keep_last: int = 100) -> int:
+        """Prune old recordings, keeping only the most recent ones.
+
+        Returns:
+            Number of recordings successfully removed.
+        """
+        import shutil
+
         recordings = self.list_recordings()
-        if len(recordings) > keep_last:
-            to_remove = recordings[keep_last:]
-            for rec in to_remove:
-                session_dir = self.storage_dir / rec["id"]
+        if len(recordings) <= keep_last:
+            return 0
+
+        removed = 0
+        to_remove = recordings[keep_last:]
+        for rec in to_remove:
+            rec_id = rec.get("id")
+            if not rec_id:
+                continue
+            session_dir = self.storage_dir / rec_id
+            try:
                 if session_dir.exists():
-                    import shutil
                     shutil.rmtree(session_dir)
+                    removed += 1
+            except OSError as e:
+                logger.warning(f"Failed to remove replay {rec_id}: {e}")
+        return removed

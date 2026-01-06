@@ -149,7 +149,7 @@ class ReplayGenerator:
                     "source": "trace",
                     "description": event_data.get("description", "Consensus check"),
                 }
-            elif round_num == max(round_groups.keys()) and getattr(msgs[0], 'role', '') == 'synthesizer':
+            elif msgs and round_num == max(round_groups.keys()) and getattr(msgs[0], 'role', '') == 'synthesizer':
                 # Fallback: mark final round if consensus_reached in debate result
                 # This will be overridden by verdict logic, but provides basic indication
                 consensus_indicators = {

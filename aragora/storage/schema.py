@@ -17,12 +17,72 @@ Usage:
 """
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+# Valid SQL column types (whitelist)
+VALID_COLUMN_TYPES = frozenset({
+    "TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC",
+    "VARCHAR", "CHAR", "BOOLEAN", "DATETIME", "TIMESTAMP",
+})
+
+
+def _validate_sql_identifier(name: str) -> bool:
+    """Validate SQL identifier to prevent injection.
+
+    Only allows alphanumeric characters and underscores.
+    Must start with a letter or underscore.
+    Maximum length of 128 characters.
+    """
+    if not name or len(name) > 128:
+        return False
+    return bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name))
+
+
+def _validate_column_type(col_type: str) -> bool:
+    """Validate column type against whitelist."""
+    # Normalize and check base type (handles "VARCHAR(255)" etc.)
+    base_type = col_type.split('(')[0].strip().upper()
+    return base_type in VALID_COLUMN_TYPES
+
+
+def _validate_default_value(default: str) -> bool:
+    """Validate default value to prevent injection.
+
+    Allows:
+    - NULL
+    - Numeric literals (integers, floats)
+    - Single-quoted strings (properly escaped)
+    - SQL functions: CURRENT_TIMESTAMP, CURRENT_DATE, CURRENT_TIME
+    """
+    if default is None:
+        return True
+
+    default_upper = default.strip().upper()
+
+    # Allow NULL
+    if default_upper == "NULL":
+        return True
+
+    # Allow common SQL functions
+    if default_upper in ("CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME"):
+        return True
+
+    # Allow numeric literals (integers and floats)
+    if re.match(r'^-?\d+(\.\d+)?$', default.strip()):
+        return True
+
+    # Allow single-quoted strings (basic check - no embedded quotes)
+    if re.match(r"^'[^']*'$", default.strip()):
+        return True
+
+    return False
 
 
 # Default database connection timeout in seconds
@@ -271,16 +331,31 @@ def safe_add_column(
     """
     Safely add a column to a table if it doesn't exist.
 
+    Validates all parameters to prevent SQL injection.
+
     Args:
         conn: SQLite connection
-        table: Table name
-        column: Column name to add
-        column_type: SQL type (e.g., "TEXT", "INTEGER")
-        default: Optional default value
+        table: Table name (alphanumeric and underscores only)
+        column: Column name to add (alphanumeric and underscores only)
+        column_type: SQL type (e.g., "TEXT", "INTEGER") - must be whitelisted
+        default: Optional default value (numeric, quoted string, or SQL function)
 
     Returns:
         True if column was added, False if it already existed
+
+    Raises:
+        ValueError: If any parameter fails validation
     """
+    # Validate all parameters to prevent SQL injection
+    if not _validate_sql_identifier(table):
+        raise ValueError(f"Invalid table name: {table!r}")
+    if not _validate_sql_identifier(column):
+        raise ValueError(f"Invalid column name: {column!r}")
+    if not _validate_column_type(column_type):
+        raise ValueError(f"Invalid column type: {column_type!r}")
+    if default is not None and not _validate_default_value(default):
+        raise ValueError(f"Invalid default value: {default!r}")
+
     # Check if column exists
     cursor = conn.execute(f"PRAGMA table_info({table})")
     columns = {row[1] for row in cursor.fetchall()}
@@ -288,7 +363,7 @@ def safe_add_column(
     if column in columns:
         return False
 
-    # Add the column
+    # Add the column (safe after validation)
     sql = f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
     if default is not None:
         sql += f" DEFAULT {default}"

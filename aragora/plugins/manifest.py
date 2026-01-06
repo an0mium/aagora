@@ -217,12 +217,20 @@ class PluginManifest:
 
     @classmethod
     def from_json(cls, json_str: str) -> "PluginManifest":
-        return cls.from_dict(json.loads(json_str))
+        try:
+            return cls.from_dict(json.loads(json_str))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid plugin manifest JSON: {e}") from e
 
     @classmethod
     def load(cls, path: Path) -> "PluginManifest":
         """Load manifest from file."""
-        return cls.from_json(path.read_text())
+        if not path.exists():
+            raise FileNotFoundError(f"Plugin manifest not found: {path}")
+        try:
+            return cls.from_json(path.read_text())
+        except OSError as e:
+            raise OSError(f"Failed to read plugin manifest {path}: {e}") from e
 
     def has_capability(self, capability: PluginCapability) -> bool:
         """Check if plugin has a capability."""

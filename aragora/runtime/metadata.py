@@ -13,12 +13,22 @@ temperature=0. "Reproducibility" here means same configuration,
 not identical outputs.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Optional
 import hashlib
 import json
+import logging
 import platform
+import sqlite3
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Generator, Optional
+
+from aragora.utils.json_helpers import safe_json_loads
+
+logger = logging.getLogger(__name__)
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -270,112 +280,116 @@ class MetadataStore:
     """
 
     def __init__(self, db_path: str = "aragora_metadata.db"):
-        import sqlite3
         self.db_path = db_path
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self):
-        import sqlite3
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS debate_metadata (
-                debate_id TEXT PRIMARY KEY,
-                config_hash TEXT,
-                task_hash TEXT,
-                created_at TEXT,
-                metadata_json TEXT
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS debate_metadata (
+                    debate_id TEXT PRIMARY KEY,
+                    config_hash TEXT,
+                    task_hash TEXT,
+                    created_at TEXT,
+                    metadata_json TEXT
+                )
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_config_hash
-            ON debate_metadata(config_hash)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_config_hash
+                ON debate_metadata(config_hash)
+            """)
 
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_task_hash
-            ON debate_metadata(task_hash)
-        """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_task_hash
+                ON debate_metadata(task_hash)
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def store(self, metadata: DebateMetadata):
         """Store debate metadata."""
-        import sqlite3
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO debate_metadata
-            (debate_id, config_hash, task_hash, created_at, metadata_json)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            metadata.debate_id,
-            metadata.config_hash,
-            metadata.task_hash,
-            metadata.created_at,
-            metadata.to_json(),
-        ))
+            cursor.execute("""
+                INSERT OR REPLACE INTO debate_metadata
+                (debate_id, config_hash, task_hash, created_at, metadata_json)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                metadata.debate_id,
+                metadata.config_hash,
+                metadata.task_hash,
+                metadata.created_at,
+                metadata.to_json(),
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get(self, debate_id: str) -> Optional[DebateMetadata]:
         """Retrieve metadata by debate ID."""
-        import sqlite3
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT metadata_json FROM debate_metadata WHERE debate_id = ?",
-            (debate_id,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                "SELECT metadata_json FROM debate_metadata WHERE debate_id = ?",
+                (debate_id,)
+            )
+            row = cursor.fetchone()
 
         if row:
-            return DebateMetadata.from_dict(json.loads(row[0]))
+            data = safe_json_loads(row[0], {})
+            if data:
+                return DebateMetadata.from_dict(data)
         return None
 
     def find_similar(self, metadata: DebateMetadata, limit: int = 10) -> list[DebateMetadata]:
         """Find debates with similar configuration."""
-        import sqlite3
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT metadata_json FROM debate_metadata
-            WHERE config_hash = ? AND debate_id != ?
-            ORDER BY created_at DESC
-            LIMIT ?
-        """, (metadata.config_hash, metadata.debate_id, limit))
+            cursor.execute("""
+                SELECT metadata_json FROM debate_metadata
+                WHERE config_hash = ? AND debate_id != ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (metadata.config_hash, metadata.debate_id, limit))
 
-        results = []
-        for row in cursor.fetchall():
-            results.append(DebateMetadata.from_dict(json.loads(row[0])))
+            results = []
+            for row in cursor.fetchall():
+                data = safe_json_loads(row[0], {})
+                if data:
+                    results.append(DebateMetadata.from_dict(data))
 
-        conn.close()
         return results
 
     def find_by_task(self, task_hash: str, limit: int = 10) -> list[DebateMetadata]:
         """Find debates for the same task."""
-        import sqlite3
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT metadata_json FROM debate_metadata
-            WHERE task_hash = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-        """, (task_hash, limit))
+            cursor.execute("""
+                SELECT metadata_json FROM debate_metadata
+                WHERE task_hash = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (task_hash, limit))
 
-        results = []
-        for row in cursor.fetchall():
-            results.append(DebateMetadata.from_dict(json.loads(row[0])))
+            results = []
+            for row in cursor.fetchall():
+                data = safe_json_loads(row[0], {})
+                if data:
+                    results.append(DebateMetadata.from_dict(data))
 
-        conn.close()
         return results

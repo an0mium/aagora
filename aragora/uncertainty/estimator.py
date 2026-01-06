@@ -99,7 +99,7 @@ class ConfidenceEstimator:
         confidences = {}
         for agent, result in zip(agents, results):
             if isinstance(result, Exception):
-                print(f"Error getting confidence from {agent.name}: {result}")
+                logger.warning(f"Error getting confidence from {agent.name}: {result}")
                 # Default confidence
                 confidences[agent.name] = ConfidenceScore(agent.name, 0.5, "Error estimating confidence")
             else:
@@ -227,7 +227,10 @@ class DisagreementAnalyzer:
                 )
         else:
             # Unanimous agreement
-            metrics.collective_confidence = sum(v.confidence for v in votes) / len(votes)
+            if votes:
+                metrics.collective_confidence = sum(v.confidence for v in votes) / len(votes)
+            else:
+                metrics.collective_confidence = 0.5  # Default when no votes
             metrics.confidence_interval = (metrics.collective_confidence - 0.1, metrics.collective_confidence + 0.1)
             metrics.disagreement_type = "none"
 

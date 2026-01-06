@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
 
+from aragora.config import DB_TIMEOUT_SECONDS
+
 
 @dataclass
 class SuggestionRecord:
@@ -94,7 +96,7 @@ class SuggestionFeedbackTracker:
 
     def _init_db(self) -> None:
         """Initialize database tables."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Suggestion injections table
@@ -154,7 +156,7 @@ class SuggestionFeedbackTracker:
         import uuid
         injection_ids = []
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             for cluster in clusters:
@@ -210,7 +212,7 @@ class SuggestionFeedbackTracker:
         Returns:
             Number of suggestions updated
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Get all injections for this debate
@@ -315,7 +317,7 @@ class SuggestionFeedbackTracker:
 
     def get_contributor_stats(self, user_id: str) -> Optional[ContributorStats]:
         """Get stats for a specific contributor."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT user_id, total_suggestions, suggestions_in_consensus, avg_effectiveness, reputation_score "
@@ -337,7 +339,7 @@ class SuggestionFeedbackTracker:
 
     def get_top_contributors(self, limit: int = 10) -> list[ContributorStats]:
         """Get top contributors by reputation."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT user_id, total_suggestions, suggestions_in_consensus, avg_effectiveness, reputation_score
@@ -361,7 +363,7 @@ class SuggestionFeedbackTracker:
 
     def get_debate_suggestions(self, debate_id: str) -> list[SuggestionRecord]:
         """Get all suggestions for a debate."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT * FROM suggestion_injections WHERE debate_id = ?",
@@ -388,7 +390,7 @@ class SuggestionFeedbackTracker:
 
     def get_effectiveness_stats(self) -> dict[str, Any]:
         """Get overall suggestion effectiveness statistics."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             stats = {}
@@ -451,7 +453,7 @@ class SuggestionFeedbackTracker:
         Returns:
             Filtered and sorted suggestions (high rep first)
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             filtered = []

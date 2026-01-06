@@ -143,13 +143,13 @@ class BaseConnector(ABC):
     @abstractmethod
     def source_type(self) -> SourceType:
         """The source type for this connector."""
-        pass
+        raise NotImplementedError("Subclasses must implement source_type property")
 
     @property
     @abstractmethod
     def name(self) -> str:
         """Human-readable name for this connector."""
-        pass
+        raise NotImplementedError("Subclasses must implement name property")
 
     @abstractmethod
     async def search(
@@ -169,7 +169,7 @@ class BaseConnector(ABC):
         Returns:
             List of Evidence objects
         """
-        pass
+        raise NotImplementedError("Subclasses must implement search method")
 
     @abstractmethod
     async def fetch(self, evidence_id: str) -> Optional[Evidence]:
@@ -182,7 +182,7 @@ class BaseConnector(ABC):
         Returns:
             Evidence object or None if not found
         """
-        pass
+        raise NotImplementedError("Subclasses must implement fetch method")
 
     def record_evidence(
         self,

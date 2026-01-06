@@ -14,11 +14,18 @@ This enables the system to:
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, Generator, List, Optional
 import math
+
+from aragora.config import DB_MEMORY_PATH
+from aragora.utils.json_helpers import safe_json_loads
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -126,77 +133,84 @@ class MetaLearner:
         cms.hyperparams.update(meta.get_current_hyperparams())
     """
 
-    def __init__(self, db_path: str = "aragora_memory.db"):
+    def __init__(self, db_path: str = DB_MEMORY_PATH):
         self.db_path = Path(db_path)
         self._init_db()
         self.state = self._load_state()
         self.metrics_history: List[LearningMetrics] = []
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self):
         """Initialize meta-learning tables."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Hyperparameter history table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS meta_hyperparams (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hyperparams TEXT NOT NULL,
-                metrics TEXT,
-                adjustment_reason TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Hyperparameter history table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meta_hyperparams (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hyperparams TEXT NOT NULL,
+                    metrics TEXT,
+                    adjustment_reason TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Learning efficiency history
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS meta_efficiency_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cycle_number INTEGER,
-                metrics TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Learning efficiency history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meta_efficiency_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cycle_number INTEGER,
+                    metrics TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def _load_state(self) -> HyperparameterState:
         """Load the most recent hyperparameter state."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT hyperparams FROM meta_hyperparams
-            ORDER BY created_at DESC LIMIT 1
-        """)
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute("""
+                SELECT hyperparams FROM meta_hyperparams
+                ORDER BY created_at DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
 
         if row:
-            data = json.loads(row[0])
-            return HyperparameterState.from_dict(data)
+            data = safe_json_loads(row[0], {})
+            if data:
+                return HyperparameterState.from_dict(data)
         return HyperparameterState()  # Default state
 
     def _save_state(self, reason: str = "", metrics: LearningMetrics | None = None):
         """Save current hyperparameter state."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT INTO meta_hyperparams (hyperparams, metrics, adjustment_reason)
-            VALUES (?, ?, ?)
-            """,
-            (
-                json.dumps(self.state.to_dict()),
-                json.dumps(metrics.to_dict()) if metrics else None,
-                reason,
-            ),
-        )
+            cursor.execute(
+                """
+                INSERT INTO meta_hyperparams (hyperparams, metrics, adjustment_reason)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    json.dumps(self.state.to_dict()),
+                    json.dumps(metrics.to_dict()) if metrics else None,
+                    reason,
+                ),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_current_hyperparams(self) -> Dict[str, Any]:
         """Get current hyperparameters for ContinuumMemory."""
@@ -240,46 +254,44 @@ class MetaLearner:
             return metrics
 
         # Pattern retention: % of patterns with success_rate > 0.5
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT COUNT(*) FROM continuum_memory
-            WHERE (success_count * 1.0 / NULLIF(success_count + failure_count, 0)) > 0.5
-        """)
-        useful_count = cursor.fetchone()[0] or 0
-        metrics.pattern_retention_rate = useful_count / total_memories if total_memories > 0 else 0
+            cursor.execute("""
+                SELECT COUNT(*) FROM continuum_memory
+                WHERE (success_count * 1.0 / NULLIF(success_count + failure_count, 0)) > 0.5
+            """)
+            useful_count = cursor.fetchone()[0] or 0
+            metrics.pattern_retention_rate = useful_count / total_memories if total_memories > 0 else 0
 
-        # Forgetting rate: % of patterns that became less useful over time
-        cursor.execute("""
-            SELECT COUNT(*) FROM continuum_memory
-            WHERE failure_count > success_count
-              AND update_count > 5
-        """)
-        forgotten_count = cursor.fetchone()[0] or 0
-        metrics.forgetting_rate = forgotten_count / total_memories if total_memories > 0 else 0
+            # Forgetting rate: % of patterns that became less useful over time
+            cursor.execute("""
+                SELECT COUNT(*) FROM continuum_memory
+                WHERE failure_count > success_count
+                  AND update_count > 5
+            """)
+            forgotten_count = cursor.fetchone()[0] or 0
+            metrics.forgetting_rate = forgotten_count / total_memories if total_memories > 0 else 0
 
-        # Tier efficiency: success rate per tier
-        for tier in ["fast", "medium", "slow", "glacial"]:
-            cursor.execute(
-                """
-                SELECT AVG(success_count * 1.0 / NULLIF(success_count + failure_count, 0))
-                FROM continuum_memory
-                WHERE tier = ? AND (success_count + failure_count) > 0
-                """,
-                (tier,),
-            )
-            result = cursor.fetchone()[0]
-            metrics.tier_efficiency[tier] = result or 0.5
+            # Tier efficiency: success rate per tier
+            for tier in ["fast", "medium", "slow", "glacial"]:
+                cursor.execute(
+                    """
+                    SELECT AVG(success_count * 1.0 / NULLIF(success_count + failure_count, 0))
+                    FROM continuum_memory
+                    WHERE tier = ? AND (success_count + failure_count) > 0
+                    """,
+                    (tier,),
+                )
+                result = cursor.fetchone()[0]
+                metrics.tier_efficiency[tier] = result or 0.5
 
-        # Learning velocity: new patterns per cycle
-        cursor.execute("""
-            SELECT COUNT(*) FROM continuum_memory
-            WHERE julianday('now') - julianday(created_at) < 1
-        """)
-        metrics.learning_velocity = cursor.fetchone()[0] or 0
-
-        conn.close()
+            # Learning velocity: new patterns per cycle
+            cursor.execute("""
+                SELECT COUNT(*) FROM continuum_memory
+                WHERE julianday('now') - julianday(created_at) < 1
+            """)
+            metrics.learning_velocity = cursor.fetchone()[0] or 0
 
         # Extract from cycle results
         metrics.cycles_evaluated = cycle_results.get("cycle", 0)
@@ -290,17 +302,16 @@ class MetaLearner:
         self.metrics_history.append(metrics)
 
         # Log to database
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO meta_efficiency_log (cycle_number, metrics)
-            VALUES (?, ?)
-            """,
-            (metrics.cycles_evaluated, json.dumps(metrics.to_dict())),
-        )
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO meta_efficiency_log (cycle_number, metrics)
+                VALUES (?, ?)
+                """,
+                (metrics.cycles_evaluated, json.dumps(metrics.to_dict())),
+            )
+            conn.commit()
 
         return metrics
 
@@ -414,29 +425,28 @@ class MetaLearner:
 
     def get_adjustment_history(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Get recent hyperparameter adjustments."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT hyperparams, metrics, adjustment_reason, created_at
-            FROM meta_hyperparams
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
+            cursor.execute(
+                """
+                SELECT hyperparams, metrics, adjustment_reason, created_at
+                FROM meta_hyperparams
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
 
-        history = []
-        for row in cursor.fetchall():
-            history.append({
-                "hyperparams": json.loads(row[0]),
-                "metrics": json.loads(row[1]) if row[1] else None,
-                "reason": row[2],
-                "timestamp": row[3],
-            })
+            history = []
+            for row in cursor.fetchall():
+                history.append({
+                    "hyperparams": safe_json_loads(row[0], {}),
+                    "metrics": safe_json_loads(row[1], None),
+                    "reason": row[2],
+                    "timestamp": row[3],
+                })
 
-        conn.close()
         return history
 
     def reset_to_defaults(self):
@@ -469,6 +479,10 @@ class MetaLearner:
         mid = len(recent_metrics) // 2
         first_half = recent_metrics[:mid]
         second_half = recent_metrics[mid:]
+
+        # Defensive check for empty halves (shouldn't happen with len >= 2 check above)
+        if not first_half or not second_half:
+            return "insufficient_data"
 
         first_retention = sum(m.pattern_retention_rate for m in first_half) / len(first_half)
         second_retention = sum(m.pattern_retention_rate for m in second_half) / len(second_half)

@@ -149,9 +149,26 @@ class LocalDocsConnector(BaseConnector):
         Returns:
             List of Evidence objects
         """
-        # Compile pattern
+        # Compile pattern with ReDoS protection
         if regex:
-            pattern = re.compile(query, re.IGNORECASE)
+            # Reject patterns with nested quantifiers that could cause catastrophic backtracking
+            # Patterns like (a+)+, (.*)+, (\w+)*, etc. are dangerous
+            dangerous_patterns = [
+                r'\([^)]*[+*][^)]*\)[+*]',  # Nested quantifiers: (x+)+ or (x*)*
+                r'\([^)]*\|[^)]*\)[+*]',     # Alternation with quantifier: (a|b)+
+            ]
+            for danger in dangerous_patterns:
+                if re.search(danger, query):
+                    logger.warning(f"Rejecting potentially dangerous regex pattern: {query}")
+                    # Fall back to literal search
+                    pattern = re.compile(re.escape(query), re.IGNORECASE)
+                    break
+            else:
+                try:
+                    pattern = re.compile(query, re.IGNORECASE)
+                except re.error as e:
+                    logger.warning(f"Invalid regex pattern '{query}': {e}")
+                    pattern = re.compile(re.escape(query), re.IGNORECASE)
         else:
             # Escape special chars for literal search
             pattern = re.compile(re.escape(query), re.IGNORECASE)

@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Optional, Generator
 
 from aragora.core import Critique, DebateResult
+from aragora.utils.json_helpers import safe_json_loads
 
 
-# Import WAL connection helper from storage module
-from aragora.storage.schema import get_wal_connection, DB_TIMEOUT
+# Import WAL connection helper and safe column operations from storage module
+from aragora.storage.schema import get_wal_connection, DB_TIMEOUT, safe_add_column
 
 
 @dataclass
@@ -135,7 +136,7 @@ class CritiqueStore:
         finally:
             conn.close()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize the database schema."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -227,38 +228,30 @@ class CritiqueStore:
             # These use try/except to be idempotent (safe to run multiple times)
 
             # Patterns table: Add surprise scoring columns
-            for col_def in [
-                "surprise_score REAL DEFAULT 0.0",
-                "base_rate REAL DEFAULT 0.5",
-                "avg_prediction_error REAL DEFAULT 0.0",
-                "prediction_count INTEGER DEFAULT 0",
+            # Using safe_add_column to prevent SQL injection
+            for col_name, col_type, default in [
+                ("surprise_score", "REAL", "0.0"),
+                ("base_rate", "REAL", "0.5"),
+                ("avg_prediction_error", "REAL", "0.0"),
+                ("prediction_count", "INTEGER", "0"),
             ]:
-                try:
-                    cursor.execute(f"ALTER TABLE patterns ADD COLUMN {col_def}")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                safe_add_column(conn, "patterns", col_name, col_type, default)
 
             # Critiques table: Add prediction tracking columns
-            for col_def in [
-                "expected_usefulness REAL DEFAULT 0.5",
-                "actual_usefulness REAL",
-                "prediction_error REAL",
+            for col_name, col_type, default in [
+                ("expected_usefulness", "REAL", "0.5"),
+                ("actual_usefulness", "REAL", None),
+                ("prediction_error", "REAL", None),
             ]:
-                try:
-                    cursor.execute(f"ALTER TABLE critiques ADD COLUMN {col_def}")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                safe_add_column(conn, "critiques", col_name, col_type, default)
 
             # Agent reputation table: Add calibration scoring columns
-            for col_def in [
-                "total_predictions INTEGER DEFAULT 0",
-                "total_prediction_error REAL DEFAULT 0.0",
-                "calibration_score REAL DEFAULT 0.5",
+            for col_name, col_type, default in [
+                ("total_predictions", "INTEGER", "0"),
+                ("total_prediction_error", "REAL", "0.0"),
+                ("calibration_score", "REAL", "0.5"),
             ]:
-                try:
-                    cursor.execute(f"ALTER TABLE agent_reputation ADD COLUMN {col_def}")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
+                safe_add_column(conn, "agent_reputation", col_name, col_type, default)
 
             # Create patterns_archive table for adaptive forgetting
             cursor.execute("""
@@ -280,7 +273,7 @@ class CritiqueStore:
 
             conn.commit()
 
-    def store_debate(self, result: DebateResult):
+    def store_debate(self, result: DebateResult) -> None:
         """Store a complete debate result."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -334,7 +327,7 @@ class CritiqueStore:
 
             conn.commit()
 
-    def store_pattern(self, critique: Critique, successful_fix: str):
+    def store_pattern(self, critique: Critique, successful_fix: str) -> None:
         """Store a successful critique pattern."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -657,22 +650,27 @@ class CritiqueStore:
             stats = {}
 
             cursor.execute("SELECT COUNT(*) FROM debates")
-            stats["total_debates"] = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            stats["total_debates"] = row[0] if row else 0
 
             cursor.execute("SELECT COUNT(*) FROM debates WHERE consensus_reached = 1")
-            stats["consensus_debates"] = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            stats["consensus_debates"] = row[0] if row else 0
 
             cursor.execute("SELECT COUNT(*) FROM critiques")
-            stats["total_critiques"] = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            stats["total_critiques"] = row[0] if row else 0
 
             cursor.execute("SELECT COUNT(*) FROM patterns")
-            stats["total_patterns"] = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            stats["total_patterns"] = row[0] if row else 0
 
             cursor.execute("SELECT issue_type, COUNT(*) FROM patterns GROUP BY issue_type")
             stats["patterns_by_type"] = dict(cursor.fetchall())
 
             cursor.execute("SELECT AVG(confidence) FROM debates WHERE consensus_reached = 1")
-            avg_conf = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            avg_conf = row[0] if row else None
             stats["avg_consensus_confidence"] = avg_conf if avg_conf else 0.0
 
             return stats
@@ -696,8 +694,8 @@ class CritiqueStore:
                 training_data.append(
                     {
                         "task": row[0],
-                        "issues": json.loads(row[1]) if row[1] else [],
-                        "suggestions": json.loads(row[2]) if row[2] else [],
+                        "issues": safe_json_loads(row[1], []),
+                        "suggestions": safe_json_loads(row[2], []),
                         "successful_answer": row[3],
                     }
                 )
@@ -749,6 +747,15 @@ class CritiqueStore:
             return 1.0  # Neutral weight for unknown agents
         return rep.vote_weight
 
+    # Whitelist of allowed column increments - prevents SQL injection.
+    # Only these hardcoded SQL fragments can be used in UPDATE statements.
+    _REPUTATION_INCREMENTS: dict[str, str] = {
+        "proposal_made": "proposals_made = proposals_made + 1",
+        "proposal_accepted": "proposals_accepted = proposals_accepted + 1",
+        "critique_given": "critiques_given = critiques_given + 1",
+        "critique_valuable": "critiques_valuable = critiques_valuable + 1",
+    }
+
     def update_reputation(
         self,
         agent_name: str,
@@ -757,7 +764,11 @@ class CritiqueStore:
         critique_given: bool = False,
         critique_valuable: bool = False,
     ) -> None:
-        """Update reputation metrics for an agent."""
+        """Update reputation metrics for an agent.
+
+        Uses a whitelist of allowed column updates to prevent SQL injection.
+        Only boolean flags corresponding to _REPUTATION_INCREMENTS keys are processed.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -770,27 +781,26 @@ class CritiqueStore:
                 (agent_name,),
             )
 
-            # Update metrics
-            updates = []
+            # Build updates from whitelist only - no dynamic column names
+            updates: list[str] = []
             if proposal_made:
-                updates.append("proposals_made = proposals_made + 1")
+                updates.append(self._REPUTATION_INCREMENTS["proposal_made"])
             if proposal_accepted:
-                updates.append("proposals_accepted = proposals_accepted + 1")
+                updates.append(self._REPUTATION_INCREMENTS["proposal_accepted"])
             if critique_given:
-                updates.append("critiques_given = critiques_given + 1")
+                updates.append(self._REPUTATION_INCREMENTS["critique_given"])
             if critique_valuable:
-                updates.append("critiques_valuable = critiques_valuable + 1")
+                updates.append(self._REPUTATION_INCREMENTS["critique_valuable"])
 
             if updates:
-                updates.append(f"updated_at = '{datetime.now().isoformat()}'")
-                cursor.execute(
-                    f"""
+                updates.append("updated_at = ?")
+                # Column names from whitelist, values parameterized
+                sql = f"""
                     UPDATE agent_reputation
                     SET {', '.join(updates)}
                     WHERE agent_name = ?
-                """,
-                    (agent_name,),
-                )
+                """
+                cursor.execute(sql, [datetime.now().isoformat(), agent_name])
 
             conn.commit()
 

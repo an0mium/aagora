@@ -9,11 +9,14 @@ Routes tasks to best-fit agents by:
 - Maintaining a "bench" system with promotion/demotion
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Any, TYPE_CHECKING
 import random
 import math
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aragora.routing.probe_filter import ProbeFilter
@@ -168,8 +171,9 @@ class AgentSelector:
                 probe_profile = self.probe_filter.get_agent_profile(agent_name)
                 profile.probe_score = probe_profile.probe_score
                 profile.has_critical_probes = probe_profile.has_critical_issues()
-            except Exception:
+            except Exception as e:
                 # Agent not in probe system - use defaults
+                logger.debug(f"Failed to sync probe profile for {agent_name}: {e}. Using defaults.")
                 profile.probe_score = 1.0
                 profile.has_critical_probes = False
 
@@ -195,9 +199,9 @@ class AgentSelector:
                     profile.elo_rating = rating.elo
                     profile.domain_ratings = rating.domain_elos.copy() if rating.domain_elos else {}
                     profile.success_rate = rating.win_rate
-            except Exception:
+            except Exception as e:
                 # Agent not in ELO system - keep existing values
-                pass
+                logger.debug(f"Failed to sync ELO rating for {agent_name}: {e}. Keeping existing values.")
 
     def get_probe_adjusted_score(self, agent_name: str, base_score: float) -> float:
         """
@@ -220,8 +224,8 @@ class AgentSelector:
                 if probe_profile.total_probes > 0:  # Only use if agent has been probed
                     probe_score = probe_profile.probe_score
                     has_critical = probe_profile.has_critical_issues()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Probe lookup failed for {agent_name}: {e}")
 
         # Fall back to agent profile's probe_score if no filter data
         if probe_score == 1.0 and agent_name in self.agent_pool:
@@ -267,8 +271,9 @@ class AgentSelector:
                     profile.calibration_score = 1.0
                     profile.brier_score = 0.0
                     profile.is_overconfident = False
-            except Exception:
+            except Exception as e:
                 # Agent not in calibration system - use defaults
+                logger.debug(f"Failed to sync calibration for {agent_name}: {e}. Using defaults.")
                 profile.calibration_score = 1.0
                 profile.brier_score = 0.0
                 profile.is_overconfident = False
@@ -294,8 +299,8 @@ class AgentSelector:
                 if summary.total_predictions >= 5:
                     calibration_score = max(0.0, 1.0 - summary.ece)
                     is_overconfident = summary.is_overconfident
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Calibration lookup failed for {agent_name}: {e}")
 
         # Fall back to agent profile if no tracker data
         if calibration_score == 1.0 and agent_name in self.agent_pool:
@@ -409,8 +414,8 @@ class AgentSelector:
                     for trait in persona.traits:
                         if trait not in traits:
                             traits.append(trait)
-            except Exception:
-                pass  # Fall back to static expertise on error
+            except Exception as e:
+                logger.debug(f"Failed to get persona for {agent.name}: {e}. Using static expertise.")
 
         # Domain expertise (using dynamic expertise)
         primary_exp = expertise.get(requirements.primary_domain, 0.5)
@@ -718,7 +723,7 @@ class AgentSelector:
             "selected": [a.name for a in team.agents],
             "result": "success" if getattr(result, "consensus_reached", False) else "no_consensus",
             "confidence": getattr(result, "confidence", 0),
-            "timestamp": __import__('datetime').datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),
         })
 
     def get_selection_history(self, limit: Optional[int] = None) -> list[dict]:

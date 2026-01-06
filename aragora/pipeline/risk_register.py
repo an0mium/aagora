@@ -101,7 +101,7 @@ class RiskRegister:
     low_support_threshold: float = 0.5
     critical_support_threshold: float = 0.7
 
-    def add_risk(self, risk: Risk):
+    def add_risk(self, risk: Risk) -> None:
         """Add a risk to the register."""
         self.risks.append(risk)
 
@@ -238,7 +238,7 @@ class RiskAnalyzer:
 
         return register
 
-    def _analyze_critiques(self, register: RiskRegister):
+    def _analyze_critiques(self, register: RiskRegister) -> None:
         """Extract risks from debate critiques."""
         if not self.artifact.trace_data:
             return
@@ -266,7 +266,7 @@ class RiskAnalyzer:
                     )
                     register.add_risk(risk)
 
-    def _analyze_verifications(self, register: RiskRegister):
+    def _analyze_verifications(self, register: RiskRegister) -> None:
         """Extract risks from failed verifications."""
         for v in self.artifact.verification_results:
             if v.status in ["refuted", "timeout"]:
@@ -283,7 +283,7 @@ class RiskAnalyzer:
                 )
                 register.add_risk(risk)
 
-    def _analyze_consensus(self, register: RiskRegister):
+    def _analyze_consensus(self, register: RiskRegister) -> None:
         """Extract risks from low consensus confidence."""
         consensus = self.artifact.consensus_proof
         if not consensus:

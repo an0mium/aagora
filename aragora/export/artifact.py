@@ -141,7 +141,7 @@ class DebateArtifact:
         """Serialize to JSON."""
         return json.dumps(self.to_dict(), indent=indent)
 
-    def save(self, path: Path):
+    def save(self, path: Path) -> None:
         """Save artifact to file."""
         path.write_text(self.to_json())
 
@@ -200,7 +200,12 @@ class DebateArtifact:
     @classmethod
     def load(cls, path: Path) -> "DebateArtifact":
         """Load artifact from file."""
-        return cls.from_json(path.read_text())
+        if not path.exists():
+            raise FileNotFoundError(f"Debate artifact not found: {path}")
+        try:
+            return cls.from_json(path.read_text())
+        except OSError as e:
+            raise OSError(f"Failed to read debate artifact {path}: {e}") from e
 
     def verify_integrity(self) -> tuple[bool, list[str]]:
         """Verify artifact integrity."""

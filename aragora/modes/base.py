@@ -45,7 +45,7 @@ class Mode(ABC):
 
         This should include behavioral guidelines specific to this mode.
         """
-        pass
+        raise NotImplementedError("Subclasses must implement get_system_prompt method")
 
     def can_access_tool(self, tool_name: str) -> bool:
         """Check if this mode allows using a given tool."""

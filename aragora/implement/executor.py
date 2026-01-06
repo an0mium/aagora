@@ -14,11 +14,14 @@ Research sources:
 """
 
 import asyncio
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from aragora.agents.cli_agents import ClaudeAgent, CodexAgent
 
@@ -178,7 +181,11 @@ Make only the changes specified. Follow existing code style."""
                 timeout=180,  # Minimum 3 min (was 30)
             )
             return result.stdout
-        except Exception:
+        except subprocess.TimeoutExpired:
+            logger.warning("Git diff timed out after 3 minutes")
+            return ""
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.debug(f"Git diff failed: {e}")
             return ""
 
     async def execute_task(
@@ -207,15 +214,15 @@ Make only the changes specified. Follow existing code style."""
             model_name = "codex-fallback"
             # Use 2x timeout for fallback
             agent.timeout = base_timeout * 2
-            print(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt}, timeout {agent.timeout}s)...")
+            logger.info(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt}, timeout {agent.timeout}s)...")
         else:
             agent, model_name = self._select_agent(task.complexity)
             # Scale timeout by attempt number
             agent.timeout = base_timeout * attempt
             if attempt > 1:
-                print(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt}, timeout {agent.timeout}s)...")
+                logger.info(f"  Retry [{task.complexity}] {task.id} with {model_name} (attempt {attempt}, timeout {agent.timeout}s)...")
             else:
-                print(f"  Executing [{task.complexity}] {task.id} with {model_name} (timeout {agent.timeout}s)...")
+                logger.info(f"  Executing [{task.complexity}] {task.id} with {model_name} (timeout {agent.timeout}s)...")
 
         prompt = self._build_prompt(task)
         start_time = time.time()
@@ -228,9 +235,9 @@ Make only the changes specified. Follow existing code style."""
             diff = self._get_git_diff()
             duration = time.time() - start_time
 
-            print(f"    Completed in {duration:.1f}s")
+            logger.info(f"    Completed in {duration:.1f}s")
             if diff:
-                print(f"    Changes:\n{diff[:200]}...")
+                logger.debug(f"    Changes:\n{diff[:200]}...")
 
             return TaskResult(
                 task_id=task.id,
@@ -242,7 +249,7 @@ Make only the changes specified. Follow existing code style."""
 
         except TimeoutError as e:
             duration = time.time() - start_time
-            print(f"    Timeout after {duration:.1f}s")
+            logger.warning(f"    Timeout after {duration:.1f}s")
             return TaskResult(
                 task_id=task.id,
                 success=False,
@@ -253,7 +260,7 @@ Make only the changes specified. Follow existing code style."""
 
         except Exception as e:
             duration = time.time() - start_time
-            print(f"    Error: {e}")
+            logger.error(f"    Error: {e}")
             return TaskResult(
                 task_id=task.id,
                 success=False,
@@ -284,14 +291,14 @@ Make only the changes specified. Follow existing code style."""
 
         if is_timeout and self.max_retries >= 2:
             # Attempt 2: Claude with 2x timeout
-            print(f"    Retrying {task.id} with extended timeout...")
+            logger.info(f"    Retrying {task.id} with extended timeout...")
             result = await self.execute_task(task, attempt=2, use_fallback=False)
             if result.success:
                 return result
 
         if is_timeout and self.max_retries >= 3:
             # Attempt 3: Fallback to Codex
-            print(f"    Falling back to Codex for {task.id}...")
+            logger.info(f"    Falling back to Codex for {task.id}...")
             result = await self.execute_task(task, attempt=3, use_fallback=True)
 
         return result
@@ -329,7 +336,7 @@ Make only the changes specified. Follow existing code style."""
             # Check dependencies
             deps_met = all(dep in completed for dep in task.dependencies)
             if not deps_met:
-                print(f"  Skipping {task.id} - dependencies not met")
+                logger.info(f"  Skipping {task.id} - dependencies not met")
                 continue
 
             # Execute with retry
@@ -343,23 +350,23 @@ Make only the changes specified. Follow existing code style."""
             else:
                 failed_tasks.append(task)
                 if stop_on_failure:
-                    print(f"  Stopping execution due to failure in {task.id}")
+                    logger.warning(f"  Stopping execution due to failure in {task.id}")
                     break
                 else:
-                    print(f"  Task {task.id} failed, continuing with remaining tasks...")
+                    logger.warning(f"  Task {task.id} failed, continuing with remaining tasks...")
 
         # Second pass: retry failed tasks once more (dependencies may now be met)
         if failed_tasks and not stop_on_failure:
-            print(f"\n  Retrying {len(failed_tasks)} failed tasks...")
+            logger.info(f"Retrying {len(failed_tasks)} failed tasks...")
             for task in failed_tasks:
                 # Check if dependencies are now met
                 deps_met = all(dep in completed for dep in task.dependencies)
                 if not deps_met:
-                    print(f"  Skipping retry of {task.id} - dependencies still not met")
+                    logger.info(f"  Skipping retry of {task.id} - dependencies still not met")
                     continue
 
                 # Already tried with retry, try one more time with max timeout
-                print(f"  Final retry for {task.id}...")
+                logger.info(f"  Final retry for {task.id}...")
                 result = await self.execute_task(task, attempt=self.max_retries + 1, use_fallback=True)
 
                 # Update results (replace the failed one)
@@ -379,7 +386,7 @@ Make only the changes specified. Follow existing code style."""
         self,
         tasks: list[ImplementTask],
         completed: set[str],
-        max_parallel: int = None,
+        max_parallel: int | None = None,
         on_task_complete=None,
     ) -> list[TaskResult]:
         """
@@ -407,7 +414,7 @@ Make only the changes specified. Follow existing code style."""
         results = []
         remaining = [t for t in tasks if t.id not in completed]
 
-        print(f"  Executing {len(remaining)} tasks (max {max_parallel} parallel)...")
+        logger.info(f"  Executing {len(remaining)} tasks (max {max_parallel} parallel)...")
 
         while remaining:
             # Find tasks with all dependencies met
@@ -420,12 +427,12 @@ Make only the changes specified. Follow existing code style."""
                 # Deadlock - remaining tasks have unmet dependencies
                 unmet = remaining[0]
                 missing = [d for d in unmet.dependencies if d not in completed]
-                print(f"  Deadlock: {unmet.id} waiting for {missing}")
+                logger.error(f"  Deadlock: {unmet.id} waiting for {missing}")
                 break
 
             # Execute up to max_parallel tasks concurrently
             batch = ready[:max_parallel]
-            print(f"    Parallel batch: {[t.id for t in batch]}")
+            logger.info(f"    Parallel batch: {[t.id for t in batch]}")
 
             batch_results = await asyncio.gather(*[
                 self.execute_task_with_retry(t) for t in batch
@@ -492,7 +499,7 @@ Provide your review as:
 
 Be concise and actionable."""
 
-        print("  Running Codex code review (this may take several minutes)...")
+        logger.info("  Running Codex code review (this may take several minutes)...")
         start_time = time.time()
 
         try:
@@ -510,7 +517,7 @@ Be constructive but thorough."""
             response = await self._codex.generate(review_prompt, context=[])
             duration = time.time() - start_time
 
-            print(f"    Review completed in {duration:.1f}s")
+            logger.info(f"    Review completed in {duration:.1f}s")
 
             # Parse response (basic parsing)
             response_lower = response.lower() if response else ""
@@ -525,7 +532,7 @@ Be constructive but thorough."""
 
         except Exception as e:
             duration = time.time() - start_time
-            print(f"    Review failed after {duration:.1f}s: {e}")
+            logger.error(f"    Review failed after {duration:.1f}s: {e}")
             return {
                 "approved": None,
                 "error": str(e),

@@ -1,13 +1,16 @@
+import logging
 import os
+import queue
+import threading
 import time
 import uuid
-import threading
-import queue
-from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from .schema import ReplayEvent, ReplayMeta
+
+logger = logging.getLogger(__name__)
 
 class ReplayRecorder:
     """Non-blocking append-only recorder with background writer."""
@@ -40,9 +43,10 @@ class ReplayRecorder:
             started_at=datetime.utcnow().isoformat()
         )
         
-        self._write_queue: queue.Queue = queue.Queue()
+        self._write_queue: queue.Queue = queue.Queue(maxsize=10000)
         self._writer_thread: Optional[threading.Thread] = None
         self._stop_writer = threading.Event()
+        self._event_count_lock = threading.Lock()
     
     def start(self) -> None:
         self._start_time = time.time()
@@ -59,17 +63,19 @@ class ReplayRecorder:
                     event = self._write_queue.get(timeout=0.1)
                     f.write(event.to_jsonl() + '\n')
                     f.flush()
-                    self._event_count += 1
+                    with self._event_count_lock:
+                        self._event_count += 1
                 except queue.Empty:
                     continue
     
     def _write_meta(self) -> None:
         try:
-            self.meta.event_count = self._event_count
+            with self._event_count_lock:
+                self.meta.event_count = self._event_count
             with open(self.meta_path, 'w', encoding='utf-8') as f:
                 f.write(self.meta.to_json())
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            logger.warning(f"Failed to write replay metadata to {self.meta_path}: {e}")
     
     def _elapsed_ms(self) -> int:
         return int((time.time() - (self._start_time or time.time())) * 1000)
@@ -88,8 +94,8 @@ class ReplayRecorder:
                 metadata=metadata or {}
             )
             self._write_queue.put_nowait(event)
-        except Exception:
-            pass
+        except queue.Full:
+            logger.warning(f"Replay queue full, dropping {event_type} event")
     
     def record_turn(self, agent_id: str, content: str, round_num: int, loop_id: Optional[str] = None) -> None:
         meta: Dict[str, Any] = {"round": round_num}
@@ -116,7 +122,9 @@ class ReplayRecorder:
         self._is_active = False
         self._stop_writer.set()
         if self._writer_thread:
-            self._writer_thread.join(timeout=5.0)
+            self._writer_thread.join(timeout=10.0)
+            if self._writer_thread.is_alive():
+                logger.warning(f"Replay writer thread didn't stop in 10s, queue depth: {self._write_queue.qsize()}")
         self.meta.status = "completed"
         self.meta.ended_at = datetime.utcnow().isoformat()
         self.meta.duration_ms = self._elapsed_ms()
@@ -129,6 +137,8 @@ class ReplayRecorder:
         self._is_active = False
         self._stop_writer.set()
         if self._writer_thread:
-            self._writer_thread.join(timeout=1.0)
+            self._writer_thread.join(timeout=5.0)
+            if self._writer_thread.is_alive():
+                logger.warning("Replay writer abort: thread didn't stop in 5s")
         self.meta.status = "crashed"
         self._write_meta()

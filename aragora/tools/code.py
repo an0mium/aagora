@@ -160,15 +160,25 @@ class CodeReader:
     def read_file(self, file_path: str) -> FileContext:
         """Read a file and extract context."""
         path = self._resolve_path(file_path)
-        content = path.read_text()
+
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        if not path.is_file():
+            raise ValueError(f"Not a file: {path}")
+
+        try:
+            content = path.read_text()
+            stat = path.stat()
+        except OSError as e:
+            raise OSError(f"Failed to read file {path}: {e}")
 
         return FileContext(
             path=str(path.relative_to(self.root)),
             content=content,
             language=self._detect_language(path),
-            size_bytes=path.stat().st_size,
+            size_bytes=stat.st_size,
             line_count=len(content.splitlines()),
-            last_modified=datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
+            last_modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
             imports=self._extract_imports(content, path),
             exports=self._extract_exports(content, path),
             functions=self._extract_functions(content, path),
@@ -184,7 +194,16 @@ class CodeReader:
     ) -> CodeSpan:
         """Read a specific span of code with surrounding context."""
         path = self._resolve_path(file_path)
-        lines = path.read_text().splitlines()
+
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        if not path.is_file():
+            raise ValueError(f"Not a file: {path}")
+
+        try:
+            lines = path.read_text().splitlines()
+        except OSError as e:
+            raise OSError(f"Failed to read file {path}: {e}")
 
         content_lines = lines[start_line - 1:end_line]
         before_lines = lines[max(0, start_line - 1 - context_lines):start_line - 1]
@@ -409,7 +428,7 @@ class CodeWriter:
             warnings=warnings,
         )
 
-    def _apply_change(self, change: CodeChange):
+    def _apply_change(self, change: CodeChange) -> None:
         """Apply a single code change."""
         path = self.root / change.file_path
 
@@ -449,33 +468,64 @@ class CodeWriter:
             )
             if result.returncode != 0:
                 warnings.append("Some tests may have failed")
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            warnings.append("Could not run tests")
+        except subprocess.TimeoutExpired:
+            warnings.append("Tests timed out after 3 minutes")
+        except FileNotFoundError:
+            warnings.append("pytest not found - could not run tests")
+        except OSError as e:
+            logger.debug(f"Test run failed: {e}")
+            warnings.append("Could not run tests due to system error")
 
-        # Try syntax check
+        # Try syntax check - batch files to avoid "Argument list too long" errors
         try:
-            result = subprocess.run(
-                ["python", "-m", "py_compile"] + [str(p) for p in self.root.glob("**/*.py")],
-                cwd=self.root,
-                capture_output=True,
-            )
-            if result.returncode != 0:
+            py_files = list(self.root.glob("**/*.py"))
+            # Process in batches of 100 files to avoid command line length limits
+            batch_size = 100
+            syntax_failed = False
+            for i in range(0, len(py_files), batch_size):
+                batch = py_files[i:i + batch_size]
+                result = subprocess.run(
+                    ["python", "-m", "py_compile"] + [str(p) for p in batch],
+                    cwd=self.root,
+                    capture_output=True,
+                )
+                if result.returncode != 0:
+                    syntax_failed = True
+                    break
+            if syntax_failed:
                 errors.append("Syntax errors in Python files")
-        except Exception as e:
-            logger.debug(f"Syntax check skipped: {e}")
+        except FileNotFoundError:
+            logger.debug("Python not found - syntax check skipped")
+        except OSError as e:
+            logger.debug(f"Syntax check skipped due to OS error: {e}")
 
         return {"errors": errors, "warnings": warnings}
 
-    def _commit_changes(self, title: str, description: str):
-        """Commit changes with git."""
+    def _commit_changes(self, title: str, description: str) -> None:
+        """Commit changes with git.
+
+        Raises:
+            subprocess.CalledProcessError: If git add or commit fails.
+        """
         if not self.use_git:
             return
 
-        subprocess.run(["git", "add", "-A"], cwd=self.root)
-        subprocess.run(
-            ["git", "commit", "-m", f"{title}\n\n{description}\n\n[aragora auto-commit]"],
-            cwd=self.root,
-        )
+        try:
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"{title}\n\n{description}\n\n[aragora auto-commit]"],
+                cwd=self.root,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Git commit failed: {e.stderr.decode() if e.stderr else e}")
+            raise
 
     def rollback(self) -> bool:
         """Rollback last commit."""
@@ -552,7 +602,7 @@ class SelfImprover:
                     )
 
             except Exception as e:
-                logger.debug(f"[code] Failed to analyze {path}: {e}")
+                logger.debug(f"[code] Failed to analyze {py_file}: {e}")
                 continue
 
         return analysis

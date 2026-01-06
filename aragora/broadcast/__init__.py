@@ -60,10 +60,10 @@ async def broadcast_debate(
     if not segments:
         return None
 
-    # Create temp directory for intermediate files
-    temp_dir = Path(tempfile.mkdtemp(prefix="aragora_broadcast_"))
+    # Use TemporaryDirectory context manager for secure cleanup (prevents race conditions)
+    with tempfile.TemporaryDirectory(prefix="aragora_broadcast_") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
 
-    try:
         # Generate audio for each segment
         audio_files = await generate_audio(segments, temp_dir)
         if not audio_files:
@@ -80,9 +80,7 @@ async def broadcast_debate(
             success = mix_audio_with_ffmpeg(audio_files, output_path)
 
         return output_path if success else None
-    finally:
-        # Clean up temp directory to prevent disk exhaustion
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    # TemporaryDirectory auto-cleans on exit
 
 
 def broadcast_debate_sync(

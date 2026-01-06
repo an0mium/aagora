@@ -6,10 +6,13 @@ enabling resumption after crashes or interruptions.
 """
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .types import ImplementProgress
 
@@ -67,7 +70,7 @@ def load_progress(repo_path: Path) -> Optional[ImplementProgress]:
         return ImplementProgress.from_dict(data)
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         # Corrupted file - log and return None
-        print(f"Warning: Corrupted progress file, starting fresh: {e}")
+        logger.warning(f"Corrupted progress file, starting fresh: {e}")
         return None
 
 

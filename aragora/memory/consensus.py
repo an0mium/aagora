@@ -20,8 +20,14 @@ from enum import Enum
 from typing import Any, Optional
 import hashlib
 import json
+import logging
 import sqlite3
 import uuid
+
+from aragora.config import DB_CONSENSUS_PATH, DB_TIMEOUT_SECONDS
+from aragora.utils.json_helpers import safe_json_loads
+
+logger = logging.getLogger(__name__)
 
 
 class ConsensusStrength(Enum):
@@ -200,13 +206,13 @@ class ConsensusMemory:
     similarity search for finding related past debates.
     """
 
-    def __init__(self, db_path: str = "consensus_memory.db"):
+    def __init__(self, db_path: str = DB_CONSENSUS_PATH):
         self.db_path = db_path
         self._init_db()
 
     def _init_db(self):
         """Initialize database schema."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -303,7 +309,7 @@ class ConsensusMemory:
             metadata=metadata or {},
         )
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -355,7 +361,7 @@ class ConsensusMemory:
             metadata=metadata or {},
         )
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -383,7 +389,7 @@ class ConsensusMemory:
             )
             row = cursor.fetchone()
             if row:
-                consensus_data = json.loads(row[0])
+                consensus_data = safe_json_loads(row[0], {})
                 consensus_data["dissent_ids"] = consensus_data.get("dissent_ids", []) + [record.id]
                 cursor.execute(
                     "UPDATE consensus SET data = ? WHERE id = ?",
@@ -396,18 +402,20 @@ class ConsensusMemory:
 
     def get_consensus(self, consensus_id: str) -> Optional[ConsensusRecord]:
         """Get a consensus record by ID."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT data FROM consensus WHERE id = ?", (consensus_id,))
             row = cursor.fetchone()
 
         if row:
-            return ConsensusRecord.from_dict(json.loads(row[0]))
+            data = safe_json_loads(row[0], {})
+            if data:
+                return ConsensusRecord.from_dict(data)
         return None
 
     def get_dissents(self, debate_id: str) -> list[DissentRecord]:
         """Get all dissenting views for a debate."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT data FROM dissent WHERE debate_id = ?",
@@ -415,7 +423,12 @@ class ConsensusMemory:
             )
             rows = cursor.fetchall()
 
-        return [DissentRecord.from_dict(json.loads(row[0])) for row in rows]
+        results = []
+        for row in rows:
+            data = safe_json_loads(row[0], {})
+            if data:
+                results.append(DissentRecord.from_dict(data))
+        return results
 
     def find_similar_debates(
         self,
@@ -442,7 +455,7 @@ class ConsensusMemory:
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit * 3)  # Get more for filtering
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             rows = cursor.fetchall()
@@ -450,7 +463,10 @@ class ConsensusMemory:
         # Score similarity
         candidates = []
         for row in rows:
-            consensus = ConsensusRecord.from_dict(json.loads(row[0]))
+            data = safe_json_loads(row[0], {})
+            if not data:
+                continue
+            consensus = ConsensusRecord.from_dict(data)
 
             # Compute similarity (simple word overlap for now)
             consensus_words = set(consensus.topic.lower().split())
@@ -509,7 +525,7 @@ class ConsensusMemory:
     ) -> list[ConsensusRecord]:
         """Get consensus history for a domain."""
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -522,7 +538,12 @@ class ConsensusMemory:
             )
             rows = cursor.fetchall()
 
-        return [ConsensusRecord.from_dict(json.loads(row[0])) for row in rows]
+        results = []
+        for row in rows:
+            data = safe_json_loads(row[0], {})
+            if data:
+                results.append(ConsensusRecord.from_dict(data))
+        return results
 
     def supersede_consensus(
         self,
@@ -542,7 +563,7 @@ class ConsensusMemory:
         )
 
         # Update old record
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -552,7 +573,7 @@ class ConsensusMemory:
             row = cursor.fetchone()
 
             if row:
-                old_data = json.loads(row[0])
+                old_data = safe_json_loads(row[0], {})
                 old_data["superseded_by"] = new_record.id
                 cursor.execute(
                     "UPDATE consensus SET data = ? WHERE id = ?",
@@ -566,7 +587,7 @@ class ConsensusMemory:
     def get_statistics(self) -> dict[str, Any]:
         """Get statistics about stored consensus."""
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             stats = {}

@@ -11,16 +11,23 @@ Inspired by ChatArena's competitive environments, this module provides:
 import asyncio
 import uuid
 import json
+import logging
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Callable, Any
+from typing import Callable, Generator, Optional
 from enum import Enum
 import itertools
 
+logger = logging.getLogger(__name__)
+
 from aragora.core import Agent, DebateResult, Environment
 from aragora.ranking.elo import EloSystem
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 class TournamentFormat(Enum):
@@ -130,41 +137,49 @@ class Tournament:
 
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tournaments (
-                tournament_id TEXT PRIMARY KEY,
-                name TEXT,
-                format TEXT,
-                agents TEXT,
-                tasks TEXT,
-                standings TEXT,
-                champion TEXT,
-                started_at TEXT,
-                completed_at TEXT
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tournaments (
+                    tournament_id TEXT PRIMARY KEY,
+                    name TEXT,
+                    format TEXT,
+                    agents TEXT,
+                    tasks TEXT,
+                    standings TEXT,
+                    champion TEXT,
+                    started_at TEXT,
+                    completed_at TEXT
+                )
+            """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tournament_matches (
-                match_id TEXT PRIMARY KEY,
-                tournament_id TEXT,
-                round_num INTEGER,
-                participants TEXT,
-                task_id TEXT,
-                scores TEXT,
-                winner TEXT,
-                started_at TEXT,
-                completed_at TEXT
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tournament_matches (
+                    match_id TEXT PRIMARY KEY,
+                    tournament_id TEXT,
+                    round_num INTEGER,
+                    participants TEXT,
+                    task_id TEXT,
+                    scores TEXT,
+                    winner TEXT,
+                    started_at TEXT,
+                    completed_at TEXT
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def generate_matches(self) -> list[TournamentMatch]:
         """Generate match schedule based on tournament format."""
@@ -253,6 +268,8 @@ class Tournament:
     def _generate_swiss_round(self) -> list[TournamentMatch]:
         """Generate Swiss-system pairings based on current standings."""
         matches = []
+        if not self.tasks:
+            raise ValueError("Cannot generate Swiss round: no tasks configured")
         task = self.tasks[self.current_round % len(self.tasks)]
 
         # Sort agents by points
@@ -465,61 +482,60 @@ class Tournament:
 
     def _save_tournament(self, champion: str):
         """Save tournament to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Save tournament
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO tournaments
-            (tournament_id, name, format, agents, tasks, standings, champion, started_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                self.tournament_id,
-                self.name,
-                self.format.value,
-                json.dumps(self.agent_names),
-                json.dumps([{"id": t.task_id, "desc": t.description} for t in self.tasks]),
-                json.dumps({
-                    name: {
-                        "wins": s.wins,
-                        "losses": s.losses,
-                        "draws": s.draws,
-                        "points": s.points,
-                        "total_score": s.total_score,
-                    }
-                    for name, s in self.standings.items()
-                }),
-                champion,
-                self.started_at,
-                self.completed_at,
-            ),
-        )
-
-        # Save matches
-        for match in self.matches:
+            # Save tournament
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO tournament_matches
-                (match_id, tournament_id, round_num, participants, task_id, scores, winner, started_at, completed_at)
+                INSERT OR REPLACE INTO tournaments
+                (tournament_id, name, format, agents, tasks, standings, champion, started_at, completed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    match.match_id,
                     self.tournament_id,
-                    match.round_num,
-                    json.dumps(match.participants),
-                    match.task.task_id,
-                    json.dumps(match.scores),
-                    match.winner,
-                    match.started_at,
-                    match.completed_at,
+                    self.name,
+                    self.format.value,
+                    json.dumps(self.agent_names),
+                    json.dumps([{"id": t.task_id, "desc": t.description} for t in self.tasks]),
+                    json.dumps({
+                        name: {
+                            "wins": s.wins,
+                            "losses": s.losses,
+                            "draws": s.draws,
+                            "points": s.points,
+                            "total_score": s.total_score,
+                        }
+                        for name, s in self.standings.items()
+                    }),
+                    champion,
+                    self.started_at,
+                    self.completed_at,
                 ),
             )
 
-        conn.commit()
-        conn.close()
+            # Save matches
+            for match in self.matches:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO tournament_matches
+                    (match_id, tournament_id, round_num, participants, task_id, scores, winner, started_at, completed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        match.match_id,
+                        self.tournament_id,
+                        match.round_num,
+                        json.dumps(match.participants),
+                        match.task.task_id,
+                        json.dumps(match.scores),
+                        match.winner,
+                        match.started_at,
+                        match.completed_at,
+                    ),
+                )
+
+            conn.commit()
 
     def get_current_standings(self) -> list[TournamentStanding]:
         """Get current standings sorted by points."""
@@ -577,33 +593,41 @@ class TournamentManager:
         """Initialize tournament manager with database path."""
         self.db_path = Path(db_path)
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def get_tournament(self) -> Optional[dict]:
         """Get the tournament metadata."""
         if not self.db_path.exists():
             return None
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT tournament_id, name, format, champion, started_at, completed_at
-                FROM tournaments LIMIT 1
-            """)
-            row = cursor.fetchone()
-            conn.close()
+                cursor.execute("""
+                    SELECT tournament_id, name, format, champion, started_at, completed_at
+                    FROM tournaments LIMIT 1
+                """)
+                row = cursor.fetchone()
 
-            if not row:
-                return None
+                if not row:
+                    return None
 
-            return {
-                "tournament_id": row[0],
-                "name": row[1],
-                "format": row[2],
-                "champion": row[3],
-                "started_at": row[4],
-                "completed_at": row[5],
-            }
+                return {
+                    "tournament_id": row[0],
+                    "name": row[1],
+                    "format": row[2],
+                    "champion": row[3],
+                    "started_at": row[4],
+                    "completed_at": row[5],
+                }
         except (sqlite3.Error, Exception):
             return None
 
@@ -613,35 +637,34 @@ class TournamentManager:
             return []
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            cursor.execute("SELECT standings FROM tournaments LIMIT 1")
-            row = cursor.fetchone()
-            conn.close()
+                cursor.execute("SELECT standings FROM tournaments LIMIT 1")
+                row = cursor.fetchone()
 
-            if not row or not row[0]:
-                return []
+                if not row or not row[0]:
+                    return []
 
-            standings_json = json.loads(row[0])
+                standings_json = json.loads(row[0])
 
-            # Convert to list of TournamentStanding objects
-            standings = []
-            for agent_name, stats in standings_json.items():
-                standing = TournamentStanding(
-                    agent_name=agent_name,
-                    wins=stats.get("wins", 0),
-                    losses=stats.get("losses", 0),
-                    draws=stats.get("draws", 0),
-                    points=stats.get("points", 0.0),
-                    total_score=stats.get("total_score", 0.0),
-                    matches_played=stats.get("wins", 0) + stats.get("losses", 0) + stats.get("draws", 0),
-                )
-                standings.append(standing)
+                # Convert to list of TournamentStanding objects
+                standings = []
+                for agent_name, stats in standings_json.items():
+                    standing = TournamentStanding(
+                        agent_name=agent_name,
+                        wins=stats.get("wins", 0),
+                        losses=stats.get("losses", 0),
+                        draws=stats.get("draws", 0),
+                        points=stats.get("points", 0.0),
+                        total_score=stats.get("total_score", 0.0),
+                        matches_played=stats.get("wins", 0) + stats.get("losses", 0) + stats.get("draws", 0),
+                    )
+                    standings.append(standing)
 
-            # Sort by points and total_score (descending)
-            standings.sort(key=lambda s: (s.points, s.total_score), reverse=True)
-            return standings
+                # Sort by points and total_score (descending)
+                standings.sort(key=lambda s: (s.points, s.total_score), reverse=True)
+                return standings
         except (sqlite3.Error, json.JSONDecodeError, Exception):
             return []
 
@@ -651,41 +674,40 @@ class TournamentManager:
             return []
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            if limit:
-                cursor.execute("""
-                    SELECT match_id, round_num, participants, task_id, scores, winner,
-                           started_at, completed_at
-                    FROM tournament_matches
-                    ORDER BY round_num DESC, match_id DESC
-                    LIMIT ?
-                """, (limit,))
-            else:
-                cursor.execute("""
-                    SELECT match_id, round_num, participants, task_id, scores, winner,
-                           started_at, completed_at
-                    FROM tournament_matches
-                    ORDER BY round_num DESC, match_id DESC
-                """)
+                if limit:
+                    cursor.execute("""
+                        SELECT match_id, round_num, participants, task_id, scores, winner,
+                               started_at, completed_at
+                        FROM tournament_matches
+                        ORDER BY round_num DESC, match_id DESC
+                        LIMIT ?
+                    """, (limit,))
+                else:
+                    cursor.execute("""
+                        SELECT match_id, round_num, participants, task_id, scores, winner,
+                               started_at, completed_at
+                        FROM tournament_matches
+                        ORDER BY round_num DESC, match_id DESC
+                    """)
 
-            matches = []
-            for row in cursor.fetchall():
-                match_data = {
-                    "match_id": row[0],
-                    "round_num": row[1],
-                    "participants": json.loads(row[2]) if row[2] else [],
-                    "task_id": row[3],
-                    "scores": json.loads(row[4]) if row[4] else {},
-                    "winner": row[5],
-                    "started_at": row[6],
-                    "completed_at": row[7],
-                }
-                matches.append(match_data)
+                matches = []
+                for row in cursor.fetchall():
+                    match_data = {
+                        "match_id": row[0],
+                        "round_num": row[1],
+                        "participants": json.loads(row[2]) if row[2] else [],
+                        "task_id": row[3],
+                        "scores": json.loads(row[4]) if row[4] else {},
+                        "winner": row[5],
+                        "started_at": row[6],
+                        "completed_at": row[7],
+                    }
+                    matches.append(match_data)
 
-            conn.close()
-            return matches
+                return matches
         except (sqlite3.Error, json.JSONDecodeError, Exception):
             return []
 
@@ -695,23 +717,22 @@ class TournamentManager:
             return {"total_matches": 0, "decided_matches": 0, "max_round": 0}
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT
-                    COUNT(*) as total_matches,
-                    SUM(CASE WHEN winner IS NOT NULL THEN 1 ELSE 0 END) as decided_matches,
-                    MAX(round_num) as max_round
-                FROM tournament_matches
-            """)
-            row = cursor.fetchone()
-            conn.close()
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_matches,
+                        SUM(CASE WHEN winner IS NOT NULL THEN 1 ELSE 0 END) as decided_matches,
+                        MAX(round_num) as max_round
+                    FROM tournament_matches
+                """)
+                row = cursor.fetchone()
 
-            return {
-                "total_matches": row[0] or 0,
-                "decided_matches": row[1] or 0,
-                "max_round": row[2] or 0,
-            }
+                return {
+                    "total_matches": row[0] or 0,
+                    "decided_matches": row[1] or 0,
+                    "max_round": row[2] or 0,
+                }
         except (sqlite3.Error, Exception):
             return {"total_matches": 0, "decided_matches": 0, "max_round": 0}

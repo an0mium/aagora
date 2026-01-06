@@ -7,6 +7,7 @@ results back into the parent debate.
 """
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,6 +18,8 @@ from aragora.debate.orchestrator import Arena, DebateProtocol
 from aragora.debate.consensus import UnresolvedTension, ConsensusProof
 from aragora.genesis.genome import AgentGenome, GenomeStore
 from aragora.genesis.breeding import GenomeBreeder, PopulationManager, Population
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -278,9 +281,9 @@ class FractalOrchestrator:
                 if hasattr(agent, 'system_prompt'):
                     agent.system_prompt = f"{agent.system_prompt}\n\n{context}"
                 specialist_agents.append(agent)
-            except Exception:
+            except Exception as e:
                 # Fall back to generic agents if creation fails
-                pass
+                logger.debug(f"Failed to create specialist agent {genome.name}: {e}")
 
         # If no specialists, use agents from population
         if not specialist_agents:
@@ -293,8 +296,8 @@ class FractalOrchestrator:
                         role="proposer",
                     )
                     specialist_agents.append(agent)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to create agent from genome {genome.name}: {e}")
 
         # Build focused task from tension
         focused_task = self._build_sub_task(tension)

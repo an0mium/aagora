@@ -12,11 +12,73 @@ import json
 import logging
 import os
 import struct
+import time
 from pathlib import Path
 from typing import Optional
 import sqlite3
 
+from aragora.config import DB_TIMEOUT_SECONDS, get_api_key
+
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingCache:
+    """Simple async-compatible TTL cache for embeddings."""
+
+    def __init__(self, ttl_seconds: float = 3600, max_size: int = 1000):
+        self._cache: dict[str, tuple[float, list[float]]] = {}
+        self._ttl = ttl_seconds
+        self._max_size = max_size
+
+    def _make_key(self, text: str) -> str:
+        """Generate cache key from text."""
+        return hashlib.md5(text.lower().strip().encode()).hexdigest()
+
+    def get(self, text: str) -> Optional[list[float]]:
+        """Get cached embedding if valid."""
+        key = self._make_key(text)
+        if key in self._cache:
+            timestamp, embedding = self._cache[key]
+            if time.time() - timestamp < self._ttl:
+                return embedding
+            # Expired - remove
+            del self._cache[key]
+        return None
+
+    def set(self, text: str, embedding: list[float]) -> None:
+        """Cache an embedding."""
+        # Evict oldest entries if at capacity
+        if len(self._cache) >= self._max_size:
+            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][0])
+            del self._cache[oldest_key]
+        key = self._make_key(text)
+        self._cache[key] = (time.time(), embedding)
+
+    def stats(self) -> dict:
+        """Get cache statistics."""
+        now = time.time()
+        valid = sum(1 for ts, _ in self._cache.values() if now - ts < self._ttl)
+        return {"size": len(self._cache), "valid": valid, "ttl_seconds": self._ttl}
+
+
+# Global embedding cache (shared across providers)
+_embedding_cache = EmbeddingCache(ttl_seconds=3600, max_size=1000)
+
+# Default API timeout
+_API_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+async def _retry_with_backoff(coro_fn, max_retries=3, base_delay=1.0):
+    """Retry async function with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return await coro_fn()
+        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+            if attempt == max_retries - 1:
+                raise
+            delay = base_delay * (2 ** attempt)
+            logger.warning(f"API call failed (attempt {attempt + 1}), retrying in {delay}s: {e}")
+            await asyncio.sleep(delay)
 
 
 class EmbeddingProvider:
@@ -50,94 +112,120 @@ class EmbeddingProvider:
 class OpenAIEmbedding(EmbeddingProvider):
     """OpenAI text-embedding-3-small embeddings."""
 
-    def __init__(self, api_key: str = None, model: str = "text-embedding-3-small"):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+    def __init__(self, api_key: str | None = None, model: str = "text-embedding-3-small"):
+        self.api_key = api_key or get_api_key("OPENAI_API_KEY")
         self.model = model
         self.dimension = 1536  # text-embedding-3-small
 
     async def embed(self, text: str) -> list[float]:
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY required for OpenAI embeddings")
+        # Check cache first
+        cached = _embedding_cache.get(text)
+        if cached is not None:
+            logger.debug("Embedding cache hit for OpenAI")
+            return cached
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.openai.com/v1/embeddings",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"model": self.model, "input": text},
-            ) as response:
-                if response.status != 200:
-                    raise RuntimeError(f"OpenAI embedding error: {await response.text()}")
-                data = await response.json()
-                return data["data"][0]["embedding"]
+        async def _call():
+            async with aiohttp.ClientSession(timeout=_API_TIMEOUT) as session:
+                async with session.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"model": self.model, "input": text},
+                ) as response:
+                    if response.status == 429:
+                        raise aiohttp.ClientError("Rate limited")
+                    if response.status != 200:
+                        raise RuntimeError(f"OpenAI embedding error: {await response.text()}")
+                    data = await response.json()
+                    return data["data"][0]["embedding"]
+
+        embedding = await _retry_with_backoff(_call)
+        _embedding_cache.set(text, embedding)
+        return embedding
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY required for OpenAI embeddings")
+        async def _call():
+            async with aiohttp.ClientSession(timeout=_API_TIMEOUT) as session:
+                async with session.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"model": self.model, "input": texts},
+                ) as response:
+                    if response.status == 429:
+                        raise aiohttp.ClientError("Rate limited")
+                    if response.status != 200:
+                        raise RuntimeError(f"OpenAI embedding error: {await response.text()}")
+                    data = await response.json()
+                    return [d["embedding"] for d in sorted(data["data"], key=lambda x: x["index"])]
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.openai.com/v1/embeddings",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"model": self.model, "input": texts},
-            ) as response:
-                if response.status != 200:
-                    raise RuntimeError(f"OpenAI embedding error: {await response.text()}")
-                data = await response.json()
-                return [d["embedding"] for d in sorted(data["data"], key=lambda x: x["index"])]
+        return await _retry_with_backoff(_call)
 
 
 class GeminiEmbedding(EmbeddingProvider):
     """Google Gemini embeddings."""
 
-    def __init__(self, api_key: str = None, model: str = "text-embedding-004"):
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    def __init__(self, api_key: str | None = None, model: str = "text-embedding-004"):
+        self.api_key = api_key or get_api_key("GEMINI_API_KEY", "GOOGLE_API_KEY")
         self.model = model
         self.dimension = 768
 
     async def embed(self, text: str) -> list[float]:
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY required for Gemini embeddings")
+        # Check cache first
+        cached = _embedding_cache.get(text)
+        if cached is not None:
+            logger.debug("Embedding cache hit for Gemini")
+            return cached
 
         # Use header-based auth instead of URL parameter (security best practice)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent"
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
-                json={"content": {"parts": [{"text": text}]}},
-            ) as response:
-                if response.status != 200:
-                    raise RuntimeError(f"Gemini embedding error: {await response.text()}")
-                data = await response.json()
-                return data["embedding"]["values"]
+        async def _call():
+            async with aiohttp.ClientSession(timeout=_API_TIMEOUT) as session:
+                async with session.post(
+                    url,
+                    headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+                    json={"content": {"parts": [{"text": text}]}},
+                ) as response:
+                    if response.status == 429:
+                        raise aiohttp.ClientError("Rate limited")
+                    if response.status != 200:
+                        raise RuntimeError(f"Gemini embedding error: {await response.text()}")
+                    data = await response.json()
+                    return data["embedding"]["values"]
+
+        embedding = await _retry_with_backoff(_call)
+        _embedding_cache.set(text, embedding)
+        return embedding
 
 
 class OllamaEmbedding(EmbeddingProvider):
     """Local Ollama embeddings."""
 
-    def __init__(self, model: str = "nomic-embed-text", base_url: str = None):
+    def __init__(self, model: str = "nomic-embed-text", base_url: str | None = None):
         self.model = model
         self.base_url = base_url or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.dimension = 768  # nomic-embed-text
 
     async def embed(self, text: str) -> list[float]:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=_API_TIMEOUT) as session:
             try:
                 async with session.post(
                     f"{self.base_url}/api/embeddings",
                     json={"model": self.model, "prompt": text},
                 ) as response:
                     if response.status != 200:
-                        raise RuntimeError(f"Ollama embedding error: {await response.text()}")
-                    data = await response.json()
-                    return data["embedding"]
+                        error_text = await response.text()
+                        raise RuntimeError(f"Ollama embedding error: {error_text}")
+                    try:
+                        data = await response.json()
+                        return data["embedding"]
+                    except (json.JSONDecodeError, KeyError) as e:
+                        raise RuntimeError(f"Invalid Ollama response format: {e}")
             except aiohttp.ClientConnectorError:
                 raise RuntimeError(
                     f"Cannot connect to Ollama at {self.base_url}. "
@@ -199,17 +287,23 @@ class SemanticRetriever:
                 ollama = OllamaEmbedding()
                 # Quick connectivity check (non-blocking)
                 host = ollama.base_url.replace("http://", "").replace("https://", "")
+                port = 11434  # Default Ollama port
                 if ":" in host:
-                    host, port = host.split(":")
-                    port = int(port)
-                else:
-                    port = 11434
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.5)
-                result = sock.connect_ex((host, port))
-                sock.close()
-                if result == 0:
-                    return ollama
+                    # Handle host:port format (use rsplit to handle IPv6 or malformed URLs)
+                    parts = host.rsplit(":", 1)
+                    if len(parts) == 2:
+                        host = parts[0]
+                        try:
+                            port = int(parts[1])
+                        except ValueError:
+                            logger.debug(f"Invalid port in Ollama URL: {parts[1]}, using default")
+                            port = 11434
+                # Use context manager to guarantee socket cleanup in all code paths
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(0.5)
+                    result = sock.connect_ex((host, port))
+                    if result == 0:
+                        return ollama
             except Exception as e:
                 logger.debug(f"Failed to connect to Ollama: {e}")
             # Fall back to hash-based embeddings (always works, no API needed)
@@ -217,7 +311,7 @@ class SemanticRetriever:
 
     def _init_tables(self):
         """Initialize embedding tables."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -243,7 +337,7 @@ class SemanticRetriever:
         """Embed text and store in database."""
         text_hash = self._text_hash(text)
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Check if already embedded
@@ -281,7 +375,7 @@ class SemanticRetriever:
         """
         query_embedding = await self.provider.embed(query)
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute("SELECT id, text, embedding FROM embeddings")
@@ -305,7 +399,7 @@ class SemanticRetriever:
 
     def get_stats(self) -> dict:
         """Get embedding statistics."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute("SELECT COUNT(*) FROM embeddings")
@@ -318,3 +412,8 @@ class SemanticRetriever:
             "total_embeddings": total,
             "by_provider": by_provider,
         }
+
+
+def get_embedding_cache_stats() -> dict:
+    """Get global embedding cache statistics."""
+    return _embedding_cache.stats()

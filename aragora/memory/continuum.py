@@ -16,18 +16,26 @@ Key concepts:
 """
 
 import json
+import logging
 import math
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+logger = logging.getLogger(__name__)
+
+from aragora.config import DB_MEMORY_PATH
 from aragora.storage.schema import SchemaManager, get_wal_connection
+from aragora.utils.json_helpers import safe_json_loads
 
 # Schema version for ContinuumMemory
-CONTINUUM_SCHEMA_VERSION = 1
+CONTINUUM_SCHEMA_VERSION = 2
+
+# Default retention multiplier (entries older than multiplier * half_life are eligible for cleanup)
+DEFAULT_RETENTION_MULTIPLIER = 2.0
 
 
 class MemoryTier(Enum):
@@ -157,7 +165,7 @@ class ContinuumMemory:
         cms.consolidate()
     """
 
-    def __init__(self, db_path: str = "aragora_memory.db"):
+    def __init__(self, db_path: str = DB_MEMORY_PATH):
         self.db_path = Path(db_path)
         self._init_db()
         # Hyperparameters (can be modified by MetaLearner)
@@ -168,6 +176,14 @@ class ContinuumMemory:
             "surprise_weight_agent": 0.2,    # Weight for agent prediction error
             "consolidation_threshold": 100,   # Updates to reach full consolidation
             "promotion_cooldown_hours": 24,   # Minimum time between promotions
+            # Retention policy settings
+            "max_entries_per_tier": {
+                "fast": 1000,
+                "medium": 5000,
+                "slow": 10000,
+                "glacial": 50000,
+            },
+            "retention_multiplier": DEFAULT_RETENTION_MULTIPLIER,  # multiplier * half_life for cleanup
         }
 
     def _init_db(self):
@@ -224,7 +240,42 @@ class ContinuumMemory:
                 );
             """
 
+            # Register v2 migration: Add retention policy support
+            manager.register_migration(
+                from_version=1,
+                to_version=2,
+                sql="""
+                    -- Archive table for deleted memories
+                    CREATE TABLE IF NOT EXISTS continuum_memory_archive (
+                        id TEXT PRIMARY KEY,
+                        tier TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        importance REAL,
+                        surprise_score REAL,
+                        consolidation_score REAL,
+                        update_count INTEGER,
+                        success_count INTEGER,
+                        failure_count INTEGER,
+                        semantic_centroid BLOB,
+                        created_at TEXT,
+                        updated_at TEXT,
+                        archived_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        archive_reason TEXT,
+                        metadata TEXT
+                    );
+
+                    -- Indexes for archive queries
+                    CREATE INDEX IF NOT EXISTS idx_archive_tier ON continuum_memory_archive(tier);
+                    CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON continuum_memory_archive(archived_at);
+                """,
+                description="Add retention policy support with archive table",
+            )
+
             manager.ensure_schema(initial_schema=initial_schema)
+
+            # Add expires_at column using safe_add_column (handles existing DBs)
+            from aragora.storage.schema import safe_add_column
+            safe_add_column(conn, "continuum_memory", "expires_at", "TEXT")
 
     def add(
         self,
@@ -307,7 +358,7 @@ class ContinuumMemory:
             failure_count=row[8],
             created_at=row[9],
             updated_at=row[10],
-            metadata=json.loads(row[11]) if row[11] else {},
+            metadata=safe_json_loads(row[11], {}),
         )
 
     def retrieve(
@@ -387,7 +438,7 @@ class ContinuumMemory:
                 failure_count=row[8],
                 created_at=row[9],
                 updated_at=row[10],
-                metadata=json.loads(row[11]) if row[11] else {},
+                metadata=safe_json_loads(row[11], {}),
             )
 
             # Simple keyword relevance filter if query provided
@@ -415,6 +466,9 @@ class ContinuumMemory:
         This implements surprise-based learning: the surprise score is
         updated based on how unexpected the outcome was.
 
+        Uses BEGIN IMMEDIATE to prevent race conditions by acquiring
+        a write lock before reading the current state.
+
         Args:
             id: Memory ID
             success: Whether the pattern led to success
@@ -426,76 +480,85 @@ class ContinuumMemory:
         with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
-            # Get current state
-            cursor.execute(
-                """
-                SELECT success_count, failure_count, surprise_score, tier
-                FROM continuum_memory WHERE id = ?
-                """,
-                (id,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return 0.0
+            # Use BEGIN IMMEDIATE to acquire write lock before reading
+            # This prevents race conditions in read-modify-write operations
+            cursor.execute("BEGIN IMMEDIATE")
 
-            success_count, failure_count, old_surprise, tier = row
-            total = success_count + failure_count
-
-            # Calculate expected success rate (base rate)
-            expected_rate = success_count / total if total > 0 else 0.5
-
-            # Actual outcome
-            actual = 1.0 if success else 0.0
-
-            # Success rate surprise component
-            success_surprise = abs(actual - expected_rate)
-
-            # Combine surprise signals
-            weights = self.hyperparams
-            new_surprise = (
-                weights["surprise_weight_success"] * success_surprise +
-                weights["surprise_weight_agent"] * (agent_prediction_error or 0.0)
-            )
-
-            # Exponential moving average for surprise
-            alpha = 0.3
-            updated_surprise = old_surprise * (1 - alpha) + new_surprise * alpha
-
-            # Update consolidation score
-            update_count = total + 1
-            consolidation = min(1.0, math.log(1 + update_count) / math.log(
-                self.hyperparams["consolidation_threshold"]
-            ))
-
-            # Update database
-            if success:
+            try:
+                # Get current state (now protected by write lock)
                 cursor.execute(
                     """
-                    UPDATE continuum_memory
-                    SET success_count = success_count + 1,
-                        update_count = update_count + 1,
-                        surprise_score = ?,
-                        consolidation_score = ?,
-                        updated_at = ?
-                    WHERE id = ?
+                    SELECT success_count, failure_count, surprise_score, tier
+                    FROM continuum_memory WHERE id = ?
                     """,
-                    (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                    (id,),
                 )
-            else:
-                cursor.execute(
-                    """
-                    UPDATE continuum_memory
-                    SET failure_count = failure_count + 1,
-                        update_count = update_count + 1,
-                        surprise_score = ?,
-                        consolidation_score = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                row = cursor.fetchone()
+                if not row:
+                    cursor.execute("ROLLBACK")
+                    return 0.0
+
+                success_count, failure_count, old_surprise, tier = row
+                total = success_count + failure_count
+
+                # Calculate expected success rate (base rate)
+                expected_rate = success_count / total if total > 0 else 0.5
+
+                # Actual outcome
+                actual = 1.0 if success else 0.0
+
+                # Success rate surprise component
+                success_surprise = abs(actual - expected_rate)
+
+                # Combine surprise signals
+                weights = self.hyperparams
+                new_surprise = (
+                    weights["surprise_weight_success"] * success_surprise +
+                    weights["surprise_weight_agent"] * (agent_prediction_error or 0.0)
                 )
 
-            conn.commit()
+                # Exponential moving average for surprise
+                alpha = 0.3
+                updated_surprise = old_surprise * (1 - alpha) + new_surprise * alpha
+
+                # Update consolidation score
+                update_count = total + 1
+                consolidation = min(1.0, math.log(1 + update_count) / math.log(
+                    self.hyperparams["consolidation_threshold"]
+                ))
+
+                # Update database
+                if success:
+                    cursor.execute(
+                        """
+                        UPDATE continuum_memory
+                        SET success_count = success_count + 1,
+                            update_count = update_count + 1,
+                            surprise_score = ?,
+                            consolidation_score = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE continuum_memory
+                        SET failure_count = failure_count + 1,
+                            update_count = update_count + 1,
+                            surprise_score = ?,
+                            consolidation_score = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (updated_surprise, consolidation, datetime.now().isoformat(), id),
+                    )
+
+                cursor.execute("COMMIT")
+            except Exception:
+                cursor.execute("ROLLBACK")
+                raise
 
         return updated_surprise
 
@@ -733,3 +796,219 @@ class ContinuumMemory:
             }
             for e in entries
         ]
+
+    def cleanup_expired_memories(
+        self,
+        tier: Optional[MemoryTier] = None,
+        archive: bool = True,
+        max_age_hours: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Remove or archive expired memories based on tier retention policies.
+
+        Memories are considered expired when they are older than:
+        tier_half_life * retention_multiplier (default 2x)
+
+        Args:
+            tier: Specific tier to cleanup (None = all tiers)
+            archive: If True, move to archive table; if False, delete permanently
+            max_age_hours: Override default retention (uses tier half-life * multiplier if None)
+
+        Returns:
+            Dict with counts: {"archived": N, "deleted": N, "by_tier": {...}}
+        """
+        results: Dict[str, Any] = {"archived": 0, "deleted": 0, "by_tier": {}}
+        tiers_to_process = [tier] if tier else list(MemoryTier)
+        retention_multiplier = self.hyperparams.get("retention_multiplier", DEFAULT_RETENTION_MULTIPLIER)
+
+        with get_wal_connection(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            for t in tiers_to_process:
+                config = TIER_CONFIGS[t]
+                tier_name = t.value
+
+                # Calculate cutoff time
+                if max_age_hours is not None:
+                    retention_hours = max_age_hours
+                else:
+                    retention_hours = config.half_life_hours * retention_multiplier
+
+                cutoff = datetime.now() - timedelta(hours=retention_hours)
+                cutoff_str = cutoff.isoformat()
+
+                if archive:
+                    # Archive expired entries
+                    cursor.execute(
+                        """
+                        INSERT INTO continuum_memory_archive
+                            (id, tier, content, importance, surprise_score,
+                             consolidation_score, update_count, success_count,
+                             failure_count, semantic_centroid, created_at,
+                             updated_at, archive_reason, metadata)
+                        SELECT id, tier, content, importance, surprise_score,
+                               consolidation_score, update_count, success_count,
+                               failure_count, semantic_centroid, created_at,
+                               updated_at, 'expired', metadata
+                        FROM continuum_memory
+                        WHERE tier = ?
+                          AND datetime(updated_at) < datetime(?)
+                        """,
+                        (tier_name, cutoff_str),
+                    )
+                    archived_count = cursor.rowcount
+                else:
+                    archived_count = 0
+
+                # Delete from main table
+                cursor.execute(
+                    """
+                    DELETE FROM continuum_memory
+                    WHERE tier = ?
+                      AND datetime(updated_at) < datetime(?)
+                    """,
+                    (tier_name, cutoff_str),
+                )
+                deleted_count = cursor.rowcount
+
+                results["by_tier"][tier_name] = {
+                    "archived": archived_count if archive else 0,
+                    "deleted": deleted_count,
+                    "cutoff_hours": retention_hours,
+                }
+                results["archived"] += archived_count if archive else 0
+                results["deleted"] += deleted_count
+
+            conn.commit()
+
+        logger.info(
+            "Memory cleanup: archived=%d, deleted=%d",
+            results["archived"],
+            results["deleted"],
+        )
+        return results
+
+    def enforce_tier_limits(
+        self,
+        tier: Optional[MemoryTier] = None,
+        archive: bool = True,
+    ) -> Dict[str, int]:
+        """
+        Enforce max entries per tier by removing lowest importance entries.
+
+        When a tier exceeds its limit, the lowest importance entries are
+        archived (or deleted) until the tier is within limits.
+
+        Args:
+            tier: Specific tier to enforce (None = all tiers)
+            archive: If True, archive excess; if False, delete permanently
+
+        Returns:
+            Dict with counts of removed entries by tier
+        """
+        results: Dict[str, int] = {}
+        tiers_to_process = [tier] if tier else list(MemoryTier)
+        max_entries = self.hyperparams.get("max_entries_per_tier", {})
+
+        with get_wal_connection(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            for t in tiers_to_process:
+                tier_name = t.value
+                limit = max_entries.get(tier_name, 10000)
+
+                # Count current entries
+                cursor.execute(
+                    "SELECT COUNT(*) FROM continuum_memory WHERE tier = ?",
+                    (tier_name,),
+                )
+                count = cursor.fetchone()[0]
+
+                if count <= limit:
+                    results[tier_name] = 0
+                    continue
+
+                excess = count - limit
+
+                if archive:
+                    # Archive lowest importance entries
+                    cursor.execute(
+                        """
+                        INSERT INTO continuum_memory_archive
+                            (id, tier, content, importance, surprise_score,
+                             consolidation_score, update_count, success_count,
+                             failure_count, semantic_centroid, created_at,
+                             updated_at, archive_reason, metadata)
+                        SELECT id, tier, content, importance, surprise_score,
+                               consolidation_score, update_count, success_count,
+                               failure_count, semantic_centroid, created_at,
+                               updated_at, 'tier_limit', metadata
+                        FROM continuum_memory
+                        WHERE tier = ?
+                        ORDER BY importance ASC, updated_at ASC
+                        LIMIT ?
+                        """,
+                        (tier_name, excess),
+                    )
+
+                # Delete excess entries (lowest importance first)
+                cursor.execute(
+                    """
+                    DELETE FROM continuum_memory
+                    WHERE id IN (
+                        SELECT id FROM continuum_memory
+                        WHERE tier = ?
+                        ORDER BY importance ASC, updated_at ASC
+                        LIMIT ?
+                    )
+                    """,
+                    (tier_name, excess),
+                )
+
+                results[tier_name] = cursor.rowcount
+                logger.info(
+                    "Tier limit enforced: tier=%s, removed=%d (limit=%d)",
+                    tier_name,
+                    cursor.rowcount,
+                    limit,
+                )
+
+            conn.commit()
+
+        return results
+
+    def get_archive_stats(self) -> Dict[str, Any]:
+        """Get statistics about archived memories."""
+        with get_wal_connection(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            stats: Dict[str, Any] = {}
+
+            # Count by tier and reason
+            cursor.execute("""
+                SELECT tier, archive_reason, COUNT(*)
+                FROM continuum_memory_archive
+                GROUP BY tier, archive_reason
+            """)
+            by_tier_reason = {}
+            for row in cursor.fetchall():
+                tier, reason, count = row
+                if tier not in by_tier_reason:
+                    by_tier_reason[tier] = {}
+                by_tier_reason[tier][reason or "unknown"] = count
+            stats["by_tier_reason"] = by_tier_reason
+
+            # Total archived
+            cursor.execute("SELECT COUNT(*) FROM continuum_memory_archive")
+            stats["total_archived"] = cursor.fetchone()[0]
+
+            # Oldest and newest archived
+            cursor.execute("""
+                SELECT MIN(archived_at), MAX(archived_at)
+                FROM continuum_memory_archive
+            """)
+            row = cursor.fetchone()
+            stats["oldest_archived"] = row[0]
+            stats["newest_archived"] = row[1]
+
+        return stats

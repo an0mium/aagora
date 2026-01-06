@@ -111,7 +111,7 @@ class PulseIngestor(ABC):
     @abstractmethod
     async def fetch_trending(self, limit: int = 10) -> List[TrendingTopic]:
         """Fetch trending topics from the platform."""
-        pass
+        raise NotImplementedError("Subclasses must implement fetch_trending method")
 
     def _filter_content(self, topics: List[TrendingTopic], filters: Dict[str, Any]) -> List[TrendingTopic]:
         """Apply content filters to remove harmful/inappropriate content."""
@@ -448,12 +448,13 @@ class PulseManager:
                     all_topics.extend(result)
 
         # Apply global filters
-        if filters:
+        if filters and platforms:
             all_topics = self.ingestors.get(platforms[0], TwitterIngestor())._filter_content(all_topics, filters)
 
         # Sort by volume and return top topics
         all_topics.sort(key=lambda t: t.volume, reverse=True)
-        return all_topics[:limit_per_platform * len(platforms)]
+        max_results = limit_per_platform * len(platforms) if platforms else limit_per_platform
+        return all_topics[:max_results]
 
     def select_topic_for_debate(self, topics: List[TrendingTopic]) -> Optional[TrendingTopic]:
         """Select the most suitable topic for debate."""

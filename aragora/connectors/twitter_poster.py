@@ -160,6 +160,19 @@ class TwitterPosterConnector:
         self.rate_limiter = TwitterRateLimiter()
         self.circuit_breaker = CircuitBreaker()
 
+        # Log warning if credentials incomplete
+        if not all([self.api_key, self.api_secret, self.access_token, self.access_secret]):
+            missing = []
+            if not self.api_key:
+                missing.append("TWITTER_API_KEY")
+            if not self.api_secret:
+                missing.append("TWITTER_API_SECRET")
+            if not self.access_token:
+                missing.append("TWITTER_ACCESS_TOKEN")
+            if not self.access_secret:
+                missing.append("TWITTER_ACCESS_SECRET")
+            logger.warning(f"Twitter credentials incomplete. Missing: {', '.join(missing)}. Posts will fail.")
+
     @property
     def is_configured(self) -> bool:
         """Check if Twitter credentials are configured."""

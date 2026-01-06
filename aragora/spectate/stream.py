@@ -6,6 +6,7 @@ the internal state of the debate in real-time to the terminal (stdout).
 Safe for TTY, encoding, and NO_COLOR environments.
 """
 
+import logging
 import os
 import sys
 import time
@@ -13,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Optional, TextIO
 
 from .events import SpectatorEvents, EVENT_STYLES, EVENT_ASCII
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,9 +92,10 @@ class SpectatorStream:
                 self._emit_json(event_type, agent, details, metric, round_number)
             else:
                 self._emit_text(event_type, agent, details, metric, round_number)
-        except Exception:
+        except Exception as e:
             # Never let spectator errors propagate to debate logic
-            pass
+            # Log at debug level for troubleshooting
+            logger.debug(f"Spectator emit failed (non-fatal): {e}")
 
     def _emit_json(
         self,

@@ -331,7 +331,7 @@ class RedTeamMode:
             mitigated_issues=mitigated,
             accepted_risks=[],
             robustness_score=robustness,
-            coverage_score=len(set(a.attack_type for a in all_attacks)) / len(AttackType),
+            coverage_score=len(set(a.attack_type for a in all_attacks)) / len(AttackType) if len(AttackType) > 0 else 0.0,
         )
 
     def _parse_attacks(

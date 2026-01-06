@@ -9,13 +9,17 @@ Provides:
 import json
 import random
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 
 from aragora.agents.personas import EXPERTISE_DOMAINS, PERSONALITY_TRAITS
 from aragora.genesis.genome import AgentGenome, GenomeStore, generate_genome_id
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -230,8 +234,10 @@ class GenomeBreeder:
         if len(sorted_parents) >= 2:
             parent_a, parent_b = sorted_parents[0], sorted_parents[1]
             child = self.crossover(parent_a, parent_b, debate_id=debate_id)
-        else:
+        elif sorted_parents:
             child = self.mutate(sorted_parents[0])
+        else:
+            raise ValueError("Cannot create domain specialist: no parents in pool")
 
         # Boost target domain expertise
         child.expertise[domain] = min(1.0, child.expertise.get(domain, 0.5) + 0.3)
@@ -350,30 +356,38 @@ class PopulationManager:
         self.breeder = GenomeBreeder()
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Initialize population tables."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS populations (
-                population_id TEXT PRIMARY KEY,
-                genome_ids TEXT,
-                generation INTEGER DEFAULT 0,
-                created_at TEXT,
-                debate_history TEXT
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS populations (
+                    population_id TEXT PRIMARY KEY,
+                    genome_ids TEXT,
+                    generation INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    debate_history TEXT
+                )
+            """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS active_population (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                population_id TEXT
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_population (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    population_id TEXT
+                )
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_or_create_population(self,
                                   base_agents: list[str],
@@ -506,40 +520,37 @@ class PopulationManager:
 
     def _get_active_population_id(self) -> Optional[str]:
         """Get the currently active population ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT population_id FROM active_population WHERE id = 1")
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute("SELECT population_id FROM active_population WHERE id = 1")
+            row = cursor.fetchone()
 
         return row[0] if row else None
 
     def _set_active_population(self, population_id: str) -> None:
         """Set the active population."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO active_population (id, population_id)
-            VALUES (1, ?)
-            ON CONFLICT(id) DO UPDATE SET population_id = excluded.population_id
-        """, (population_id,))
+            cursor.execute("""
+                INSERT INTO active_population (id, population_id)
+                VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET population_id = excluded.population_id
+            """, (population_id,))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def _load_population(self, population_id: str) -> Optional[Population]:
         """Load a population from database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT * FROM populations WHERE population_id = ?",
-            (population_id,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                "SELECT * FROM populations WHERE population_id = ?",
+                (population_id,)
+            )
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -558,25 +569,24 @@ class PopulationManager:
 
     def _save_population(self, population: Population) -> None:
         """Save a population to database."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        genome_ids = [g.genome_id for g in population.genomes]
+            genome_ids = [g.genome_id for g in population.genomes]
 
-        cursor.execute("""
-            INSERT INTO populations (population_id, genome_ids, generation, created_at, debate_history)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(population_id) DO UPDATE SET
-                genome_ids = excluded.genome_ids,
-                generation = excluded.generation,
-                debate_history = excluded.debate_history
-        """, (
-            population.population_id,
-            json.dumps(genome_ids),
-            population.generation,
-            population.created_at.isoformat(),
-            json.dumps(population.debate_history),
-        ))
+            cursor.execute("""
+                INSERT INTO populations (population_id, genome_ids, generation, created_at, debate_history)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(population_id) DO UPDATE SET
+                    genome_ids = excluded.genome_ids,
+                    generation = excluded.generation,
+                    debate_history = excluded.debate_history
+            """, (
+                population.population_id,
+                json.dumps(genome_ids),
+                population.generation,
+                population.created_at.isoformat(),
+                json.dumps(population.debate_history),
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()

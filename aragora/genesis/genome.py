@@ -11,12 +11,16 @@ Extends Persona with genetic-specific fields for:
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 
 from aragora.agents.personas import EXPERTISE_DOMAINS, PERSONALITY_TRAITS, Persona
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 def generate_genome_id(traits: dict, expertise: dict, parents: list[str]) -> str:
@@ -207,92 +211,98 @@ class GenomeStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS genomes (
-                genome_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                traits TEXT,
-                expertise TEXT,
-                model_preference TEXT,
-                parent_genomes TEXT,
-                generation INTEGER DEFAULT 0,
-                fitness_score REAL DEFAULT 0.5,
-                birth_debate_id TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                consensus_contributions INTEGER DEFAULT 0,
-                critiques_accepted INTEGER DEFAULT 0,
-                predictions_correct INTEGER DEFAULT 0,
-                debates_participated INTEGER DEFAULT 0
-            )
-        """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS genomes (
+                    genome_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    traits TEXT,
+                    expertise TEXT,
+                    model_preference TEXT,
+                    parent_genomes TEXT,
+                    generation INTEGER DEFAULT 0,
+                    fitness_score REAL DEFAULT 0.5,
+                    birth_debate_id TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    consensus_contributions INTEGER DEFAULT 0,
+                    critiques_accepted INTEGER DEFAULT 0,
+                    predictions_correct INTEGER DEFAULT 0,
+                    debates_participated INTEGER DEFAULT 0
+                )
+            """)
 
-        # Index for fast lookups
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_genomes_fitness
-            ON genomes(fitness_score DESC)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_genomes_generation
-            ON genomes(generation)
-        """)
+            # Index for fast lookups
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_genomes_fitness
+                ON genomes(fitness_score DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_genomes_generation
+                ON genomes(generation)
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def save(self, genome: AgentGenome) -> None:
         """Save or update a genome."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("""
-            INSERT INTO genomes (
-                genome_id, name, traits, expertise, model_preference,
-                parent_genomes, generation, fitness_score, birth_debate_id,
-                created_at, updated_at, consensus_contributions,
-                critiques_accepted, predictions_correct, debates_participated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(genome_id) DO UPDATE SET
-                fitness_score = excluded.fitness_score,
-                updated_at = excluded.updated_at,
-                consensus_contributions = excluded.consensus_contributions,
-                critiques_accepted = excluded.critiques_accepted,
-                predictions_correct = excluded.predictions_correct,
-                debates_participated = excluded.debates_participated
-        """, (
-            genome.genome_id,
-            genome.name,
-            json.dumps(genome.traits),
-            json.dumps(genome.expertise),
-            genome.model_preference,
-            json.dumps(genome.parent_genomes),
-            genome.generation,
-            genome.fitness_score,
-            genome.birth_debate_id,
-            genome.created_at.isoformat(),
-            genome.updated_at.isoformat(),
-            genome.consensus_contributions,
-            genome.critiques_accepted,
-            genome.predictions_correct,
-            genome.debates_participated,
-        ))
+            cursor.execute("""
+                INSERT INTO genomes (
+                    genome_id, name, traits, expertise, model_preference,
+                    parent_genomes, generation, fitness_score, birth_debate_id,
+                    created_at, updated_at, consensus_contributions,
+                    critiques_accepted, predictions_correct, debates_participated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(genome_id) DO UPDATE SET
+                    fitness_score = excluded.fitness_score,
+                    updated_at = excluded.updated_at,
+                    consensus_contributions = excluded.consensus_contributions,
+                    critiques_accepted = excluded.critiques_accepted,
+                    predictions_correct = excluded.predictions_correct,
+                    debates_participated = excluded.debates_participated
+            """, (
+                genome.genome_id,
+                genome.name,
+                json.dumps(genome.traits),
+                json.dumps(genome.expertise),
+                genome.model_preference,
+                json.dumps(genome.parent_genomes),
+                genome.generation,
+                genome.fitness_score,
+                genome.birth_debate_id,
+                genome.created_at.isoformat(),
+                genome.updated_at.isoformat(),
+                genome.consensus_contributions,
+                genome.critiques_accepted,
+                genome.predictions_correct,
+                genome.debates_participated,
+            ))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get(self, genome_id: str) -> Optional[AgentGenome]:
         """Get a genome by ID."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM genomes WHERE genome_id = ?", (genome_id,))
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute("SELECT * FROM genomes WHERE genome_id = ?", (genome_id,))
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -301,15 +311,14 @@ class GenomeStore:
 
     def get_by_name(self, name: str) -> Optional[AgentGenome]:
         """Get the latest genome with a given name."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT * FROM genomes WHERE name = ? ORDER BY generation DESC LIMIT 1",
-            (name,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                "SELECT * FROM genomes WHERE name = ? ORDER BY generation DESC LIMIT 1",
+                (name,)
+            )
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -318,26 +327,24 @@ class GenomeStore:
 
     def get_top_by_fitness(self, n: int = 10) -> list[AgentGenome]:
         """Get top genomes by fitness score."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT * FROM genomes ORDER BY fitness_score DESC LIMIT ?",
-            (n,)
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(
+                "SELECT * FROM genomes ORDER BY fitness_score DESC LIMIT ?",
+                (n,)
+            )
+            rows = cursor.fetchall()
 
         return [self._row_to_genome(row) for row in rows]
 
     def get_all(self) -> list[AgentGenome]:
         """Get all genomes."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM genomes")
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute("SELECT * FROM genomes")
+            rows = cursor.fetchall()
 
         return [self._row_to_genome(row) for row in rows]
 
@@ -361,14 +368,13 @@ class GenomeStore:
 
     def delete(self, genome_id: str) -> bool:
         """Delete a genome."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute("DELETE FROM genomes WHERE genome_id = ?", (genome_id,))
-        deleted = cursor.rowcount > 0
+            cursor.execute("DELETE FROM genomes WHERE genome_id = ?", (genome_id,))
+            deleted = cursor.rowcount > 0
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return deleted
 

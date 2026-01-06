@@ -91,7 +91,7 @@ class TestPlan:
     target_coverage: float = 0.8
     critical_paths: list[str] = field(default_factory=list)
 
-    def add_test(self, test: TestCase):
+    def add_test(self, test: TestCase) -> None:
         """Add a test case."""
         self.test_cases.append(test)
 
@@ -240,7 +240,7 @@ class TestPlanGenerator:
             return task[:task.index(".") + 1]
         return task[:60] + "..."
 
-    def _add_consensus_tests(self, plan: TestPlan):
+    def _add_consensus_tests(self, plan: TestPlan) -> None:
         """Add tests based on consensus conclusions."""
         consensus = self.artifact.consensus_proof
         if not consensus:
@@ -270,7 +270,7 @@ class TestPlanGenerator:
                 if test_num > 5:  # Limit to 5 consensus tests
                     break
 
-    def _add_critique_tests(self, plan: TestPlan):
+    def _add_critique_tests(self, plan: TestPlan) -> None:
         """Add tests based on critique issues (edge cases)."""
         if not self.artifact.trace_data:
             return
@@ -296,7 +296,7 @@ class TestPlanGenerator:
                 ))
                 test_num += 1
 
-    def _add_verification_tests(self, plan: TestPlan):
+    def _add_verification_tests(self, plan: TestPlan) -> None:
         """Add tests for formally verified properties."""
         for v in self.artifact.verification_results:
             if v.status == "verified":
@@ -312,7 +312,7 @@ class TestPlanGenerator:
                     related_claim_ids=[v.claim_id],
                 ))
 
-    def _add_standard_tests(self, plan: TestPlan):
+    def _add_standard_tests(self, plan: TestPlan) -> None:
         """Add standard test categories."""
         # Always add a smoke test
         plan.add_test(TestCase(

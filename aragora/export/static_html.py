@@ -949,7 +949,7 @@ updateTimeline();
 console.log('aragora debate viewer loaded. Artifact:', artifactData.artifact_id);
 </script>"""
 
-    def save(self, path: Path):
+    def save(self, path: Path) -> Path:
         """Save the HTML to a file."""
         html = self.generate()
         path.write_text(html)

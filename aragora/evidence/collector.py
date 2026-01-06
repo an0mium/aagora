@@ -6,6 +6,7 @@ to provide factual grounding for debates.
 """
 
 import asyncio
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -99,7 +100,7 @@ class EvidenceCollector:
                             evidence = await web_connector.fetch_url(full_url)
                             if evidence and getattr(evidence, 'confidence', 0) > 0:
                                 snippet = EvidenceSnippet(
-                                    id=f"url_{hash(full_url) % 10000}",
+                                    id=f"url_{hashlib.sha256(full_url.encode()).hexdigest()[:12]}",
                                     source="direct_url",
                                     title=getattr(evidence, 'title', full_url),
                                     snippet=self._truncate_snippet(evidence.content),

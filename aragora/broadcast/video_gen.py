@@ -264,6 +264,7 @@ class VideoGenerator:
         # Create temporary thumbnail
         thumb_path = self.output_dir / f"{audio_path.stem}_thumb.png"
 
+        process = None
         try:
             # Generate thumbnail
             if not await generate_thumbnail(title, agents, thumb_path):
@@ -342,11 +343,18 @@ class VideoGenerator:
         Args:
             audio_path: Path to audio file
             output_path: Output video path
-            color: Waveform color in hex
+            color: Waveform color in hex (validated to prevent injection)
 
         Returns:
             Path to video file or None if failed
         """
+        # Validate color to prevent ffmpeg filter injection
+        # Only allow hex colors (0xRRGGBB or #RRGGBB) or named colors (alphanumeric)
+        import re
+        if not re.match(r'^(0x[0-9a-fA-F]{6}|#[0-9a-fA-F]{6}|[a-zA-Z]+)$', color):
+            logger.warning(f"Invalid color format '{color}', using default")
+            color = "0x4488ff"
+
         if not self.ffmpeg_available:
             logger.error("ffmpeg not available")
             return None
@@ -358,6 +366,7 @@ class VideoGenerator:
         if output_path is None:
             output_path = self.output_dir / f"{audio_path.stem}_waveform.mp4"
 
+        process = None
         try:
             # Generate waveform video using ffmpeg's showwaves filter
             cmd = [

@@ -213,6 +213,17 @@ class YouTubeUploaderConnector:
         self.rate_limiter = YouTubeRateLimiter()
         self.circuit_breaker = CircuitBreaker()
 
+        # Log warning if credentials incomplete
+        if not all([self.client_id, self.client_secret, self.refresh_token]):
+            missing = []
+            if not self.client_id:
+                missing.append("YOUTUBE_CLIENT_ID")
+            if not self.client_secret:
+                missing.append("YOUTUBE_CLIENT_SECRET")
+            if not self.refresh_token:
+                missing.append("YOUTUBE_REFRESH_TOKEN")
+            logger.warning(f"YouTube credentials incomplete. Missing: {', '.join(missing)}. Uploads will fail.")
+
     @property
     def is_configured(self) -> bool:
         """Check if YouTube credentials are configured."""
@@ -275,7 +286,8 @@ class YouTubeUploaderConnector:
                         self.refresh_token = data["refresh_token"]
                     return data
                 else:
-                    logger.error(f"Token exchange failed: {response.text}")
+                    # Don't log full response which may contain sensitive data
+                    logger.error(f"Token exchange failed: HTTP {response.status_code}")
                     return None
 
         except Exception as e:
@@ -308,7 +320,8 @@ class YouTubeUploaderConnector:
                     self._token_expiry = time.time() + data.get("expires_in", 3600) - 300
                     return True
                 else:
-                    logger.error(f"Token refresh failed: {response.text}")
+                    # Don't log full response which may contain sensitive data
+                    logger.error(f"Token refresh failed: HTTP {response.status_code}")
                     return False
 
         except Exception as e:

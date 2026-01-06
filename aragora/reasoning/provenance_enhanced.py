@@ -155,7 +155,10 @@ class GitProvenanceTracker:
         self.repo_path = repo_path or os.getcwd()
 
     def _run_git(self, args: list[str]) -> tuple[bool, str]:
-        """Run a git command and return (success, output)."""
+        """Run a git command and return (success, output).
+
+        Returns stdout on success, stderr on failure for better diagnostics.
+        """
         try:
             result = subprocess.run(
                 ["git"] + args,
@@ -164,7 +167,11 @@ class GitProvenanceTracker:
                 text=True,
                 timeout=30,
             )
-            return result.returncode == 0, result.stdout.strip()
+            if result.returncode != 0:
+                return False, result.stderr.strip() or f"git command failed (exit {result.returncode})"
+            return True, result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return False, "git command timed out after 30s"
         except Exception as e:
             return False, str(e)
 

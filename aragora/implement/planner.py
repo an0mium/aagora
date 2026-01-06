@@ -7,10 +7,13 @@ with complexity scoring and dependency tracking.
 
 import hashlib
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from aragora.agents.cli_agents import GeminiCLIAgent
 
@@ -173,7 +176,7 @@ async def generate_implement_plan(
         repo_path=str(repo_path),
     )
 
-    print("  Generating implementation plan with Gemini...")
+    logger.info("  Generating implementation plan with Gemini...")
     response = await gemini.generate(prompt)
 
     # Extract and parse JSON
@@ -193,9 +196,9 @@ async def generate_implement_plan(
     design_hash = hashlib.md5(design.encode()).hexdigest()
     tasks = [ImplementTask.from_dict(t) for t in plan_data["tasks"]]
 
-    print(f"  Plan generated: {len(tasks)} tasks")
+    logger.info(f"  Plan generated: {len(tasks)} tasks")
     for task in tasks:
-        print(f"    - [{task.complexity}] {task.id}: {task.description[:50]}...")
+        logger.info(f"    - [{task.complexity}] {task.id}: {task.description[:50]}...")
 
     return ImplementPlan(design_hash=design_hash, tasks=tasks)
 
@@ -269,10 +272,10 @@ async def decompose_failed_task(
 
     # Only decompose complex tasks with many files
     if task.complexity != "complex" or len(task.files) <= 2:
-        print(f"    Task {task.id} not suitable for decomposition")
+        logger.info(f"    Task {task.id} not suitable for decomposition")
         return [task]
 
-    print(f"    Decomposing failed task {task.id} into subtasks...")
+    logger.info(f"    Decomposing failed task {task.id} into subtasks...")
 
     gemini = GeminiCLIAgent(
         name="task-decomposer",
@@ -295,7 +298,7 @@ async def decompose_failed_task(
         data = json.loads(json_str)
 
         if "subtasks" not in data or not data["subtasks"]:
-            print(f"    No subtasks generated, keeping original")
+            logger.info("    No subtasks generated, keeping original")
             return [task]
 
         subtasks = []
@@ -311,14 +314,14 @@ async def decompose_failed_task(
             )
             subtasks.append(subtask)
 
-        print(f"    Decomposed into {len(subtasks)} subtasks:")
+        logger.info(f"    Decomposed into {len(subtasks)} subtasks:")
         for st in subtasks:
-            print(f"      - [{st.complexity}] {st.id}: {st.description[:40]}...")
+            logger.info(f"      - [{st.complexity}] {st.id}: {st.description[:40]}...")
 
         return subtasks
 
     except Exception as e:
-        print(f"    Decomposition failed: {e}, keeping original task")
+        logger.warning(f"    Decomposition failed: {e}, keeping original task")
         return [task]
 
 

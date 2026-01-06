@@ -131,11 +131,11 @@ def generate_standalone_html(cartographer: ArgumentCartographer) -> str:
         
         <div class="stats">
             <div class="stat">
-                <div class="stat-value">{stats['total_nodes']}</div>
+                <div class="stat-value">{stats['node_count']}</div>
                 <div class="stat-label">Arguments</div>
             </div>
             <div class="stat">
-                <div class="stat-value">{stats['total_edges']}</div>
+                <div class="stat-value">{stats['edge_count']}</div>
                 <div class="stat-label">Connections</div>
             </div>
             <div class="stat">

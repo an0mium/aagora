@@ -21,6 +21,7 @@ import hashlib
 import json
 
 from aragora.reasoning.claims import ClaimsKernel, TypedClaim, ClaimType, RelationType
+from aragora.config import BELIEF_MAX_ITERATIONS, BELIEF_CONVERGENCE_THRESHOLD
 
 
 class BeliefStatus(Enum):
@@ -107,6 +108,15 @@ class BeliefDistribution:
         """Create uniform (maximum uncertainty) distribution."""
         return cls(p_true=0.5, p_false=0.5, p_unknown=0.0)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "BeliefDistribution":
+        """Deserialize from dictionary."""
+        return cls(
+            p_true=data.get("p_true", 0.5),
+            p_false=data.get("p_false", 0.5),
+            p_unknown=data.get("p_unknown", 0.0),
+        )
+
 
 @dataclass
 class BeliefNode:
@@ -176,6 +186,23 @@ class BeliefNode:
             "child_ids": self.child_ids,
             "update_count": self.update_count,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BeliefNode":
+        """Deserialize from dictionary."""
+        return cls(
+            node_id=data["node_id"],
+            claim_id=data["claim_id"],
+            claim_statement=data["claim_statement"],
+            author=data["author"],
+            prior=BeliefDistribution.from_dict(data.get("prior", {})),
+            posterior=BeliefDistribution.from_dict(data.get("posterior", {})),
+            status=BeliefStatus(data.get("status", "prior")),
+            centrality=data.get("centrality", 0.0),
+            parent_ids=data.get("parent_ids", []),
+            child_ids=data.get("child_ids", []),
+            update_count=data.get("update_count", 0),
+        )
 
 
 @dataclass
@@ -276,8 +303,8 @@ class BeliefNetwork:
         self,
         debate_id: Optional[str] = None,
         damping: float = 0.5,
-        max_iterations: int = 100,
-        convergence_threshold: float = 0.001,
+        max_iterations: int = BELIEF_MAX_ITERATIONS,
+        convergence_threshold: float = BELIEF_CONVERGENCE_THRESHOLD,
     ):
         self.debate_id = debate_id or str(uuid.uuid4())
         self.damping = damping  # For stable convergence
@@ -757,6 +784,37 @@ class BeliefNetwork:
     def to_json(self, indent: int = 2) -> str:
         """Serialize to JSON."""
         return json.dumps(self.to_dict(), indent=indent, default=str)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BeliefNetwork":
+        """Deserialize network from dictionary."""
+        network = cls(
+            debate_id=data.get("debate_id"),
+            damping=data.get("damping", 0.5),
+        )
+        network.propagation_count = data.get("propagation_count", 0)
+
+        # Restore nodes
+        nodes_data = data.get("nodes", {})
+        for node_id, node_data in nodes_data.items():
+            network.nodes[node_id] = BeliefNode.from_dict(node_data)
+
+        # Restore factors
+        factors_data = data.get("factors", [])
+        for factor_data in factors_data:
+            factor = Factor(
+                factor_id=factor_data["factor_id"],
+                relation_type=RelationType(factor_data["relation_type"]),
+                source_node_id=factor_data["source_node_id"],
+                target_node_id=factor_data["target_node_id"],
+                strength=factor_data.get("strength", 1.0),
+            )
+            network.factors[factor.factor_id] = factor
+
+        # Restore claim_to_node mapping
+        network.claim_to_node = data.get("claim_to_node", {})
+
+        return network
 
 
 class BeliefPropagationAnalyzer:

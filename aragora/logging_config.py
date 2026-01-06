@@ -277,9 +277,9 @@ def get_logger(name: str) -> StructuredLogger:
 
 
 def configure_logging(
-    level: str = None,
-    json_output: bool = None,
-    log_file: str = None,
+    level: str | None = None,
+    json_output: bool | None = None,
+    log_file: str | None = None,
     propagate: bool = True,
 ) -> None:
     """

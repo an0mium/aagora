@@ -18,18 +18,24 @@ from pathlib import Path
 from typing import Optional
 
 from aragora.storage.schema import SchemaManager, safe_add_column
+from aragora.config import (
+    DB_ELO_PATH,
+    DB_TIMEOUT_SECONDS,
+    ELO_INITIAL_RATING,
+    ELO_K_FACTOR,
+    ELO_CALIBRATION_MIN_COUNT,
+)
+from aragora.utils.json_helpers import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
 # Schema version - increment when making schema changes
 ELO_SCHEMA_VERSION = 2
 
-# Default ELO rating for new agents
-DEFAULT_ELO = 1500
-K_FACTOR = 32  # How quickly ratings change
-
-# Calibration scoring constants
-CALIBRATION_MIN_COUNT = 10  # Minimum predictions for meaningful score
+# Use centralized config values (can be overridden via environment variables)
+DEFAULT_ELO = ELO_INITIAL_RATING
+K_FACTOR = ELO_K_FACTOR
+CALIBRATION_MIN_COUNT = ELO_CALIBRATION_MIN_COUNT
 
 
 def _escape_like_pattern(value: str) -> str:
@@ -120,13 +126,13 @@ class EloSystem:
     Tracks agent skill ratings, match history, and provides leaderboards.
     """
 
-    def __init__(self, db_path: str = "aragora_elo.db"):
+    def __init__(self, db_path: str = DB_ELO_PATH):
         self.db_path = Path(db_path)
         self._init_db()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize database schema using SchemaManager."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             manager = SchemaManager(conn, "elo", current_version=ELO_SCHEMA_VERSION)
 
             # Register migration from v1 to v2: add calibration columns
@@ -251,7 +257,7 @@ class EloSystem:
 
     def get_rating(self, agent_name: str) -> AgentRating:
         """Get or create rating for an agent."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -272,7 +278,7 @@ class EloSystem:
         return AgentRating(
             agent_name=row[0],
             elo=row[1],
-            domain_elos=json.loads(row[2]) if row[2] else {},
+            domain_elos=safe_json_loads(row[2], {}),
             wins=row[3],
             losses=row[4],
             draws=row[5],
@@ -285,9 +291,65 @@ class EloSystem:
             updated_at=row[12],
         )
 
-    def _save_rating(self, rating: AgentRating):
+    def get_ratings_batch(self, agent_names: list[str]) -> dict[str, AgentRating]:
+        """Get ratings for multiple agents in a single query (batch optimization).
+
+        Args:
+            agent_names: List of agent names to fetch ratings for
+
+        Returns:
+            Dict mapping agent_name -> AgentRating. Missing agents get default ratings.
+        """
+        if not agent_names:
+            return {}
+
+        result = {}
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
+
+            # Use parameterized IN clause
+            placeholders = ','.join('?' * len(agent_names))
+            cursor.execute(
+                f"""
+                SELECT agent_name, elo, domain_elos, wins, losses, draws,
+                       debates_count, critiques_accepted, critiques_total,
+                       calibration_correct, calibration_total, calibration_brier_sum,
+                       updated_at
+                FROM ratings WHERE agent_name IN ({placeholders})
+                """,
+                tuple(agent_names),
+            )
+            rows = cursor.fetchall()
+
+        # Build result dict from fetched rows
+        for row in rows:
+            rating = AgentRating(
+                agent_name=row[0],
+                elo=row[1],
+                domain_elos=safe_json_loads(row[2], {}),
+                wins=row[3],
+                losses=row[4],
+                draws=row[5],
+                debates_count=row[6],
+                critiques_accepted=row[7],
+                critiques_total=row[8],
+                calibration_correct=row[9] or 0,
+                calibration_total=row[10] or 0,
+                calibration_brier_sum=row[11] or 0.0,
+                updated_at=row[12],
+            )
+            result[rating.agent_name] = rating
+
+        # Add default ratings for agents not found in DB
+        for name in agent_names:
+            if name not in result:
+                result[name] = AgentRating(agent_name=name)
+
+        return result
+
+    def _save_rating(self, rating: AgentRating) -> None:
         """Save rating to database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -348,7 +410,7 @@ class EloSystem:
         debate_id: str,
         participants: list[str],
         scores: dict[str, float],
-        domain: str = None,
+        domain: str | None = None,
         confidence_weight: float = 1.0,
     ) -> dict[str, float]:
         """
@@ -372,7 +434,10 @@ class EloSystem:
 
         # Determine winner (highest score)
         sorted_agents = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        winner = sorted_agents[0][0] if sorted_agents[0][1] > sorted_agents[1][1] else None
+        if len(sorted_agents) < 2:
+            winner = sorted_agents[0][0] if sorted_agents else None
+        else:
+            winner = sorted_agents[0][0] if sorted_agents[0][1] > sorted_agents[1][1] else None
 
         # Get current ratings
         ratings = {name: self.get_rating(name) for name in participants}
@@ -465,7 +530,7 @@ class EloSystem:
             )
             conn.commit()
 
-    def _record_elo_history(self, agent_name: str, elo: float, debate_id: str = None):
+    def _record_elo_history(self, agent_name: str, elo: float, debate_id: str | None = None) -> None:
         """Record ELO at a point in time."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -532,8 +597,10 @@ class EloSystem:
                 with open(snapshot_path) as f:
                     data = json.load(f)
                 return data.get("leaderboard", [])[:limit]
-            except Exception as e:
-                logger.debug(f"Failed to read ELO snapshot, falling back to database: {e}")
+            except json.JSONDecodeError as e:
+                logger.debug(f"ELO snapshot corrupted, falling back to database: {e}")
+            except (PermissionError, OSError) as e:
+                logger.warning(f"Cannot read ELO snapshot (I/O error), falling back to database: {e}")
 
         # Fall back to database
         leaderboard = self.get_leaderboard(limit)
@@ -567,13 +634,15 @@ class EloSystem:
                 with open(snapshot_path) as f:
                     data = json.load(f)
                 return data.get("recent_matches", [])[:limit]
-            except Exception as e:
-                logger.debug(f"Failed to read recent matches from snapshot: {e}")
+            except json.JSONDecodeError as e:
+                logger.debug(f"Recent matches snapshot corrupted, falling back to database: {e}")
+            except (PermissionError, OSError) as e:
+                logger.warning(f"Cannot read recent matches snapshot (I/O error), falling back: {e}")
 
         # Fall back to database
         return self.get_recent_matches(limit)
 
-    def record_critique(self, agent_name: str, accepted: bool):
+    def record_critique(self, agent_name: str, accepted: bool) -> None:
         """Record a critique and whether it was accepted."""
         rating = self.get_rating(agent_name)
         rating.critiques_total += 1
@@ -582,9 +651,9 @@ class EloSystem:
         rating.updated_at = datetime.now().isoformat()
         self._save_rating(rating)
 
-    def get_leaderboard(self, limit: int = 20, domain: str = None) -> list[AgentRating]:
+    def get_leaderboard(self, limit: int = 20, domain: str | None = None) -> list[AgentRating]:
         """Get top agents by ELO."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -602,7 +671,7 @@ class EloSystem:
             AgentRating(
                 agent_name=row[0],
                 elo=row[1],
-                domain_elos=json.loads(row[2]) if row[2] else {},
+                domain_elos=safe_json_loads(row[2], {}),
                 wins=row[3],
                 losses=row[4],
                 draws=row[5],
@@ -637,22 +706,19 @@ class EloSystem:
 
     def get_elo_history(self, agent_name: str, limit: int = 50) -> list[tuple[str, float]]:
         """Get ELO history for an agent."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT created_at, elo FROM elo_history
-            WHERE agent_name = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (agent_name, limit),
-        )
-        rows = cursor.fetchall()
-
-        return [(row[0], row[1]) for row in rows]
+            cursor.execute(
+                """
+                SELECT created_at, elo FROM elo_history
+                WHERE agent_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (agent_name, limit),
+            )
+            rows = cursor.fetchall()
+            return [(row[0], row[1]) for row in rows]
 
     def get_recent_matches(self, limit: int = 10) -> list[dict]:
         """Get recent match results with ELO changes.
@@ -660,25 +726,23 @@ class EloSystem:
         Returns list of dicts with: debate_id, winner, participants, domain,
         elo_changes, created_at
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT debate_id, winner, participants, domain, elo_changes, created_at
-            FROM matches
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT debate_id, winner, participants, domain, elo_changes, created_at
+                FROM matches
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
 
         matches = []
         for row in rows:
-            elo_changes = json.loads(row[4]) if row[4] else {}
-            participants = json.loads(row[2]) if row[2] else []
+            elo_changes = safe_json_loads(row[4], {})
+            participants = safe_json_loads(row[2], [])
             matches.append({
                 "debate_id": row[0],
                 "winner": row[1],
@@ -691,7 +755,7 @@ class EloSystem:
 
     def get_head_to_head(self, agent_a: str, agent_b: str) -> dict:
         """Get head-to-head statistics between two agents."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Escape LIKE special characters to prevent SQL injection
@@ -728,16 +792,18 @@ class EloSystem:
 
     def get_stats(self) -> dict:
         """Get overall system statistics."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*), AVG(elo), MAX(elo), MIN(elo) FROM ratings")
+            ratings_row = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*) FROM matches")
+            matches_row = cursor.fetchone()
 
-        cursor.execute("SELECT COUNT(*), AVG(elo), MAX(elo), MIN(elo) FROM ratings")
-        ratings_row = cursor.fetchone()
-
-        cursor.execute("SELECT COUNT(*) FROM matches")
-        matches_row = cursor.fetchone()
-
+        # Handle case where fetchone returns None
+        if ratings_row is None:
+            ratings_row = (0, None, None, None)
+        if matches_row is None:
+            matches_row = (0,)
 
         return {
             "total_agents": ratings_row[0] or 0,
@@ -757,7 +823,7 @@ class EloSystem:
         predictor_agent: str,
         predicted_winner: str,
         confidence: float,
-    ):
+    ) -> None:
         """
         Record an agent's prediction for a tournament winner.
 
@@ -767,20 +833,17 @@ class EloSystem:
             predicted_winner: Agent predicted to win
             confidence: Confidence level (0.0 to 1.0)
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO calibration_predictions
-                (tournament_id, predictor_agent, predicted_winner, confidence)
-            VALUES (?, ?, ?, ?)
-            """,
-            (tournament_id, predictor_agent, predicted_winner, min(1.0, max(0.0, confidence))),
-        )
-
-        conn.commit()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO calibration_predictions
+                    (tournament_id, predictor_agent, predicted_winner, confidence)
+                VALUES (?, ?, ?, ?)
+                """,
+                (tournament_id, predictor_agent, predicted_winner, min(1.0, max(0.0, confidence))),
+            )
+            conn.commit()
 
     def resolve_tournament_calibration(
         self,
@@ -800,19 +863,17 @@ class EloSystem:
         Returns:
             Dict of predictor_agent -> brier_score for this prediction
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT predictor_agent, predicted_winner, confidence
-            FROM calibration_predictions
-            WHERE tournament_id = ?
-            """,
-            (tournament_id,),
-        )
-        predictions = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT predictor_agent, predicted_winner, confidence
+                FROM calibration_predictions
+                WHERE tournament_id = ?
+                """,
+                (tournament_id,),
+            )
+            predictions = cursor.fetchall()
 
         brier_scores = {}
 
@@ -847,30 +908,28 @@ class EloSystem:
 
         Only includes agents with minimum predictions.
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT agent_name, elo, domain_elos, wins, losses, draws,
-                   debates_count, critiques_accepted, critiques_total,
-                   calibration_correct, calibration_total, calibration_brier_sum,
-                   updated_at
-            FROM ratings
-            WHERE calibration_total >= ?
-            ORDER BY (1.0 - calibration_brier_sum / calibration_total) DESC
-            LIMIT ?
-            """,
-            (CALIBRATION_MIN_COUNT, limit),
-        )
-        rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT agent_name, elo, domain_elos, wins, losses, draws,
+                       debates_count, critiques_accepted, critiques_total,
+                       calibration_correct, calibration_total, calibration_brier_sum,
+                       updated_at
+                FROM ratings
+                WHERE calibration_total >= ?
+                ORDER BY (1.0 - calibration_brier_sum / calibration_total) DESC
+                LIMIT ?
+                """,
+                (CALIBRATION_MIN_COUNT, limit),
+            )
+            rows = cursor.fetchall()
 
         return [
             AgentRating(
                 agent_name=row[0],
                 elo=row[1],
-                domain_elos=json.loads(row[2]) if row[2] else {},
+                domain_elos=safe_json_loads(row[2], {}),
                 wins=row[3],
                 losses=row[4],
                 draws=row[5],
@@ -889,21 +948,19 @@ class EloSystem:
         self, agent_name: str, limit: int = 50
     ) -> list[dict]:
         """Get recent predictions made by an agent."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT tournament_id, predicted_winner, confidence, created_at
-            FROM calibration_predictions
-            WHERE predictor_agent = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (agent_name, limit),
-        )
-        rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT tournament_id, predicted_winner, confidence, created_at
+                FROM calibration_predictions
+                WHERE predictor_agent = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (agent_name, limit),
+            )
+            rows = cursor.fetchall()
 
         return [
             {
@@ -931,7 +988,7 @@ class EloSystem:
         domain: str,
         confidence: float,
         correct: bool,
-    ):
+    ) -> None:
         """
         Record a domain-specific prediction for calibration tracking.
 
@@ -945,70 +1002,65 @@ class EloSystem:
         brier = (confidence - (1.0 if correct else 0.0)) ** 2
         bucket_key = self._get_bucket_key(confidence)
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
-        # Update domain calibration
-        cursor.execute(
-            """
-            INSERT INTO domain_calibration (agent_name, domain, total_predictions, total_correct, brier_sum, updated_at)
-            VALUES (?, ?, 1, ?, ?, ?)
-            ON CONFLICT(agent_name, domain) DO UPDATE SET
-                total_predictions = total_predictions + 1,
-                total_correct = total_correct + ?,
-                brier_sum = brier_sum + ?,
-                updated_at = ?
-            """,
-            (
-                agent_name, domain, 1 if correct else 0, brier, datetime.now().isoformat(),
-                1 if correct else 0, brier, datetime.now().isoformat(),
-            ),
-        )
+            # Update domain calibration
+            cursor.execute(
+                """
+                INSERT INTO domain_calibration (agent_name, domain, total_predictions, total_correct, brier_sum, updated_at)
+                VALUES (?, ?, 1, ?, ?, ?)
+                ON CONFLICT(agent_name, domain) DO UPDATE SET
+                    total_predictions = total_predictions + 1,
+                    total_correct = total_correct + ?,
+                    brier_sum = brier_sum + ?,
+                    updated_at = ?
+                """,
+                (
+                    agent_name, domain, 1 if correct else 0, brier, datetime.now().isoformat(),
+                    1 if correct else 0, brier, datetime.now().isoformat(),
+                ),
+            )
 
-        # Update calibration bucket
-        cursor.execute(
-            """
-            INSERT INTO calibration_buckets (agent_name, domain, bucket_key, predictions, correct, brier_sum)
-            VALUES (?, ?, ?, 1, ?, ?)
-            ON CONFLICT(agent_name, domain, bucket_key) DO UPDATE SET
-                predictions = predictions + 1,
-                correct = correct + ?,
-                brier_sum = brier_sum + ?
-            """,
-            (agent_name, domain, bucket_key, 1 if correct else 0, brier, 1 if correct else 0, brier),
-        )
+            # Update calibration bucket
+            cursor.execute(
+                """
+                INSERT INTO calibration_buckets (agent_name, domain, bucket_key, predictions, correct, brier_sum)
+                VALUES (?, ?, ?, 1, ?, ?)
+                ON CONFLICT(agent_name, domain, bucket_key) DO UPDATE SET
+                    predictions = predictions + 1,
+                    correct = correct + ?,
+                    brier_sum = brier_sum + ?
+                """,
+                (agent_name, domain, bucket_key, 1 if correct else 0, brier, 1 if correct else 0, brier),
+            )
 
-        # Also update overall calibration stats
-        rating = self.get_rating(agent_name)
-        rating.calibration_total += 1
-        if correct:
-            rating.calibration_correct += 1
-        rating.calibration_brier_sum += brier
-        rating.updated_at = datetime.now().isoformat()
+            # Also update overall calibration stats
+            rating = self.get_rating(agent_name)
+            rating.calibration_total += 1
+            if correct:
+                rating.calibration_correct += 1
+            rating.calibration_brier_sum += brier
+            rating.updated_at = datetime.now().isoformat()
 
-        conn.commit()
+            conn.commit()
         self._save_rating(rating)
 
     def get_domain_calibration(self, agent_name: str, domain: Optional[str] = None) -> dict:
         """Get calibration statistics for an agent, optionally filtered by domain."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        if domain:
-            cursor.execute(
-                "SELECT domain, total_predictions, total_correct, brier_sum FROM domain_calibration WHERE agent_name = ? AND domain = ?",
-                (agent_name, domain),
-            )
-        else:
-            cursor.execute(
-                "SELECT domain, total_predictions, total_correct, brier_sum FROM domain_calibration WHERE agent_name = ? ORDER BY total_predictions DESC",
-                (agent_name,),
-            )
-
-        rows = cursor.fetchall()
+            if domain:
+                cursor.execute(
+                    "SELECT domain, total_predictions, total_correct, brier_sum FROM domain_calibration WHERE agent_name = ? AND domain = ?",
+                    (agent_name, domain),
+                )
+            else:
+                cursor.execute(
+                    "SELECT domain, total_predictions, total_correct, brier_sum FROM domain_calibration WHERE agent_name = ? ORDER BY total_predictions DESC",
+                    (agent_name,),
+                )
+            rows = cursor.fetchall()
 
         if not rows:
             return {"total": 0, "correct": 0, "accuracy": 0.0, "brier_score": 1.0, "domains": {}}
@@ -1040,29 +1092,33 @@ class EloSystem:
 
     def get_calibration_by_bucket(self, agent_name: str, domain: Optional[str] = None) -> list[dict]:
         """Get calibration broken down by confidence bucket for calibration curves."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-        if domain:
-            cursor.execute(
-                "SELECT bucket_key, SUM(predictions), SUM(correct), SUM(brier_sum) FROM calibration_buckets WHERE agent_name = ? AND domain = ? GROUP BY bucket_key ORDER BY bucket_key",
-                (agent_name, domain),
-            )
-        else:
-            cursor.execute(
-                "SELECT bucket_key, SUM(predictions), SUM(correct), SUM(brier_sum) FROM calibration_buckets WHERE agent_name = ? GROUP BY bucket_key ORDER BY bucket_key",
-                (agent_name,),
-            )
-
-        rows = cursor.fetchall()
+            if domain:
+                cursor.execute(
+                    "SELECT bucket_key, SUM(predictions), SUM(correct), SUM(brier_sum) FROM calibration_buckets WHERE agent_name = ? AND domain = ? GROUP BY bucket_key ORDER BY bucket_key",
+                    (agent_name, domain),
+                )
+            else:
+                cursor.execute(
+                    "SELECT bucket_key, SUM(predictions), SUM(correct), SUM(brier_sum) FROM calibration_buckets WHERE agent_name = ? GROUP BY bucket_key ORDER BY bucket_key",
+                    (agent_name,),
+                )
+            rows = cursor.fetchall()
 
         buckets = []
         for row in rows:
             bucket_key, predictions, correct, brier = row
             parts = bucket_key.split("-")
-            bucket_start = float(parts[0])
-            bucket_end = float(parts[1])
+            if len(parts) < 2:
+                logger.warning(f"Malformed bucket key: {bucket_key}, skipping")
+                continue
+            try:
+                bucket_start = float(parts[0])
+                bucket_end = float(parts[1])
+            except ValueError:
+                logger.warning(f"Invalid bucket values in {bucket_key}, skipping")
+                continue
             expected = (bucket_start + bucket_end) / 2
 
             buckets.append({
@@ -1124,7 +1180,7 @@ class EloSystem:
         position_change_b_after_a: int = 0,
         a_win: int = 0,
         b_win: int = 0,
-    ):
+    ) -> None:
         """Update relationship stats between two agents (maintains canonical a < b ordering)."""
         if agent_a > agent_b:
             agent_a, agent_b = agent_b, agent_a
@@ -1133,72 +1189,68 @@ class EloSystem:
             position_change_a_after_b, position_change_b_after_a = position_change_b_after_a, position_change_a_after_b
             a_win, b_win = b_win, a_win
 
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO agent_relationships (agent_a, agent_b, debate_count, agreement_count,
-                critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a,
-                position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(agent_a, agent_b) DO UPDATE SET
-                debate_count = debate_count + ?, agreement_count = agreement_count + ?,
-                critique_count_a_to_b = critique_count_a_to_b + ?, critique_count_b_to_a = critique_count_b_to_a + ?,
-                critique_accepted_a_to_b = critique_accepted_a_to_b + ?, critique_accepted_b_to_a = critique_accepted_b_to_a + ?,
-                position_changes_a_after_b = position_changes_a_after_b + ?, position_changes_b_after_a = position_changes_b_after_a + ?,
-                a_wins_over_b = a_wins_over_b + ?, b_wins_over_a = b_wins_over_a + ?, updated_at = ?
-            """,
-            (agent_a, agent_b, debate_increment, agreement_increment, critique_a_to_b, critique_b_to_a,
-             critique_accepted_a_to_b, critique_accepted_b_to_a, position_change_a_after_b, position_change_b_after_a,
-             a_win, b_win, datetime.now().isoformat(),
-             debate_increment, agreement_increment, critique_a_to_b, critique_b_to_a,
-             critique_accepted_a_to_b, critique_accepted_b_to_a, position_change_a_after_b, position_change_b_after_a,
-             a_win, b_win, datetime.now().isoformat()),
-        )
-        conn.commit()
+            cursor.execute(
+                """
+                INSERT INTO agent_relationships (agent_a, agent_b, debate_count, agreement_count,
+                    critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a,
+                    position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(agent_a, agent_b) DO UPDATE SET
+                    debate_count = debate_count + ?, agreement_count = agreement_count + ?,
+                    critique_count_a_to_b = critique_count_a_to_b + ?, critique_count_b_to_a = critique_count_b_to_a + ?,
+                    critique_accepted_a_to_b = critique_accepted_a_to_b + ?, critique_accepted_b_to_a = critique_accepted_b_to_a + ?,
+                    position_changes_a_after_b = position_changes_a_after_b + ?, position_changes_b_after_a = position_changes_b_after_a + ?,
+                    a_wins_over_b = a_wins_over_b + ?, b_wins_over_a = b_wins_over_a + ?, updated_at = ?
+                """,
+                (agent_a, agent_b, debate_increment, agreement_increment, critique_a_to_b, critique_b_to_a,
+                 critique_accepted_a_to_b, critique_accepted_b_to_a, position_change_a_after_b, position_change_b_after_a,
+                 a_win, b_win, datetime.now().isoformat(),
+                 debate_increment, agreement_increment, critique_a_to_b, critique_b_to_a,
+                 critique_accepted_a_to_b, critique_accepted_b_to_a, position_change_a_after_b, position_change_b_after_a,
+                 a_win, b_win, datetime.now().isoformat()),
+            )
+            conn.commit()
 
     def get_relationship_raw(self, agent_a: str, agent_b: str) -> Optional[dict]:
         """Get raw relationship data between two agents."""
         if agent_a > agent_b:
             agent_a, agent_b = agent_b, agent_a
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-        cursor.execute(
-            "SELECT debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
-            (agent_a, agent_b),
-        )
-        row = cursor.fetchone()
-        if not row:
-            return None
-        return {
-            "agent_a": agent_a, "agent_b": agent_b, "debate_count": row[0], "agreement_count": row[1],
-            "critique_count_a_to_b": row[2], "critique_count_b_to_a": row[3],
-            "critique_accepted_a_to_b": row[4], "critique_accepted_b_to_a": row[5],
-            "position_changes_a_after_b": row[6], "position_changes_b_after_a": row[7],
-            "a_wins_over_b": row[8], "b_wins_over_a": row[9],
-        }
+            cursor.execute(
+                "SELECT debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
+                (agent_a, agent_b),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "agent_a": agent_a, "agent_b": agent_b, "debate_count": row[0], "agreement_count": row[1],
+                "critique_count_a_to_b": row[2], "critique_count_b_to_a": row[3],
+                "critique_accepted_a_to_b": row[4], "critique_accepted_b_to_a": row[5],
+                "position_changes_a_after_b": row[6], "position_changes_b_after_a": row[7],
+                "a_wins_over_b": row[8], "b_wins_over_a": row[9],
+            }
 
     def get_all_relationships_for_agent(self, agent_name: str) -> list[dict]:
         """Get all relationships involving an agent."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-        cursor.execute(
-            "SELECT agent_a, agent_b, debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? OR agent_b = ? ORDER BY debate_count DESC",
-            (agent_name, agent_name),
-        )
-        rows = cursor.fetchall()
-        return [
-            {"agent_a": r[0], "agent_b": r[1], "debate_count": r[2], "agreement_count": r[3],
-             "critique_count_a_to_b": r[4], "critique_count_b_to_a": r[5],
-             "critique_accepted_a_to_b": r[6], "critique_accepted_b_to_a": r[7],
-             "position_changes_a_after_b": r[8], "position_changes_b_after_a": r[9],
-             "a_wins_over_b": r[10], "b_wins_over_a": r[11]}
-            for r in rows
-        ]
+            cursor.execute(
+                "SELECT agent_a, agent_b, debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? OR agent_b = ? ORDER BY debate_count DESC",
+                (agent_name, agent_name),
+            )
+            rows = cursor.fetchall()
+            return [
+                {"agent_a": r[0], "agent_b": r[1], "debate_count": r[2], "agreement_count": r[3],
+                 "critique_count_a_to_b": r[4], "critique_count_b_to_a": r[5],
+                 "critique_accepted_a_to_b": r[6], "critique_accepted_b_to_a": r[7],
+                 "position_changes_a_after_b": r[8], "position_changes_b_after_a": r[9],
+                 "a_wins_over_b": r[10], "b_wins_over_a": r[11]}
+                for r in rows
+            ]
 
     def compute_relationship_metrics(self, agent_a: str, agent_b: str) -> dict:
         """
@@ -1257,9 +1309,9 @@ class EloSystem:
 
         # Alliance score: high agreement + high critique acceptance
         alliance_score = (
-            agreement_rate * 0.5 +
-            critique_acceptance * 0.3 +
-            (1 - win_balance) * 0.2 if total_wins > 2 else agreement_rate * 0.5 + critique_acceptance * 0.5
+            (agreement_rate * 0.5 + critique_acceptance * 0.3 + (1 - win_balance) * 0.2)
+            if total_wins > 2
+            else (agreement_rate * 0.5 + critique_acceptance * 0.5)
         )
 
         # Determine relationship type
@@ -1305,8 +1357,9 @@ class EloSystem:
 
         rivalry_score = min(1.0, debate_count / 20) * 0.3 + (1 - agreement_rate) * 0.4 + win_balance * 0.3
         alliance_score = (
-            agreement_rate * 0.5 + critique_acceptance * 0.3 + (1 - win_balance) * 0.2
-            if total_wins > 2 else agreement_rate * 0.5 + critique_acceptance * 0.5
+            (agreement_rate * 0.5 + critique_acceptance * 0.3 + (1 - win_balance) * 0.2)
+            if total_wins > 2
+            else (agreement_rate * 0.5 + critique_acceptance * 0.5)
         )
 
         if rivalry_score > 0.6 and rivalry_score > alliance_score:
@@ -1362,7 +1415,7 @@ class EloSystem:
         successful_attacks: int,
         total_attacks: int,
         critical_vulnerabilities: int = 0,
-        session_id: str = None,
+        session_id: str | None = None,
     ) -> float:
         """
         Record red team results and adjust ELO based on vulnerability.

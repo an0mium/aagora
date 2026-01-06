@@ -14,7 +14,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from aragora.config import DB_INSIGHTS_PATH, DB_TIMEOUT_SECONDS
 from aragora.insights.extractor import Insight, InsightType, DebateInsights
+from aragora.utils.json_helpers import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +51,13 @@ class InsightStore:
         patterns = await store.get_common_patterns(min_occurrences=3)
     """
 
-    def __init__(self, db_path: str = "aragora_insights.db"):
+    def __init__(self, db_path: str = DB_INSIGHTS_PATH):
         self.db_path = Path(db_path)
         self._init_db()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize the database schema."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Insights table
@@ -136,7 +138,7 @@ class InsightStore:
         Returns:
             Number of insights stored
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Store debate summary
@@ -249,7 +251,7 @@ class InsightStore:
 
     async def get_insight(self, insight_id: str) -> Optional[Insight]:
         """Retrieve a specific insight by ID."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM insights WHERE id = ?", (insight_id,))
             row = cursor.fetchone()
@@ -278,7 +280,7 @@ class InsightStore:
         Returns:
             List of matching insights
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             sql = "SELECT * FROM insights WHERE 1=1"
@@ -320,7 +322,7 @@ class InsightStore:
         Returns:
             List of pattern dictionaries with occurrence counts
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             sql = """
@@ -358,7 +360,7 @@ class InsightStore:
         Returns:
             Dictionary with performance metrics
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -398,7 +400,7 @@ class InsightStore:
         Returns:
             List of agent stats ordered by contribution score
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -428,7 +430,7 @@ class InsightStore:
 
     async def get_recent_insights(self, limit: int = 20) -> list[Insight]:
         """Get most recent insights across all debates."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -441,7 +443,7 @@ class InsightStore:
 
     async def get_stats(self) -> dict:
         """Get overall statistics about stored insights."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             stats = {}
@@ -469,15 +471,20 @@ class InsightStore:
 
     def _row_to_insight(self, row) -> Insight:
         """Convert a database row to an Insight object."""
+        try:
+            insight_type = InsightType(row[1])
+        except ValueError:
+            logger.warning(f"Invalid insight type '{row[1]}', defaulting to PATTERN")
+            insight_type = InsightType.PATTERN
         return Insight(
             id=row[0],
-            type=InsightType(row[1]),
+            type=insight_type,
             title=row[2],
             description=row[3] or "",
             confidence=row[4] or 0.5,
             debate_id=row[5],
-            agents_involved=json.loads(row[6]) if row[6] else [],
-            evidence=json.loads(row[7]) if row[7] else [],
+            agents_involved=safe_json_loads(row[6], []),
+            evidence=safe_json_loads(row[7], []),
             created_at=row[8] or datetime.now().isoformat(),
-            metadata=json.loads(row[9]) if row[9] else {},
+            metadata=safe_json_loads(row[9], {}),
         )

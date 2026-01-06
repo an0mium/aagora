@@ -460,7 +460,8 @@ class NomicIntegration:
                     stale_claims.append(claim)
 
                     # Create revalidation trigger
-                    severity = "high" if claim.claim_type == ClaimType.FACTUAL else "medium"
+                    # ASSERTION is used for factual claims (ClaimType.FACTUAL doesn't exist)
+                    severity = "high" if claim.claim_type == ClaimType.ASSERTION else "medium"
                     trigger = RevalidationTrigger(
                         claim_id=claim.claim_id,
                         reason=f"Referenced files changed: {', '.join(affected_files)}",
@@ -523,19 +524,23 @@ class NomicIntegration:
 
         # Find most important contested claim
         if self._belief_network:
-            centralities = self._belief_network.compute_centrality()
+            centralities = self._belief_network._compute_centralities()
             pivot_node = max(
                 contested_claims,
                 key=lambda n: centralities.get(n.claim_id, 0)
             )
         else:
+            centralities = {}
             pivot_node = contested_claims[0]
 
-        # Create pivot claim
+        # Create pivot claim with correct PivotClaim fields
         pivot = PivotClaim(
             claim_id=pivot_node.claim_id,
-            text=pivot_node.claim.text if pivot_node.claim else "Unknown claim",
-            current_belief=pivot_node.belief.expected_truth if pivot_node.belief else 0.5,
+            statement=pivot_node.claim_statement,
+            author=pivot_node.author,
+            disagreement_score=pivot_node.posterior.entropy if pivot_node.posterior else 0.5,
+            importance_score=centralities.get(pivot_node.claim_id, pivot_node.centrality),
+            blocking_agents=[],  # Could be extracted from contested claims
         )
 
         # Create and run branches
@@ -572,7 +577,7 @@ class NomicIntegration:
         result: DebateResult,
         arena=None,
         claims_kernel=None,
-        changed_files: list[str] = None,
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Run all post-debate analyses in one unified call.
@@ -728,7 +733,7 @@ class NomicIntegration:
                 return PhaseCheckpoint(
                     phase=checkpoint.phase,
                     cycle=self._current_cycle,
-                    state=extra.get("state", {}),
+                    state={},  # Extra state not stored in checkpoint
                     checkpoint=checkpoint,
                 )
 
