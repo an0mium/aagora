@@ -33,6 +33,7 @@ from aragora.debate.protocol import CircuitBreaker, DebateProtocol, user_vote_mu
 from aragora.spectate.stream import SpectatorStream
 from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
 from aragora.debate.sanitization import OutputSanitizer
+from aragora.debate.prompt_builder import PromptBuilder
 from aragora.config import USER_EVENT_QUEUE_SIZE
 from aragora.server.prometheus import record_debate_completed
 
@@ -291,6 +292,32 @@ class Arena:
         ExtractorClass = _get_citation_extractor()
         if ExtractorClass:
             self.citation_extractor = ExtractorClass()
+
+        # Initialize PromptBuilder for centralized prompt construction
+        self.prompt_builder = PromptBuilder(
+            protocol=self.protocol,
+            env=self.env,
+            memory=self.memory,
+            continuum_memory=self.continuum_memory,
+            dissent_retriever=self.dissent_retriever,
+            role_rotator=self.role_rotator,
+            persona_manager=self.persona_manager,
+            flip_detector=self.flip_detector,
+        )
+
+    def _sync_prompt_builder_state(self) -> None:
+        """Sync Arena state to PromptBuilder before building prompts.
+
+        This ensures PromptBuilder has access to dynamic state computed by Arena:
+        - Role assignments (updated per round)
+        - Historical context cache (computed once per debate)
+        - Continuum memory context (computed once per debate)
+        - User suggestions (accumulated from audience)
+        """
+        self.prompt_builder.current_role_assignments = self.current_role_assignments
+        self.prompt_builder._historical_context_cache = self._historical_context_cache
+        self.prompt_builder._continuum_context_cache = self._get_continuum_context()
+        self.prompt_builder.user_suggestions = self.user_suggestions
 
     def _get_continuum_context(self) -> str:
         """Retrieve relevant memories from ContinuumMemory for debate context.
@@ -3034,20 +3061,7 @@ Respond with only: CONTINUE or STOP
 
     def _build_judge_vote_prompt(self, candidates: list[Agent], proposals: dict[str, str]) -> str:
         """Build prompt for voting on who should judge."""
-        candidate_names = ", ".join(a.name for a in candidates)
-        proposals_summary = "\n".join(
-            f"- {name}: {prop[:300]}..." for name, prop in proposals.items()
-        )
-
-        return f"""Based on the proposals in this debate, vote for which agent should synthesize the final answer.
-
-Candidates: {candidate_names}
-
-Proposals summary:
-{proposals_summary}
-
-Consider: Which agent showed the most balanced, thorough, and fair reasoning?
-Vote by stating ONLY the agent's name. You cannot vote for yourself."""
+        return self.prompt_builder.build_judge_vote_prompt(candidates, proposals)
 
     def _get_agreement_intensity_guidance(self) -> str:
         """Generate prompt guidance based on agreement intensity setting.
@@ -3207,65 +3221,10 @@ and building on others' ideas."""
         # Drain pending audience events before building prompt
         self._drain_user_events()
 
-        context_str = f"\n\nContext: {self.env.context}" if self.env.context else ""
+        # Sync state to PromptBuilder
+        self._sync_prompt_builder_state()
 
-        # Add research status indicator to help agents understand what information they have
-        research_status = ""
-        if not self.env.context or "No research context" in str(self.env.context):
-            research_status = "\n\n[RESEARCH STATUS: No external research was performed. Base your response on your training knowledge and clearly state any limitations or uncertainties about specific entities, websites, or current events.]"
-        elif "EVIDENCE CONTEXT" in str(self.env.context):
-            research_status = "\n\n[RESEARCH STATUS: Research context has been provided above. Use this information in your response and cite it where applicable.]"
-        stance_str = self._get_stance_guidance(agent)
-        stance_section = f"\n\n{stance_str}" if stance_str else ""
-
-        # Include cognitive role context if role rotation enabled
-        role_section = self._get_role_context(agent)
-        if role_section:
-            role_section = f"\n\n{role_section}"
-
-        # Include persona context for agent specialization
-        persona_section = ""
-        persona_context = self._get_persona_context(agent)
-        if persona_context:
-            persona_section = f"\n\n{persona_context}"
-
-        # Include flip/consistency context for self-awareness
-        flip_section = ""
-        flip_context = self._get_flip_context(agent)
-        if flip_context:
-            flip_section = f"\n\n{flip_context}"
-
-        # Include historical context if available (capped at 800 chars to prevent bloat)
-        historical_section = ""
-        if self._historical_context_cache:
-            historical = self._historical_context_cache[:800]
-            historical_section = f"\n\n{historical}"
-
-        # Include continuum memory context (cross-debate learnings)
-        continuum_section = ""
-        continuum_context = self._get_continuum_context()
-        if continuum_context:
-            continuum_section = f"\n\n{continuum_context}"
-
-        # Include historical dissents and minority views (prevents repeating known mistakes)
-        dissent_section = ""
-        if self.dissent_retriever:
-            try:
-                dissent_context = self.dissent_retriever.get_debate_preparation_context(
-                    topic=self.env.task
-                )
-                if dissent_context:
-                    dissent_section = f"\n\n## Historical Minority Views\n{dissent_context[:600]}"
-            except Exception as e:
-                logger.debug(f"Dissent retrieval error: {e}")
-
-        # Include successful patterns from past debates
-        patterns_section = ""
-        patterns = self._format_successful_patterns(limit=3)
-        if patterns:
-            patterns_section = f"\n\n{patterns}"
-
-        # Inject audience suggestions if enabled
+        # Compute audience section (needs spectator callback)
         audience_section = ""
         if (
             self.protocol.audience_injection in ("summary", "inject")
@@ -3273,8 +3232,6 @@ and building on others' ideas."""
         ):
             clusters = cluster_suggestions(self.user_suggestions)
             audience_section = format_for_prompt(clusters)
-            if audience_section:
-                audience_section = f"\n\n{audience_section}"
 
             # Emit stream event for dashboard
             if self.spectator and clusters:
@@ -3284,17 +3241,7 @@ and building on others' ideas."""
                     metric=len(clusters),
                 )
 
-        return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}{flip_section}
-{historical_section}{continuum_section}{dissent_section}{patterns_section}{audience_section}
-Task: {self.env.task}{context_str}{research_status}
-
-IMPORTANT: If this task mentions a specific website, company, product, or current topic, you MUST:
-1. State what you know vs what you would need to research
-2. If research context was provided above, use it. If not, acknowledge the limitation.
-3. Do NOT make up facts or speculate about specific entities you don't have verified information about.
-
-Please provide your best proposal to address this task. Be thorough and specific.
-Your proposal will be critiqued by other agents, so anticipate potential objections."""
+        return self.prompt_builder.build_proposal_prompt(agent, audience_section)
 
     def _build_revision_prompt(
         self, agent: Agent, original: str, critiques: list[Critique]
@@ -3303,35 +3250,10 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
         # Drain pending audience events before building prompt
         self._drain_user_events()
 
-        critiques_str = "\n\n".join(c.to_prompt() for c in critiques)
-        intensity_guidance = self._get_agreement_intensity_guidance()
-        stance_str = self._get_stance_guidance(agent)
-        stance_section = f"\n\n{stance_str}" if stance_str else ""
+        # Sync state to PromptBuilder
+        self._sync_prompt_builder_state()
 
-        # Include cognitive role context if role rotation enabled
-        role_section = self._get_role_context(agent)
-        if role_section:
-            role_section = f"\n\n{role_section}"
-
-        # Include persona context for agent specialization
-        persona_section = ""
-        persona_context = self._get_persona_context(agent)
-        if persona_context:
-            persona_section = f"\n\n{persona_context}"
-
-        # Include flip/consistency context (especially relevant during revisions)
-        flip_section = ""
-        flip_context = self._get_flip_context(agent)
-        if flip_context:
-            flip_section = f"\n\n{flip_context}"
-
-        # Include successful patterns that may help address critiques
-        patterns_section = ""
-        patterns = self._format_successful_patterns(limit=2)
-        if patterns:
-            patterns_section = f"\n\n{patterns}"
-
-        # Inject audience suggestions if enabled
+        # Compute audience section
         audience_section = ""
         if (
             self.protocol.audience_injection in ("summary", "inject")
@@ -3339,44 +3261,13 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
         ):
             clusters = cluster_suggestions(self.user_suggestions)
             audience_section = format_for_prompt(clusters)
-            if audience_section:
-                audience_section = f"\n\n{audience_section}"
 
-        return f"""You are revising your proposal based on critiques from other agents.{role_section}{persona_section}{flip_section}
-
-{intensity_guidance}{stance_section}{patterns_section}{audience_section}
-
-Original Task: {self.env.task}
-
-Your Original Proposal:
-{original}
-
-Critiques Received:
-{critiques_str}
-
-Please provide a revised proposal that addresses the valid critiques.
-Explain what you changed and why. If you disagree with a critique, explain your reasoning."""
+        return self.prompt_builder.build_revision_prompt(
+            agent, original, critiques, audience_section
+        )
 
     def _build_judge_prompt(
         self, proposals: dict[str, str], task: str, critiques: list[Critique]
     ) -> str:
         """Build the judge/synthesizer prompt."""
-        proposals_str = "\n\n---\n\n".join(
-            f"[{agent}]:\n{prop}" for agent, prop in proposals.items()
-        )
-        critiques_str = "\n".join(
-            f"- {c.agent}: {', '.join(c.issues[:2])}" for c in critiques[:5]
-        )
-
-        return f"""You are the synthesizer/judge in a multi-agent debate.
-
-Task: {task}
-
-Proposals:
-{proposals_str}
-
-Key Critiques:
-{critiques_str}
-
-Synthesize the best elements of all proposals into a final answer.
-Address the most important critiques raised. Explain your synthesis."""
+        return self.prompt_builder.build_judge_prompt(proposals, task, critiques)
