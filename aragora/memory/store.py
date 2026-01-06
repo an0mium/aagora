@@ -18,8 +18,11 @@ from aragora.utils.json_helpers import safe_json_loads
 from aragora.server.handlers.base import ttl_cache
 
 
-# Import WAL connection helper and safe column operations from storage module
-from aragora.storage.schema import get_wal_connection, DB_TIMEOUT, safe_add_column
+# Import WAL connection helper and schema management from storage module
+from aragora.storage.schema import get_wal_connection, DB_TIMEOUT, safe_add_column, SchemaManager
+
+# Schema version for CritiqueStore migrations
+CRITIQUE_STORE_SCHEMA_VERSION = 1
 
 
 @dataclass
@@ -138,12 +141,16 @@ class CritiqueStore:
             conn.close()
 
     def _init_db(self) -> None:
-        """Initialize the database schema."""
+        """Initialize the database schema using SchemaManager."""
         with self._get_connection() as conn:
-            cursor = conn.cursor()
+            # Use SchemaManager for version tracking and migrations
+            manager = SchemaManager(
+                conn, "critique_store", current_version=CRITIQUE_STORE_SCHEMA_VERSION
+            )
 
-            # Debates table
-            cursor.execute("""
+            # Initial schema (v1) - includes all tables with full column set
+            initial_schema = """
+                -- Debates table
                 CREATE TABLE IF NOT EXISTS debates (
                     id TEXT PRIMARY KEY,
                     task TEXT NOT NULL,
@@ -154,11 +161,9 @@ class CritiqueStore:
                     duration_seconds REAL,
                     grounded_verdict TEXT,  -- JSON: evidence, citations, grounding score
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+                );
 
-            # Critiques table
-            cursor.execute("""
+                -- Critiques table (includes Titans/MIRAS prediction tracking)
                 CREATE TABLE IF NOT EXISTS critiques (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     debate_id TEXT,
@@ -169,13 +174,14 @@ class CritiqueStore:
                     severity REAL,
                     reasoning TEXT,
                     led_to_improvement INTEGER DEFAULT 0,
+                    expected_usefulness REAL DEFAULT 0.5,
+                    actual_usefulness REAL,
+                    prediction_error REAL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (debate_id) REFERENCES debates(id)
-                )
-            """)
+                );
 
-            # Patterns table - aggregated successful patterns
-            cursor.execute("""
+                -- Patterns table (includes Titans/MIRAS surprise scoring)
                 CREATE TABLE IF NOT EXISTS patterns (
                     id TEXT PRIMARY KEY,
                     issue_type TEXT NOT NULL,
@@ -184,78 +190,36 @@ class CritiqueStore:
                     success_count INTEGER DEFAULT 0,
                     failure_count INTEGER DEFAULT 0,
                     avg_severity REAL DEFAULT 0.5,
+                    surprise_score REAL DEFAULT 0.0,
+                    base_rate REAL DEFAULT 0.5,
+                    avg_prediction_error REAL DEFAULT 0.0,
+                    prediction_count INTEGER DEFAULT 0,
                     example_task TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+                );
 
-            # Pattern embeddings for semantic search (optional, for future)
-            cursor.execute("""
+                -- Pattern embeddings for semantic search (optional, for future)
                 CREATE TABLE IF NOT EXISTS pattern_embeddings (
                     pattern_id TEXT PRIMARY KEY,
                     embedding BLOB,
                     FOREIGN KEY (pattern_id) REFERENCES patterns(id)
-                )
-            """)
+                );
 
-            # Agent reputation tracking for weighted voting
-            cursor.execute("""
+                -- Agent reputation tracking (includes Titans/MIRAS calibration)
                 CREATE TABLE IF NOT EXISTS agent_reputation (
                     agent_name TEXT PRIMARY KEY,
                     proposals_made INTEGER DEFAULT 0,
                     proposals_accepted INTEGER DEFAULT 0,
                     critiques_given INTEGER DEFAULT 0,
                     critiques_valuable INTEGER DEFAULT 0,
+                    total_predictions INTEGER DEFAULT 0,
+                    total_prediction_error REAL DEFAULT 0.0,
+                    calibration_score REAL DEFAULT 0.5,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+                );
 
-            # Create indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_critiques_debate ON critiques(debate_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_patterns_type ON patterns(issue_type)")
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_patterns_success ON patterns(success_count DESC)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_reputation_score ON agent_reputation(proposals_accepted DESC)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_reputation_agent ON agent_reputation(agent_name)"
-            )
-
-            # === Titans/MIRAS Migrations ===
-            # Add new columns for surprise-based learning and prediction tracking
-            # These use try/except to be idempotent (safe to run multiple times)
-
-            # Patterns table: Add surprise scoring columns
-            # Using safe_add_column to prevent SQL injection
-            for col_name, col_type, default in [
-                ("surprise_score", "REAL", "0.0"),
-                ("base_rate", "REAL", "0.5"),
-                ("avg_prediction_error", "REAL", "0.0"),
-                ("prediction_count", "INTEGER", "0"),
-            ]:
-                safe_add_column(conn, "patterns", col_name, col_type, default)
-
-            # Critiques table: Add prediction tracking columns
-            for col_name, col_type, default in [
-                ("expected_usefulness", "REAL", "0.5"),
-                ("actual_usefulness", "REAL", None),
-                ("prediction_error", "REAL", None),
-            ]:
-                safe_add_column(conn, "critiques", col_name, col_type, default)
-
-            # Agent reputation table: Add calibration scoring columns
-            for col_name, col_type, default in [
-                ("total_predictions", "INTEGER", "0"),
-                ("total_prediction_error", "REAL", "0.0"),
-                ("calibration_score", "REAL", "0.5"),
-            ]:
-                safe_add_column(conn, "agent_reputation", col_name, col_type, default)
-
-            # Create patterns_archive table for adaptive forgetting
-            cursor.execute("""
+                -- Patterns archive table for adaptive forgetting
                 CREATE TABLE IF NOT EXISTS patterns_archive (
                     id TEXT,
                     issue_type TEXT,
@@ -269,8 +233,42 @@ class CritiqueStore:
                     created_at TEXT,
                     updated_at TEXT,
                     archived_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+                );
+
+                -- Indexes
+                CREATE INDEX IF NOT EXISTS idx_critiques_debate ON critiques(debate_id);
+                CREATE INDEX IF NOT EXISTS idx_patterns_type ON patterns(issue_type);
+                CREATE INDEX IF NOT EXISTS idx_patterns_success ON patterns(success_count DESC);
+                CREATE INDEX IF NOT EXISTS idx_reputation_score ON agent_reputation(proposals_accepted DESC);
+                CREATE INDEX IF NOT EXISTS idx_reputation_agent ON agent_reputation(agent_name);
+            """
+
+            # Apply schema (creates tables for new DBs, tracks version for existing)
+            manager.ensure_schema(initial_schema=initial_schema)
+
+            # For existing databases that predate SchemaManager, ensure columns exist
+            # safe_add_column is idempotent (no-op if column already exists)
+            for col_name, col_type, default in [
+                ("surprise_score", "REAL", "0.0"),
+                ("base_rate", "REAL", "0.5"),
+                ("avg_prediction_error", "REAL", "0.0"),
+                ("prediction_count", "INTEGER", "0"),
+            ]:
+                safe_add_column(conn, "patterns", col_name, col_type, default)
+
+            for col_name, col_type, default in [
+                ("expected_usefulness", "REAL", "0.5"),
+                ("actual_usefulness", "REAL", None),
+                ("prediction_error", "REAL", None),
+            ]:
+                safe_add_column(conn, "critiques", col_name, col_type, default)
+
+            for col_name, col_type, default in [
+                ("total_predictions", "INTEGER", "0"),
+                ("total_prediction_error", "REAL", "0.0"),
+                ("calibration_score", "REAL", "0.5"),
+            ]:
+                safe_add_column(conn, "agent_reputation", col_name, col_type, default)
 
             conn.commit()
 

@@ -106,7 +106,8 @@ class TestTierCalculation:
         # Verify add was called with slow tier
         mock_continuum_memory.add.assert_called_once()
         call_args = mock_continuum_memory.add.call_args
-        assert call_args.kwargs["tier"] == "slow"
+        tier = call_args.kwargs["tier"]
+        assert getattr(tier, 'value', tier) == "slow"
 
     def test_slow_tier_for_low_confidence(self, manager, mock_debate_result, mock_continuum_memory):
         """Test that low confidence debates go to slow tier."""
@@ -117,7 +118,8 @@ class TestTierCalculation:
 
         mock_continuum_memory.add.assert_called_once()
         call_args = mock_continuum_memory.add.call_args
-        assert call_args.kwargs["tier"] == "slow"
+        tier = call_args.kwargs["tier"]
+        assert getattr(tier, 'value', tier) == "slow"
 
     def test_medium_tier_for_medium_quality(self, manager, mock_debate_result, mock_continuum_memory):
         """Test that medium quality debates go to medium tier."""
@@ -128,7 +130,8 @@ class TestTierCalculation:
 
         mock_continuum_memory.add.assert_called_once()
         call_args = mock_continuum_memory.add.call_args
-        assert call_args.kwargs["tier"] == "medium"
+        tier = call_args.kwargs["tier"]
+        assert getattr(tier, 'value', tier) == "medium"
 
     def test_fast_tier_for_high_quality(self, manager, mock_debate_result, mock_continuum_memory):
         """Test that high quality debates go to fast tier."""
@@ -139,7 +142,8 @@ class TestTierCalculation:
 
         mock_continuum_memory.add.assert_called_once()
         call_args = mock_continuum_memory.add.call_args
-        assert call_args.kwargs["tier"] == "fast"
+        tier = call_args.kwargs["tier"]
+        assert getattr(tier, 'value', tier) == "fast"
 
     def test_importance_with_consensus_bonus(self, manager, mock_debate_result, mock_continuum_memory):
         """Test that consensus adds 0.1 to importance."""
