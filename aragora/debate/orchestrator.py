@@ -34,6 +34,7 @@ from aragora.spectate.stream import SpectatorStream
 from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
 from aragora.debate.sanitization import OutputSanitizer
 from aragora.debate.prompt_builder import PromptBuilder
+from aragora.debate.memory_manager import MemoryManager
 from aragora.config import USER_EVENT_QUEUE_SIZE
 from aragora.server.prometheus import record_debate_completed
 
@@ -305,6 +306,17 @@ class Arena:
             flip_detector=self.flip_detector,
         )
 
+        # Initialize MemoryManager for centralized memory operations
+        self.memory_manager = MemoryManager(
+            continuum_memory=self.continuum_memory,
+            critique_store=self.memory,
+            debate_embeddings=self.debate_embeddings,
+            domain_extractor=self._extract_debate_domain,
+            event_emitter=self.event_emitter,
+            spectator=self.spectator,
+            loop_id=self.loop_id,
+        )
+
     def _sync_prompt_builder_state(self) -> None:
         """Sync Arena state to PromptBuilder before building prompts.
 
@@ -368,134 +380,20 @@ class Arena:
             return ""
 
     def _store_debate_outcome_as_memory(self, result: "DebateResult") -> None:
-        """Store debate outcome in ContinuumMemory for future retrieval.
-
-        Creates a memory entry from the winning approach to inform future debates.
-        """
-        if not self.continuum_memory or not result.final_answer:
-            return
-
-        try:
-            # Calculate importance based on confidence and consensus
-            importance = min(0.95, (result.confidence + 0.5) / 1.5)
-            if result.consensus_reached:
-                importance = min(1.0, importance + 0.1)
-
-            # Determine tier based on debate quality
-            # Multi-round debates with high confidence go to faster tiers
-            if result.rounds_used >= 2 and result.confidence > 0.7:
-                tier = "fast"
-            elif result.rounds_used >= 1 and result.confidence > 0.5:
-                tier = "medium"
-            else:
-                tier = "slow"
-
-            # Store the winning approach with domain context
-            domain = self._extract_debate_domain()
-            memory_content = (
-                f"[{domain}] Debate outcome: {result.final_answer[:300]}... "
-                f"(Confidence: {result.confidence:.0%}, Rounds: {result.rounds_used})"
-            )
-
-            self.continuum_memory.add(
-                id=f"debate_outcome_{result.id[:8]}",
-                content=memory_content,
-                tier=tier,
-                importance=importance,
-                metadata={
-                    "debate_id": result.id,
-                    "task": self.env.task[:100],
-                    "domain": domain,
-                    "winner": result.winner,
-                    "confidence": result.confidence,
-                    "consensus": result.consensus_reached,
-                }
-            )
-            logger.info(f"  [continuum] Stored outcome as {tier}-tier memory (importance: {importance:.2f})")
-
-        except Exception as e:
-            logger.warning(f"  [continuum] Failed to store outcome: {e}")
+        """Store debate outcome in ContinuumMemory for future retrieval."""
+        self.memory_manager.store_debate_outcome(result, self.env.task)
 
     def _store_evidence_in_memory(self, evidence_snippets: list, task: str) -> None:
-        """Store collected evidence snippets in ContinuumMemory for future retrieval.
-
-        Evidence from web research and local docs is valuable for future debates
-        on similar topics. This stores each unique snippet with moderate importance.
-        """
-        if not self.continuum_memory or not evidence_snippets:
-            return
-
-        try:
-            domain = self._extract_debate_domain()
-            stored_count = 0
-
-            for snippet in evidence_snippets[:10]:  # Limit to top 10 snippets
-                # Get content from snippet (handle different formats)
-                content = getattr(snippet, 'content', str(snippet))[:500]
-                source = getattr(snippet, 'source', 'unknown')
-                relevance = getattr(snippet, 'relevance', 0.5)
-
-                if len(content) < 50:  # Skip too-short snippets
-                    continue
-
-                # Store as medium-tier memory with moderate importance
-                try:
-                    self.continuum_memory.add(
-                        id=f"evidence_{hash(content) % 100000:05d}",
-                        content=f"[Evidence:{domain}] {content} (Source: {source})",
-                        tier="medium",
-                        importance=min(0.7, relevance + 0.2),
-                        metadata={
-                            "task": task[:100],
-                            "domain": domain,
-                            "source": source,
-                            "type": "evidence",
-                        }
-                    )
-                    stored_count += 1
-                except Exception as e:
-                    logger.debug(f"Continuum storage error (non-fatal): {e}")
-
-            if stored_count > 0:
-                logger.info(f"  [continuum] Stored {stored_count} evidence snippets for future retrieval")
-
-        except Exception as e:
-            logger.warning(f"  [continuum] Failed to store evidence: {e}")
+        """Store collected evidence snippets in ContinuumMemory for future retrieval."""
+        self.memory_manager.store_evidence(evidence_snippets, task)
 
     def _update_continuum_memory_outcomes(self, result: "DebateResult") -> None:
-        """Update retrieved memories based on debate outcome.
-
-        Implements surprise-based learning: memories that led to successful
-        debates get reinforced, those that didn't get demoted.
-        """
-        if not self.continuum_memory or not self._continuum_retrieved_ids:
-            return
-
-        try:
-            success = result.consensus_reached and result.confidence > 0.6
-            updated_count = 0
-
-            for mem_id in self._continuum_retrieved_ids:
-                try:
-                    # Update outcome with prediction error based on debate confidence
-                    prediction_error = 1.0 - result.confidence if success else result.confidence
-                    self.continuum_memory.update_outcome(
-                        id=mem_id,
-                        success=success,
-                        agent_prediction_error=prediction_error,
-                    )
-                    updated_count += 1
-                except Exception as e:
-                    logger.debug(f"  [continuum] Failed to update memory {mem_id}: {e}")
-
-            if updated_count > 0:
-                logger.info(f"  [continuum] Updated {updated_count} memories with outcome (success={success})")
-
-            # Clear tracked IDs after update
-            self._continuum_retrieved_ids = []
-
-        except Exception as e:
-            logger.warning(f"  [continuum] Failed to update memory outcomes: {e}")
+        """Update retrieved memories based on debate outcome."""
+        # Sync tracked IDs to memory manager
+        self.memory_manager.track_retrieved_ids(self._continuum_retrieved_ids)
+        self.memory_manager.update_memory_outcomes(result)
+        # Clear local tracking
+        self._continuum_retrieved_ids = []
 
     def _extract_citation_needs(self, proposals: dict[str, str]) -> dict[str, list[dict]]:
         """Extract claims that need citations from all proposals.
@@ -1153,123 +1051,16 @@ class Arena:
             logger.debug(f"Formal verification error: {e}")
 
     async def _fetch_historical_context(self, task: str, limit: int = 3) -> str:
-        """Fetch similar past debates for historical context.
-
-        This enables agents to learn from what worked (or didn't) in similar debates.
-        """
-        if not self.debate_embeddings:
-            return ""
-
-        try:
-            results = await self.debate_embeddings.find_similar_debates(
-                task, limit=limit, min_similarity=0.6
-            )
-            if not results:
-                return ""
-
-            # Emit memory_recall event for dashboard visualization ("Brain Flash")
-            top_similarity = results[0][2] if results else 0
-            if self.spectator:
-                self._notify_spectator(
-                    "memory_recall",
-                    details=f"Retrieved {len(results)} similar debates (top: {top_similarity:.0%})",
-                    metric=top_similarity
-                )
-            # Also emit to WebSocket stream for live dashboard (full content, no truncation)
-            if self.event_emitter:
-                from aragora.server.stream import StreamEvent, StreamEventType
-                self.event_emitter.emit(StreamEvent(
-                    type=StreamEventType.MEMORY_RECALL,
-                    loop_id=getattr(self, 'loop_id', ''),
-                    data={
-                        "query": task,
-                        "hits": [{"topic": excerpt, "similarity": round(sim, 2)} for _, excerpt, sim in results[:3]],
-                        "count": len(results)
-                    }
-                ))
-
-            lines = ["## HISTORICAL CONTEXT (Similar Past Debates)"]
-            lines.append("Learn from these previous debates on similar topics:\n")
-
-            for debate_id, excerpt, similarity in results:
-                lines.append(f"**[{similarity:.0%} similar]** {excerpt}")
-                lines.append("")  # blank line between entries
-
-            return "\n".join(lines)
-        except Exception as e:
-            logger.debug(f"Historical context formatting error: {e}")
-            return ""
+        """Fetch similar past debates for historical context."""
+        return await self.memory_manager.fetch_historical_context(task, limit)
 
     def _format_patterns_for_prompt(self, patterns: list[dict]) -> str:
-        """Format learned patterns as prompt context for agents.
-
-        This enables pattern-based learning: agents are warned about
-        recurring issues from past debates before they make the same mistakes.
-
-        Args:
-            patterns: List of pattern dicts with 'category', 'pattern', 'occurrences'
-
-        Returns:
-            Formatted string to inject into debate context
-        """
-        if not patterns:
-            return ""
-
-        lines = ["## LEARNED PATTERNS (From Previous Debates)"]
-        lines.append("Be especially careful about these recurring issues:\n")
-
-        for p in patterns[:5]:  # Limit to top 5 patterns
-            category = p.get("category", "general")
-            pattern = p.get("pattern", "")
-            occurrences = p.get("occurrences", 0)
-            severity = p.get("avg_severity", 0)
-
-            severity_label = ""
-            if severity >= 0.7:
-                severity_label = " [HIGH SEVERITY]"
-            elif severity >= 0.4:
-                severity_label = " [MEDIUM]"
-
-            lines.append(f"- **{category.upper()}**{severity_label}: {pattern}")
-            lines.append(f"  (Occurred in {occurrences} past debates)")
-
-        lines.append("\nAddress these proactively to improve debate quality.")
-        return "\n".join(lines)
+        """Format learned patterns as prompt context for agents."""
+        return self.memory_manager._format_patterns_for_prompt(patterns)
 
     def _get_successful_patterns_from_memory(self, limit: int = 5) -> str:
-        """Retrieve successful patterns from CritiqueStore memory.
-
-        Patterns are historical argument patterns that led to consensus.
-        Injecting them into debate context helps agents avoid past mistakes
-        and reuse successful approaches.
-
-        Returns:
-            Formatted string to inject into debate context, or empty string
-        """
-        if not self.memory:
-            return ""
-
-        try:
-            # CritiqueStore.retrieve_patterns returns Pattern objects
-            patterns = self.memory.retrieve_patterns(min_success=1, limit=limit)
-            if not patterns:
-                return ""
-
-            # Convert Pattern objects to dict format expected by _format_patterns_for_prompt
-            pattern_dicts = [
-                {
-                    "category": p.issue_type,
-                    "pattern": f"{p.issue_text} → {p.suggestion_text}" if p.suggestion_text else p.issue_text,
-                    "occurrences": p.success_count,
-                    "avg_severity": p.avg_severity,
-                }
-                for p in patterns
-            ]
-
-            return self._format_patterns_for_prompt(pattern_dicts)
-        except Exception as e:
-            logger.debug(f"Failed to retrieve patterns: {e}")
-            return ""
+        """Retrieve successful patterns from CritiqueStore memory."""
+        return self.memory_manager.get_successful_patterns(limit)
 
     async def _perform_research(self, task: str) -> str:
         """Perform multi-source research for the debate topic and return formatted context.
