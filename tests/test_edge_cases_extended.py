@@ -305,3 +305,198 @@ class TestEmptyCollectionGuards:
         # sorted with key also works
         result = sorted(items, key=lambda x: x)
         assert result == []
+
+
+# ============================================================================
+# Consensus Handler Topic Validation Edge Cases
+# ============================================================================
+
+class TestConsensusTopicValidation:
+    """Test topic length validation boundary conditions."""
+
+    def test_topic_exactly_500_chars_accepted(self):
+        """Test topic at exactly 500 chars is accepted."""
+        from aragora.server.handlers.consensus import ConsensusHandler
+        from unittest.mock import MagicMock
+
+        handler = ConsensusHandler(MagicMock())
+        topic = "x" * 500
+        result = handler.handle("/api/consensus/similar", {"topic": topic}, MagicMock())
+        assert result.status_code == 200
+
+    def test_topic_501_chars_rejected(self):
+        """Test topic at 501 chars is rejected."""
+        from aragora.server.handlers.consensus import ConsensusHandler
+        from unittest.mock import MagicMock
+
+        handler = ConsensusHandler(MagicMock())
+        topic = "x" * 501
+        result = handler.handle("/api/consensus/similar", {"topic": topic}, MagicMock())
+        assert result.status_code == 400
+
+    def test_topic_empty_string_rejected(self):
+        """Test empty topic is rejected."""
+        from aragora.server.handlers.consensus import ConsensusHandler
+        from unittest.mock import MagicMock
+
+        handler = ConsensusHandler(MagicMock())
+        result = handler.handle("/api/consensus/similar", {"topic": ""}, MagicMock())
+        assert result.status_code == 400
+
+    def test_topic_whitespace_only_rejected(self):
+        """Test whitespace-only topic is rejected."""
+        from aragora.server.handlers.consensus import ConsensusHandler
+        from unittest.mock import MagicMock
+
+        handler = ConsensusHandler(MagicMock())
+        result = handler.handle("/api/consensus/similar", {"topic": "   "}, MagicMock())
+        # After strip(), this becomes empty
+        assert result.status_code == 400
+
+    def test_topic_as_list_handled(self):
+        """Test topic passed as list (URL query param edge case)."""
+        from aragora.server.handlers.consensus import ConsensusHandler
+        from unittest.mock import MagicMock
+
+        handler = ConsensusHandler(MagicMock())
+        # URL params sometimes come as lists
+        result = handler.handle("/api/consensus/similar", {"topic": ["test topic"]}, MagicMock())
+        assert result.status_code == 200
+
+
+# ============================================================================
+# Orchestrator Deque Overflow Tests
+# ============================================================================
+
+class TestOrchestratorDequeOverflow:
+    """Test deque bounded queue behavior in orchestrator."""
+
+    def test_user_votes_deque_bounded(self):
+        """Test user_votes deque respects maxlen."""
+        from collections import deque
+        from aragora.config import USER_EVENT_QUEUE_SIZE
+
+        # Simulate the deque behavior
+        votes = deque(maxlen=USER_EVENT_QUEUE_SIZE)
+
+        # Add more items than maxlen
+        for i in range(USER_EVENT_QUEUE_SIZE + 100):
+            votes.append({"vote": i})
+
+        # Should be capped at maxlen
+        assert len(votes) == USER_EVENT_QUEUE_SIZE
+        # Oldest should be evicted
+        assert votes[0]["vote"] == 100  # First 100 evicted
+
+    def test_user_suggestions_deque_bounded(self):
+        """Test user_suggestions deque respects maxlen."""
+        from collections import deque
+        from aragora.config import USER_EVENT_QUEUE_SIZE
+
+        suggestions = deque(maxlen=USER_EVENT_QUEUE_SIZE)
+
+        for i in range(USER_EVENT_QUEUE_SIZE * 2):
+            suggestions.append({"suggestion": f"idea_{i}"})
+
+        assert len(suggestions) == USER_EVENT_QUEUE_SIZE
+
+
+# ============================================================================
+# Phase Module Edge Cases
+# ============================================================================
+
+class TestPhaseModuleEdgeCases:
+    """Test edge cases in extracted phase modules."""
+
+    def test_voting_phase_empty_votes(self):
+        """Test VotingPhase handles empty vote list."""
+        from aragora.debate.phases import VotingPhase
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol.vote_grouping = True
+        protocol.vote_grouping_threshold = 0.8
+
+        phase = VotingPhase(protocol)
+        groups = phase.group_similar_votes([])
+        assert groups == {}
+
+    def test_voting_phase_single_vote(self):
+        """Test VotingPhase handles single vote."""
+        from aragora.debate.phases import VotingPhase
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol.vote_grouping = True
+        protocol.vote_grouping_threshold = 0.8
+
+        vote = MagicMock()
+        vote.choice = "option_a"
+
+        phase = VotingPhase(protocol)
+        groups = phase.group_similar_votes([vote])
+        assert groups == {}  # Need 2+ choices to group
+
+    def test_critique_phase_empty_critics(self):
+        """Test CritiquePhase handles empty critic list."""
+        from aragora.debate.phases import CritiquePhase
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol.topology = "all-to-all"
+
+        phase = CritiquePhase(protocol, [])
+        critics = phase.select_critics_for_proposal("agent1", [])
+        assert critics == []
+
+    def test_judgment_phase_no_agents(self):
+        """Test JudgmentPhase raises with no agents."""
+        from aragora.debate.phases import JudgmentPhase
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol.judge_selection = "random"
+
+        phase = JudgmentPhase(protocol, [])
+
+        with pytest.raises(ValueError, match="[Nn]o agents"):
+            phase._require_agents()
+
+    def test_roles_manager_single_agent(self):
+        """Test RolesManager handles single agent."""
+        from aragora.debate.phases import RolesManager
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol.proposer_count = 1
+        protocol.asymmetric_stances = False
+
+        agent = MagicMock()
+        agent.role = None
+
+        manager = RolesManager(protocol, [agent])
+        manager.assign_roles()
+
+        # Single agent should be proposer
+        assert agent.role == "proposer"
+
+    def test_roles_manager_two_agents(self):
+        """Test RolesManager handles two agents."""
+        from aragora.debate.phases import RolesManager
+        from unittest.mock import MagicMock
+
+        protocol = MagicMock()
+        protocol.proposer_count = 1
+        protocol.asymmetric_stances = False
+
+        agent1 = MagicMock()
+        agent1.role = None
+        agent2 = MagicMock()
+        agent2.role = None
+
+        manager = RolesManager(protocol, [agent1, agent2])
+        manager.assign_roles()
+
+        # With 2 agents: 1 proposer, 1 synthesizer
+        assert agent1.role == "proposer"
+        assert agent2.role == "synthesizer"
