@@ -23,37 +23,20 @@ from .base import (
     error_response,
     SAFE_ID_PATTERN,
 )
+from aragora.utils.optional_imports import try_import_class
 
 logger = logging.getLogger(__name__)
 
-# Lazy import flags
-PROBER_AVAILABLE = False
-REDTEAM_AVAILABLE = False
-DEBATE_AVAILABLE = False
-CapabilityProber = None
-RedTeamMode = None
-create_agent = None
-
-try:
-    from aragora.modes.prober import CapabilityProber as _CP
-    CapabilityProber = _CP
-    PROBER_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from aragora.modes.redteam import RedTeamMode as _RT
-    RedTeamMode = _RT
-    REDTEAM_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from aragora.debate import create_agent as _ca
-    create_agent = _ca
-    DEBATE_AVAILABLE = True
-except ImportError:
-    pass
+# Lazy imports for optional dependencies using centralized utility
+CapabilityProber, PROBER_AVAILABLE = try_import_class(
+    "aragora.modes.prober", "CapabilityProber"
+)
+RedTeamMode, REDTEAM_AVAILABLE = try_import_class(
+    "aragora.modes.redteam", "RedTeamMode"
+)
+create_agent, DEBATE_AVAILABLE = try_import_class(
+    "aragora.debate", "create_agent"
+)
 
 from aragora.server.error_utils import safe_error_message as _safe_error_message
 from aragora.debate.sanitization import OutputSanitizer

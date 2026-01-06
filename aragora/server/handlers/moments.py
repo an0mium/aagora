@@ -21,6 +21,7 @@ from .base import (
     validate_path_segment,
     SAFE_ID_PATTERN,
 )
+from aragora.utils.optional_imports import try_import
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +36,12 @@ VALID_MOMENT_TYPES = {
     "domain_mastery",
 }
 
-# Lazy imports for optional dependencies
-MOMENT_DETECTOR_AVAILABLE = False
-MomentDetector = None
-SignificantMoment = None
-
-try:
-    from aragora.agents.grounded import MomentDetector as _MD, SignificantMoment as _SM
-    MomentDetector = _MD
-    SignificantMoment = _SM
-    MOMENT_DETECTOR_AVAILABLE = True
-except ImportError:
-    pass
+# Lazy imports for optional dependencies using centralized utility
+_moment_imports, MOMENT_DETECTOR_AVAILABLE = try_import(
+    "aragora.agents.grounded", "MomentDetector", "SignificantMoment"
+)
+MomentDetector = _moment_imports["MomentDetector"]
+SignificantMoment = _moment_imports["SignificantMoment"]
 
 from aragora.server.error_utils import safe_error_message as _safe_error_message
 

@@ -24,21 +24,16 @@ from .base import (
     DB_TIMEOUT_SECONDS,
 )
 from aragora.server.validation import SAFE_ID_PATTERN_WITH_DOTS as SAFE_ID_PATTERN
+from aragora.utils.optional_imports import try_import
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports for optional dependencies
-GENESIS_AVAILABLE = False
-GenesisLedger = None
-GenesisEventType = None
-
-try:
-    from aragora.genesis.ledger import GenesisLedger as _GL, GenesisEventType as _GET
-    GenesisLedger = _GL
-    GenesisEventType = _GET
-    GENESIS_AVAILABLE = True
-except ImportError:
-    pass
+# Lazy imports for optional dependencies using centralized utility
+_genesis_imports, GENESIS_AVAILABLE = try_import(
+    "aragora.genesis.ledger", "GenesisLedger", "GenesisEventType"
+)
+GenesisLedger = _genesis_imports["GenesisLedger"]
+GenesisEventType = _genesis_imports["GenesisEventType"]
 
 from aragora.server.error_utils import safe_error_message as _safe_error_message
 

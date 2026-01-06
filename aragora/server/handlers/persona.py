@@ -23,29 +23,17 @@ from .base import (
     get_string_param,
     validate_agent_name,
 )
+from aragora.utils.optional_imports import try_import_class
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports for optional dependencies
-GROUNDED_AVAILABLE = False
-PersonaSynthesizer = None
-
-try:
-    from aragora.agents.grounded import PersonaSynthesizer as _PS
-    PersonaSynthesizer = _PS
-    GROUNDED_AVAILABLE = True
-except ImportError:
-    pass
-
-POSITION_TRACKER_AVAILABLE = False
-PositionTracker = None
-
-try:
-    from aragora.agents.truth_grounding import PositionTracker as _PT
-    PositionTracker = _PT
-    POSITION_TRACKER_AVAILABLE = True
-except ImportError:
-    pass
+# Lazy imports for optional dependencies using centralized utility
+PersonaSynthesizer, GROUNDED_AVAILABLE = try_import_class(
+    "aragora.agents.grounded", "PersonaSynthesizer"
+)
+PositionTracker, POSITION_TRACKER_AVAILABLE = try_import_class(
+    "aragora.agents.truth_grounding", "PositionTracker"
+)
 
 
 class PersonaHandler(BaseHandler):

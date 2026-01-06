@@ -28,6 +28,7 @@ KNOWN_DATABASES = [
     "agora_memory.db",
     "agent_memories.db",
     "consensus_memory.db",
+    "aragora_calibration.db",
     "aragora_insights.db",
     "aragora_personas.db",
     "aragora_positions.db",

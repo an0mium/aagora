@@ -20,39 +20,20 @@ from .base import (
     get_int_param,
     validate_agent_name,
 )
+from aragora.utils.optional_imports import try_import_class
 
 logger = logging.getLogger(__name__)
 
-# Lazy imports for optional dependencies
-INTROSPECTION_AVAILABLE = False
-get_agent_introspection = None
-
-try:
-    from aragora.introspection import get_agent_introspection as _gai
-    get_agent_introspection = _gai
-    INTROSPECTION_AVAILABLE = True
-except ImportError:
-    pass
-
-CRITIQUE_STORE_AVAILABLE = False
-CritiqueStore = None
-
-try:
-    from aragora.memory.store import CritiqueStore as _CS
-    CritiqueStore = _CS
-    CRITIQUE_STORE_AVAILABLE = True
-except ImportError:
-    pass
-
-PERSONA_MANAGER_AVAILABLE = False
-PersonaManager = None
-
-try:
-    from aragora.agents.personas import PersonaManager as _PM
-    PersonaManager = _PM
-    PERSONA_MANAGER_AVAILABLE = True
-except ImportError:
-    pass
+# Lazy imports for optional dependencies using centralized utility
+get_agent_introspection, INTROSPECTION_AVAILABLE = try_import_class(
+    "aragora.introspection", "get_agent_introspection"
+)
+CritiqueStore, CRITIQUE_STORE_AVAILABLE = try_import_class(
+    "aragora.memory.store", "CritiqueStore"
+)
+PersonaManager, PERSONA_MANAGER_AVAILABLE = try_import_class(
+    "aragora.agents.personas", "PersonaManager"
+)
 
 
 class IntrospectionHandler(BaseHandler):

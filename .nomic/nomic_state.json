@@ -16,10 +16,10 @@
     {
       "check": "tests",
       "passed": false,
-      "output": "//docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_formal_verification_backends.py::TestZ3BackendCanVerify::test_can_verify_when_unavailable\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed, 2912 passed, 14 skipped, 7 warnings in 182.47s (0:03:02)\n",
+      "output": "d.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_db_maintenance.py::TestDatabaseMaintenance::test_checkpoint_wal_missing_db\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 failed, 1719 passed, 12 skipped, 6 warnings in 179.76s (0:02:59)\n",
       "note": ""
     }
   ],
-  "saved_at": "2026-01-06T17:26:09.389543",
+  "saved_at": "2026-01-06T17:27:11.933260",
   "cycle": 1
 }
