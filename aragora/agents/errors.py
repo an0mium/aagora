@@ -175,7 +175,7 @@ def handle_agent_errors(
     retry_delay: float = 1.0,
     retry_backoff: float = 2.0,
     max_delay: float = 30.0,
-    retryable_exceptions: tuple = (AgentConnectionError, AgentTimeoutError),
+    retryable_exceptions: tuple = (AgentConnectionError, AgentTimeoutError, AgentRateLimitError),
 ):
     """
     Decorator for async agent methods that standardizes error handling.

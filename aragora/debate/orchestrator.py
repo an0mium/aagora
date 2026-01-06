@@ -2795,21 +2795,46 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
     async def _generate_with_agent(
         self, agent: Agent, prompt: str, context: list[Message]
     ) -> str:
-        """Generate response with an agent, handling errors and sanitizing output."""
-        raw_output = await agent.generate(prompt, context)
-        return OutputSanitizer.sanitize_agent_output(raw_output, agent.name)
+        """Generate response with an agent, handling errors and sanitizing output.
+
+        Implements "Autonomic layer" - catches all exceptions to keep debate alive.
+        """
+        try:
+            raw_output = await agent.generate(prompt, context)
+            return OutputSanitizer.sanitize_agent_output(raw_output, agent.name)
+        except asyncio.TimeoutError:
+            logger.warning(f"[Autonomic] Agent {agent.name} timed out")
+            return f"[System: Agent {agent.name} timed out - skipping this turn]"
+        except Exception as e:
+            # Autonomic containment: convert crashes to valid responses
+            logger.error(f"[Autonomic] Agent {agent.name} failed: {type(e).__name__}: {e}")
+            return f"[System: Agent {agent.name} encountered an error - skipping this turn]"
 
     async def _critique_with_agent(
         self, agent: Agent, proposal: str, task: str, context: list[Message]
-    ) -> Critique:
-        """Get critique from an agent."""
-        return await agent.critique(proposal, task, context)
+    ) -> Optional[Critique]:
+        """Get critique from an agent with autonomic error handling."""
+        try:
+            return await agent.critique(proposal, task, context)
+        except asyncio.TimeoutError:
+            logger.warning(f"[Autonomic] Agent {agent.name} critique timed out")
+            return None
+        except Exception as e:
+            logger.error(f"[Autonomic] Agent {agent.name} critique failed: {e}")
+            return None
 
     async def _vote_with_agent(
         self, agent: Agent, proposals: dict[str, str], task: str
-    ) -> Vote:
-        """Get vote from an agent."""
-        return await agent.vote(proposals, task)
+    ) -> Optional[Vote]:
+        """Get vote from an agent with autonomic error handling."""
+        try:
+            return await agent.vote(proposals, task)
+        except asyncio.TimeoutError:
+            logger.warning(f"[Autonomic] Agent {agent.name} vote timed out")
+            return None
+        except Exception as e:
+            logger.error(f"[Autonomic] Agent {agent.name} vote failed: {e}")
+            return None
 
     def _group_similar_votes(self, votes: list[Vote]) -> dict[str, list[str]]:
         """

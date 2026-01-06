@@ -116,8 +116,13 @@ class EmbeddingProvider:
         return embedding
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts."""
-        return [await self.embed(t) for t in texts]
+        """Generate embeddings for multiple texts.
+
+        Uses asyncio.gather for parallel execution when subclass embed() is async.
+        Subclasses with native batch APIs should override for better performance.
+        """
+        import asyncio
+        return await asyncio.gather(*[self.embed(t) for t in texts])
 
 
 class OpenAIEmbedding(EmbeddingProvider):

@@ -6,6 +6,9 @@ to reduce the orchestrator's complexity and improve maintainability.
 
 Phases:
 - context_init: Context initialization (Phase 0)
+- proposal_phase: Initial proposal generation (Phase 1)
+- debate_rounds: Critique/Revision loop (Phase 2)
+- consensus_phase: Voting and consensus resolution (Phase 3)
 - analytics_phase: Post-consensus analytics (Phases 4-6)
 - feedback_phase: Post-debate feedback loops (Phase 7)
 - voting: Vote collection and aggregation
@@ -20,6 +23,9 @@ Context:
 
 from aragora.debate.context import DebateContext
 from aragora.debate.phases.context_init import ContextInitializer
+from aragora.debate.phases.proposal_phase import ProposalPhase
+from aragora.debate.phases.debate_rounds import DebateRoundsPhase
+from aragora.debate.phases.consensus_phase import ConsensusPhase
 from aragora.debate.phases.analytics_phase import AnalyticsPhase
 from aragora.debate.phases.feedback_phase import FeedbackPhase
 from aragora.debate.phases.voting import VotingPhase
@@ -31,6 +37,9 @@ from aragora.debate.phases.spectator import SpectatorMixin
 __all__ = [
     "DebateContext",
     "ContextInitializer",
+    "ProposalPhase",
+    "DebateRoundsPhase",
+    "ConsensusPhase",
     "AnalyticsPhase",
     "FeedbackPhase",
     "VotingPhase",

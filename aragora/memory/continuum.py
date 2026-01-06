@@ -215,6 +215,8 @@ class ContinuumMemory:
                 CREATE INDEX IF NOT EXISTS idx_continuum_tier ON continuum_memory(tier);
                 CREATE INDEX IF NOT EXISTS idx_continuum_surprise ON continuum_memory(surprise_score DESC);
                 CREATE INDEX IF NOT EXISTS idx_continuum_importance ON continuum_memory(importance DESC);
+                -- Composite index for cleanup_expired_memories() performance
+                CREATE INDEX IF NOT EXISTS idx_continuum_tier_updated ON continuum_memory(tier, updated_at);
 
                 -- Meta-learning state table for hyperparameter tracking
                 CREATE TABLE IF NOT EXISTS meta_learning_state (

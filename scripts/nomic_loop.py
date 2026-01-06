@@ -113,13 +113,33 @@ class PhaseRecovery:
         MemoryError,
     )
 
-    # Errors that indicate rate limiting (should wait longer)
+    # Errors that indicate rate limiting or service issues (should wait longer)
+    # Keep in sync with aragora.agents.cli_agents.RATE_LIMIT_PATTERNS
     RATE_LIMIT_PATTERNS = [
-        "rate limit",
-        "429",
-        "too many requests",
-        "quota exceeded",
-        "resource exhausted",
+        # Rate limiting
+        "rate limit", "rate_limit", "ratelimit",
+        "429", "too many requests", "throttl",
+        # Quota/usage limit errors
+        "quota exceeded", "quota_exceeded",
+        "resource exhausted", "resource_exhausted",
+        "insufficient_quota", "limit exceeded",
+        "usage_limit", "usage limit",  # OpenAI/Codex usage limits
+        "limit has been reached",
+        # Billing errors
+        "billing", "credit balance", "payment required",
+        "purchase credits", "402",
+        # Capacity/availability errors
+        "503", "service unavailable",
+        "502", "bad gateway",
+        "overloaded", "capacity",
+        "temporarily unavailable", "try again later",
+        "server busy", "high demand",
+        # API-specific errors
+        "model overloaded", "model is currently overloaded",
+        "engine is currently overloaded",
+        # CLI-specific errors
+        "argument list too long",  # E2BIG - prompt too large for CLI
+        "broken pipe",  # EPIPE - connection closed unexpectedly
     ]
 
     def __init__(self, log_func: Callable = print):
@@ -153,7 +173,7 @@ class PhaseRecovery:
         # Check for rate limiting (use longer delay)
         error_str = str(error).lower()
         if any(pattern in error_str for pattern in self.RATE_LIMIT_PATTERNS):
-            delay = max(delay, 60)  # Minimum 60s for rate limits
+            delay = max(delay, 120)  # Minimum 120s for rate limits
             self.log(f"  [recovery] Rate limit detected, waiting {delay}s")
 
         return min(delay, 300)  # Cap at 5 minutes
@@ -1139,7 +1159,8 @@ class NomicLoop:
         self.history = []
 
         # Circuit breaker for agent reliability
-        self.circuit_breaker = AgentCircuitBreaker(failure_threshold=3, cooldown_cycles=2)
+        # Threshold=5 gives agents more chances before trip, cooldown=1 allows faster recovery
+        self.circuit_breaker = AgentCircuitBreaker(failure_threshold=5, cooldown_cycles=1)
 
         # Phase recovery for structured error handling
         self.phase_recovery = PhaseRecovery(log_func=lambda msg: print(msg))
@@ -1736,6 +1757,26 @@ class NomicLoop:
 
         # Also emit to stream for real-time dashboard
         self._stream_emit("on_log_message", message, level="info", phase=phase, agent=agent)
+
+    def _validate_openrouter_fallback(self) -> bool:
+        """Check if OpenRouter fallback is available and warn if not.
+
+        Returns True if OpenRouter is configured, False otherwise.
+        The nomic loop will still run without it, but rate-limiting
+        recovery will be limited to retries only.
+        """
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY", "")
+
+        if not openrouter_key:
+            self._log("⚠️  WARNING: OPENROUTER_API_KEY not set")
+            self._log("   OpenRouter fallback will NOT be available for rate limiting")
+            self._log("   Set OPENROUTER_API_KEY in .env for automatic fallback")
+            self._log("-" * 50)
+            return False
+
+        # Key is set - log confirmation
+        self._log("✓ OpenRouter fallback configured (rate limit protection enabled)")
+        return True
 
     def _save_state(self, state: dict):
         """Save current state for crash recovery and monitoring."""
@@ -7098,7 +7139,7 @@ Designs missing any of these will be automatically rejected as non-viable.
             except asyncio.TimeoutError:
                 last_error = f"Timeout after {timeout}s"
                 if attempt < max_retries - 1:
-                    wait_time = min(30, 5 * (backoff_factor ** attempt))
+                    wait_time = min(120, 5 * (backoff_factor ** attempt))
                     self._log(f"    Timeout, waiting {wait_time:.0f}s before retry...", agent=agent.name)
                     await asyncio.sleep(wait_time)
                     timeout = int(timeout * backoff_factor)  # Increase timeout for next attempt
@@ -7106,7 +7147,7 @@ Designs missing any of these will be automatically rejected as non-viable.
             except Exception as e:
                 last_error = str(e)
                 if attempt < max_retries - 1:
-                    wait_time = min(30, 5 * (backoff_factor ** attempt))
+                    wait_time = min(120, 10 * (backoff_factor ** attempt))
                     self._log(f"    Error: {e}, waiting {wait_time:.0f}s before retry...", agent=agent.name)
                     await asyncio.sleep(wait_time)
 
@@ -8937,6 +8978,9 @@ Working directory: {self.aragora_path}
         self._log(f"Backup dir: {self.backup_dir}")
         self._log("=" * 70)
 
+        # Validate fallback configuration before starting
+        self._validate_openrouter_fallback()
+
         try:
             while self.cycle_count < self.max_cycles:
                 result = await self.run_cycle()
@@ -9169,6 +9213,24 @@ async def main():
     print("Continuing without streaming...")
     print("=" * 70)
     print()
+
+    # Check for OpenRouter fallback configuration
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        print("=" * 70)
+        print("WARNING: OPENROUTER_API_KEY not set")
+        print("=" * 70)
+        print()
+        print("OpenRouter fallback is DISABLED. If CLI agents hit rate limits,")
+        print("they will fail instead of falling back to OpenRouter API.")
+        print()
+        print("To enable fallback, set OPENROUTER_API_KEY in your environment:")
+        print()
+        print("    export OPENROUTER_API_KEY=your_key_here")
+        print()
+        print("Get a key at: https://openrouter.ai/keys")
+        print()
+        print("=" * 70)
+        print()
 
     initial_proposal = getattr(args, 'proposal', None)
     if hasattr(args, 'proposal_file') and args.proposal_file:

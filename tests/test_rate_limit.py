@@ -294,3 +294,189 @@ class TestConcurrency:
         # Should have some allowed and some possibly limited
         assert len(results) == 100
         assert any(results)  # At least some allowed
+
+
+class TestTokenBucketEdgeCases:
+    """Edge case tests for TokenBucket."""
+
+    def test_zero_rate_per_minute(self):
+        """Test with zero rate - should handle gracefully."""
+        bucket = TokenBucket(rate_per_minute=0, burst_size=5)
+        assert bucket.consume(1) is True  # Can use burst
+        assert bucket.consume(1) is True
+        assert bucket.consume(1) is True
+        assert bucket.consume(1) is True
+        assert bucket.consume(1) is True
+        # After burst, should stay empty since rate=0
+        assert bucket.consume(1) is False
+
+    def test_very_small_rate(self):
+        """Test with very small rate (0.001 tokens/minute)."""
+        bucket = TokenBucket(rate_per_minute=0.001, burst_size=1)
+        assert bucket.consume(1) is True
+        # Should need ~60000 seconds to get next token
+        retry_after = bucket.get_retry_after()
+        assert retry_after > 0
+
+    def test_consume_zero_tokens(self):
+        """Test consuming zero tokens."""
+        bucket = TokenBucket(rate_per_minute=60, burst_size=5)
+        assert bucket.consume(0) is True
+        assert bucket.remaining == 5  # Should not consume
+
+    def test_consume_negative_tokens(self):
+        """Test consuming negative tokens - should add tokens back."""
+        bucket = TokenBucket(rate_per_minute=60, burst_size=5)
+        initial = bucket.remaining
+        bucket.consume(-1)  # This is technically allowed
+        assert bucket.remaining >= initial  # Tokens added
+
+    def test_consume_more_than_burst(self):
+        """Test consuming more tokens than burst size."""
+        bucket = TokenBucket(rate_per_minute=60, burst_size=5)
+        assert bucket.consume(10) is False  # Can't consume 10 when max is 5
+
+    def test_get_retry_after_when_full(self):
+        """Test retry_after when bucket is full."""
+        bucket = TokenBucket(rate_per_minute=60, burst_size=5)
+        assert bucket.get_retry_after() == 0
+
+    def test_very_large_rate(self):
+        """Test with very large rate."""
+        bucket = TokenBucket(rate_per_minute=1000000, burst_size=100)
+        assert bucket.consume(50) is True
+        # Should refill quickly
+        bucket.last_refill = time.monotonic() - 0.001  # 1ms ago
+        bucket.consume(1)  # Trigger refill
+        assert bucket.remaining > 45  # Should have refilled some
+
+
+class TestRateLimiterEdgeCases:
+    """Edge case tests for RateLimiter."""
+
+    def test_empty_ip_address(self):
+        """Test with empty IP address."""
+        limiter = RateLimiter()
+        result = limiter.allow("")
+        # Should still work, using "" as key
+        assert result is not None
+
+    def test_none_endpoint(self):
+        """Test with None endpoint."""
+        limiter = RateLimiter()
+        result = limiter.allow("1.1.1.1", endpoint=None)
+        assert result.allowed is True
+
+    def test_very_long_ip_address(self):
+        """Test with very long IP string."""
+        limiter = RateLimiter()
+        long_ip = "a" * 1000  # Malformed but should handle
+        result = limiter.allow(long_ip)
+        assert result is not None
+
+    def test_special_characters_in_endpoint(self):
+        """Test endpoint with special characters."""
+        limiter = RateLimiter()
+        limiter.configure_endpoint("/api/test/*", 30)
+        result = limiter.allow("1.1.1.1", endpoint="/api/test/../../etc/passwd")
+        assert result is not None
+
+    def test_unicode_in_ip(self):
+        """Test with Unicode in IP address."""
+        limiter = RateLimiter()
+        result = limiter.allow("192.168.1.1\u0000malicious")
+        assert result is not None
+
+    def test_lru_eviction_with_many_ips(self):
+        """Test LRU eviction when max_entries exceeded."""
+        limiter = RateLimiter()
+        # Generate many unique IPs
+        for i in range(200):  # More than typical max_entries
+            limiter.allow(f"192.168.{i % 256}.{i // 256}")
+        # Should not crash and still work
+        result = limiter.allow("192.168.0.1")
+        assert result is not None
+
+
+class TestRateLimitResultEdgeCases:
+    """Edge case tests for RateLimitResult headers."""
+
+    def test_headers_with_zero_retry_after(self):
+        """Test headers with retry_after=0."""
+        result = RateLimitResult(
+            allowed=False,
+            remaining=0,
+            limit=60,
+            retry_after=0,
+            key="ip:1.1.1.1",
+        )
+        headers = rate_limit_headers(result)
+        # Should not have Retry-After when it's 0
+        assert headers.get("Retry-After") == "1" or "Retry-After" not in headers
+
+    def test_headers_with_fractional_retry_after(self):
+        """Test headers with fractional retry_after."""
+        result = RateLimitResult(
+            allowed=False,
+            remaining=0,
+            limit=60,
+            retry_after=0.1,
+            key="ip:1.1.1.1",
+        )
+        headers = rate_limit_headers(result)
+        # Should round up to 1
+        assert int(headers.get("Retry-After", "0")) >= 1
+
+    def test_headers_with_very_large_retry_after(self):
+        """Test headers with very large retry_after."""
+        result = RateLimitResult(
+            allowed=False,
+            remaining=0,
+            limit=60,
+            retry_after=999999,
+            key="ip:1.1.1.1",
+        )
+        headers = rate_limit_headers(result)
+        assert "Retry-After" in headers
+
+    def test_headers_with_negative_remaining(self):
+        """Test headers with negative remaining (edge case)."""
+        result = RateLimitResult(
+            allowed=False,
+            remaining=-1,
+            limit=60,
+            retry_after=5,
+            key="ip:1.1.1.1",
+        )
+        headers = rate_limit_headers(result)
+        # Should handle gracefully, maybe showing 0
+        assert headers["X-RateLimit-Remaining"] in ["-1", "0"]
+
+
+class TestRateLimitConfigEdgeCases:
+    """Edge case tests for RateLimitConfig."""
+
+    def test_very_high_rate_endpoint(self):
+        """Test endpoint with very high rate limit."""
+        limiter = RateLimiter()
+        limiter.configure_endpoint("/api/health", 1000000)
+        # Should allow many requests
+        for _ in range(100):
+            result = limiter.allow("1.1.1.1", endpoint="/api/health")
+            assert result.allowed is True
+
+    def test_wildcard_at_start_of_endpoint(self):
+        """Test wildcard at start of endpoint pattern."""
+        limiter = RateLimiter()
+        limiter.configure_endpoint("*/debates", 30)
+        # Should match endpoints ending with /debates
+        config = limiter.get_config("/api/v1/debates")
+        # May or may not match depending on implementation
+
+    def test_empty_endpoint_pattern(self):
+        """Test empty endpoint pattern."""
+        limiter = RateLimiter()
+        limiter.configure_endpoint("", 30)
+        # Should handle gracefully
+        config = limiter.get_config("")
+        assert config is not None

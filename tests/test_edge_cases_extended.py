@@ -500,3 +500,207 @@ class TestPhaseModuleEdgeCases:
         # With 2 agents: 1 proposer, 1 synthesizer
         assert agent1.role == "proposer"
         assert agent2.role == "synthesizer"
+
+
+# ============================================================================
+# OpenRouter Fallback Tests
+# ============================================================================
+
+class TestRateLimitPatternDetection:
+    """Test rate limit error pattern detection."""
+
+    def _check_pattern(self, error_message: str) -> bool:
+        """Check if error message matches any rate limit pattern."""
+        from aragora.agents.cli_agents import RATE_LIMIT_PATTERNS
+        error_str = error_message.lower()
+        return any(pattern in error_str for pattern in RATE_LIMIT_PATTERNS)
+
+    def test_detects_rate_limit_429(self):
+        """Test detection of HTTP 429 rate limit."""
+        assert self._check_pattern("rate limit exceeded")
+        assert self._check_pattern("Rate Limit Exceeded")
+        assert self._check_pattern("429 Too Many Requests")
+
+    def test_detects_quota_exceeded(self):
+        """Test detection of quota errors."""
+        assert self._check_pattern("quota exceeded")
+        assert self._check_pattern("Error: quota_exceeded for account")  # Matches pattern
+        assert self._check_pattern("insufficient_quota")
+
+    def test_detects_network_errors(self):
+        """Test detection of network connectivity errors."""
+        assert self._check_pattern("could not resolve host")
+        assert self._check_pattern("ECONNREFUSED")
+        assert self._check_pattern("network is unreachable")
+        assert self._check_pattern("Name or service not known")
+
+    def test_detects_auth_errors(self):
+        """Test detection of authentication errors."""
+        assert self._check_pattern("invalid_api_key")
+        assert self._check_pattern("unauthorized")
+        assert self._check_pattern("authentication failed")
+
+    def test_detects_cli_errors(self):
+        """Test detection of CLI-specific errors."""
+        assert self._check_pattern("command not found")
+        assert self._check_pattern("permission denied")
+        assert self._check_pattern("No such file or directory")
+
+    def test_non_fallback_errors(self):
+        """Test that regular errors don't trigger fallback."""
+        assert not self._check_pattern("invalid argument")
+        assert not self._check_pattern("syntax error in response")
+        assert not self._check_pattern("empty response")
+
+
+class TestCircuitBreakerBehavior:
+    """Test circuit breaker edge cases."""
+
+    def test_circuit_breaker_threshold(self):
+        """Test circuit breaker trips after threshold failures."""
+        from scripts.nomic_loop import AgentCircuitBreaker
+
+        cb = AgentCircuitBreaker(failure_threshold=3, cooldown_cycles=1)
+
+        # Should not trip on first 2 failures
+        cb.record_failure("agent1")
+        assert cb.is_available("agent1")
+        cb.record_failure("agent1")
+        assert cb.is_available("agent1")
+
+        # Should trip on 3rd failure
+        cb.record_failure("agent1")
+        assert not cb.is_available("agent1")
+
+    def test_circuit_breaker_cooldown(self):
+        """Test circuit breaker cooldown behavior."""
+        from scripts.nomic_loop import AgentCircuitBreaker
+
+        cb = AgentCircuitBreaker(failure_threshold=2, cooldown_cycles=1)
+
+        # Trip the breaker
+        cb.record_failure("agent1")
+        cb.record_failure("agent1")
+        assert not cb.is_available("agent1")
+
+        # After one cycle, should be available again
+        cb.start_new_cycle()
+        assert cb.is_available("agent1")
+
+    def test_circuit_breaker_success_resets(self):
+        """Test that success resets failure count."""
+        from scripts.nomic_loop import AgentCircuitBreaker
+
+        cb = AgentCircuitBreaker(failure_threshold=3, cooldown_cycles=1)
+
+        # Two failures
+        cb.record_failure("agent1")
+        cb.record_failure("agent1")
+
+        # One success resets count
+        cb.record_success("agent1")
+
+        # Need full threshold again to trip
+        cb.record_failure("agent1")
+        assert cb.is_available("agent1")
+        cb.record_failure("agent1")
+        assert cb.is_available("agent1")
+
+    def test_circuit_breaker_multiple_agents(self):
+        """Test circuit breaker tracks agents independently."""
+        from scripts.nomic_loop import AgentCircuitBreaker
+
+        cb = AgentCircuitBreaker(failure_threshold=2, cooldown_cycles=1)
+
+        # Trip agent1
+        cb.record_failure("agent1")
+        cb.record_failure("agent1")
+        assert not cb.is_available("agent1")
+
+        # agent2 should still be available
+        assert cb.is_available("agent2")
+        cb.record_failure("agent2")
+        assert cb.is_available("agent2")
+
+
+class TestOpenRouterFallbackIntegration:
+    """Test OpenRouter fallback integration."""
+
+    def test_fallback_enabled_by_default(self):
+        """Test that fallback is enabled by default in CLI agents."""
+        from aragora.agents.cli_agents import ClaudeAgent
+
+        # Create agent without explicit enable_fallback (uses concrete subclass)
+        agent = ClaudeAgent(name="test", model="claude")
+        assert agent.enable_fallback is True
+
+    def test_fallback_can_be_disabled(self):
+        """Test that fallback can be explicitly disabled."""
+        from aragora.agents.cli_agents import ClaudeAgent
+
+        agent = ClaudeAgent(name="test", model="claude", enable_fallback=False)
+        assert agent.enable_fallback is False
+
+    def test_fallback_requires_api_key(self):
+        """Test fallback behavior when API key is missing."""
+        import os
+        from aragora.agents.cli_agents import ClaudeAgent
+
+        # Temporarily remove API key
+        original = os.environ.pop("OPENROUTER_API_KEY", None)
+        try:
+            agent = ClaudeAgent(name="test", model="claude")
+            # Should still enable fallback, but it won't work without key
+            assert agent.enable_fallback is True
+            # Fallback agent should not be created without key
+            fallback = agent._get_fallback_agent()
+            assert fallback is None
+        finally:
+            if original:
+                os.environ["OPENROUTER_API_KEY"] = original
+
+    def test_is_fallback_error_method(self):
+        """Test the _is_fallback_error method on CLIAgent."""
+        from aragora.agents.cli_agents import ClaudeAgent
+
+        agent = ClaudeAgent(name="test", model="claude")
+
+        # Should detect rate limit errors
+        assert agent._is_fallback_error(Exception("rate limit exceeded"))
+        assert agent._is_fallback_error(Exception("429 Too Many Requests"))
+        assert agent._is_fallback_error(Exception("quota exceeded"))
+
+        # Should detect network errors
+        assert agent._is_fallback_error(Exception("ECONNREFUSED"))
+        assert agent._is_fallback_error(Exception("network is unreachable"))
+
+        # Should not detect regular errors
+        assert not agent._is_fallback_error(Exception("invalid argument"))
+        assert not agent._is_fallback_error(Exception("syntax error"))
+
+
+class TestNoMicLoopValidation:
+    """Test nomic loop startup validation."""
+
+    def test_validate_openrouter_returns_bool(self):
+        """Test OpenRouter validation returns boolean."""
+        import os
+        from scripts.nomic_loop import NomicLoop
+
+        # Create minimal nomic loop instance
+        loop = NomicLoop.__new__(NomicLoop)
+        loop.log_file = "/dev/null"
+
+        # Mock _log and _stream_emit
+        loop._log = lambda msg, **kwargs: None
+        loop._stream_emit = lambda *args, **kwargs: None
+
+        # Test with key set
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
+        result = loop._validate_openrouter_fallback()
+        assert isinstance(result, bool)
+
+        # Test without key
+        del os.environ["OPENROUTER_API_KEY"]
+        result = loop._validate_openrouter_fallback()
+        assert result is False

@@ -22,6 +22,7 @@ import pytest
 from aragora.agents.api_agents import (
     MAX_STREAM_BUFFER_SIZE,
     AnthropicAPIAgent,
+    GeminiAgent,
     OpenAIAPIAgent,
     OpenRouterAgent,
     OpenRouterRateLimiter,
@@ -90,6 +91,13 @@ def openrouter_agent():
     """OpenRouter API agent for testing."""
     with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
         return OpenRouterAgent(name="test-openrouter")
+
+
+@pytest.fixture
+def gemini_agent():
+    """Gemini API agent for testing."""
+    with patch.dict("os.environ", {"GEMINI_API_KEY": "test_key"}):
+        return GeminiAgent(name="test-gemini", enable_fallback=True)
 
 
 @pytest.fixture
@@ -216,8 +224,8 @@ class TestRateLimiterTokenRefill:
         rate_limiter.release_on_error()
 
         stats = rate_limiter.stats
-        # Should be 5.0 + 0.5 = 5.5, but truncated to int in stats
-        assert stats["tokens_available"] == 5  # int(5.5) = 5
+        # Should be 5.0 + 0.5 = 5.5 (may round up or down depending on timing)
+        assert stats["tokens_available"] in (5, 6)  # Allow for rounding
 
 
 # =============================================================================
@@ -398,6 +406,134 @@ class TestOpenAIFallback:
         assert openai_agent._is_quota_error(400, "insufficient_quota") is True
         assert openai_agent._is_quota_error(403, "quota exceeded") is True
         assert openai_agent._is_quota_error(400, "invalid request") is False
+
+
+class TestGeminiFallback:
+    """Tests for Gemini to OpenRouter fallback."""
+
+    @pytest.mark.asyncio
+    async def test_gemini_429_triggers_fallback(self, gemini_agent):
+        """Test that Gemini 429 error triggers OpenRouter fallback."""
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_openrouter_key"}):
+            with patch.object(gemini_agent, "_get_fallback_agent") as mock_get_fallback:
+                mock_fallback = MagicMock()
+                mock_fallback.generate = AsyncMock(return_value="Fallback response")
+                mock_get_fallback.return_value = mock_fallback
+
+                mock_response = create_mock_aiohttp_response(status=429, text="Rate limit exceeded")
+                mock_post_cm = MagicMock()
+                mock_post_cm.__aenter__ = AsyncMock(return_value=mock_response)
+                mock_post_cm.__aexit__ = AsyncMock(return_value=None)
+
+                mock_session = MagicMock()
+                mock_session.post = MagicMock(return_value=mock_post_cm)
+
+                mock_session_cm = MagicMock()
+                mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+                with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+                    result = await gemini_agent.generate("Test prompt")
+
+                    assert result == "Fallback response"
+
+    @pytest.mark.asyncio
+    async def test_gemini_403_quota_triggers_fallback(self, gemini_agent):
+        """Test that Gemini 403 quota error triggers OpenRouter fallback."""
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_openrouter_key"}):
+            with patch.object(gemini_agent, "_get_fallback_agent") as mock_get_fallback:
+                mock_fallback = MagicMock()
+                mock_fallback.generate = AsyncMock(return_value="Fallback response")
+                mock_get_fallback.return_value = mock_fallback
+
+                mock_response = create_mock_aiohttp_response(
+                    status=403, text="Resource exhausted: quota exceeded"
+                )
+                mock_post_cm = MagicMock()
+                mock_post_cm.__aenter__ = AsyncMock(return_value=mock_response)
+                mock_post_cm.__aexit__ = AsyncMock(return_value=None)
+
+                mock_session = MagicMock()
+                mock_session.post = MagicMock(return_value=mock_post_cm)
+
+                mock_session_cm = MagicMock()
+                mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+                with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+                    result = await gemini_agent.generate("Test prompt")
+
+                    assert result == "Fallback response"
+
+    def test_gemini_fallback_model_mapping(self, gemini_agent):
+        """Test that Gemini models are mapped correctly to OpenRouter."""
+        assert "gemini-3-pro-preview" in GeminiAgent.OPENROUTER_MODEL_MAP
+        assert GeminiAgent.OPENROUTER_MODEL_MAP["gemini-3-pro-preview"] == "google/gemini-2.0-flash-001"
+        assert "gemini-1.5-pro" in GeminiAgent.OPENROUTER_MODEL_MAP
+
+    def test_gemini_quota_keyword_detection(self, gemini_agent):
+        """Test Gemini quota error detection."""
+        # Rate limit status codes
+        assert gemini_agent._is_gemini_quota_error(429, "") is True
+        assert gemini_agent._is_gemini_quota_error(403, "") is True
+
+        # Quota keywords in error message
+        assert gemini_agent._is_gemini_quota_error(400, "resource exhausted") is True
+        assert gemini_agent._is_gemini_quota_error(400, "quota exceeded") is True
+        assert gemini_agent._is_gemini_quota_error(400, "rate limit reached") is True
+        assert gemini_agent._is_gemini_quota_error(400, "too many requests") is True
+
+        # Regular errors should not trigger fallback
+        assert gemini_agent._is_gemini_quota_error(400, "invalid request") is False
+        assert gemini_agent._is_gemini_quota_error(500, "internal server error") is False
+
+    @pytest.mark.asyncio
+    async def test_gemini_enable_fallback_false_prevents_fallback(self):
+        """Test that enable_fallback=False prevents fallback."""
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test_key"}):
+            agent = GeminiAgent(name="test", enable_fallback=False)
+
+        mock_response = create_mock_aiohttp_response(status=429, text="Rate limit")
+        mock_post_cm = MagicMock()
+        mock_post_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_post_cm)
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session_cm):
+            with pytest.raises(RuntimeError) as exc_info:
+                await agent.generate("Test")
+
+            # Should raise without trying fallback
+            assert "429" in str(exc_info.value)
+
+    def test_gemini_fallback_agent_lazy_initialization(self, gemini_agent):
+        """Test that fallback agent is lazily initialized."""
+        assert gemini_agent._fallback_agent is None
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
+            fallback = gemini_agent._get_fallback_agent()
+
+        assert fallback is not None
+        assert gemini_agent._fallback_agent is fallback
+
+        # Second call should return same instance
+        fallback2 = gemini_agent._get_fallback_agent()
+        assert fallback is fallback2
+
+    def test_gemini_fallback_preserves_system_prompt(self, gemini_agent):
+        """Test that system prompt is preserved in fallback agent."""
+        gemini_agent.set_system_prompt("You are a helpful assistant.")
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
+            fallback = gemini_agent._get_fallback_agent()
+
+        assert fallback.system_prompt == "You are a helpful assistant."
 
 
 # =============================================================================

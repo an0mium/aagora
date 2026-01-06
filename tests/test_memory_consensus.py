@@ -1041,3 +1041,142 @@ class TestSimilarDebate:
         )
 
         assert similar.relevance_notes == ""
+
+
+# =============================================================================
+# Test _get_dissents_batch optimization
+# =============================================================================
+
+
+class TestGetDissentsBatch:
+    """Tests for the _get_dissents_batch optimization method."""
+
+    @pytest.fixture
+    def consensus_with_dissents(self, consensus_memory):
+        """Create multiple consensus records with dissents for batch testing."""
+        consensus_ids = []
+        for i in range(3):
+            record = consensus_memory.store_consensus(
+                topic=f"Batch test topic {i}",
+                conclusion=f"Conclusion {i}",
+                strength=ConsensusStrength.STRONG,
+                confidence=0.8,
+                participating_agents=["agent1", "agent2"],
+                agreeing_agents=["agent1"],
+            )
+            consensus_ids.append(record.id)
+            # Add dissents for each consensus (debate_id links to consensus id)
+            for j in range(2):
+                consensus_memory.store_dissent(
+                    debate_id=record.id,
+                    agent_id=f"dissenter_{j}",
+                    dissent_type=DissentType.ALTERNATIVE_APPROACH,
+                    content=f"Dissent {j} for consensus {i}",
+                    reasoning=f"Reasoning {j}",
+                    confidence=0.7,
+                )
+        return consensus_ids
+
+    def test_batch_returns_all_dissents(self, consensus_memory, consensus_with_dissents):
+        """Should return dissents for all requested consensus IDs."""
+        result = consensus_memory._get_dissents_batch(consensus_with_dissents)
+
+        assert len(result) == 3
+        for cid in consensus_with_dissents:
+            assert cid in result
+            assert len(result[cid]) == 2
+
+    def test_batch_empty_list(self, consensus_memory):
+        """Should handle empty consensus ID list."""
+        result = consensus_memory._get_dissents_batch([])
+        assert result == {}
+
+    def test_batch_nonexistent_ids(self, consensus_memory):
+        """Should return empty lists for nonexistent IDs."""
+        result = consensus_memory._get_dissents_batch(["fake-id-1", "fake-id-2"])
+        assert result == {"fake-id-1": [], "fake-id-2": []}
+
+    def test_batch_mixed_existing_nonexistent(
+        self, consensus_memory, consensus_with_dissents
+    ):
+        """Should handle mix of existing and nonexistent IDs."""
+        mixed_ids = [consensus_with_dissents[0], "fake-id", consensus_with_dissents[1]]
+        result = consensus_memory._get_dissents_batch(mixed_ids)
+
+        assert len(result) == 3
+        assert len(result[consensus_with_dissents[0]]) == 2
+        assert len(result["fake-id"]) == 0
+        assert len(result[consensus_with_dissents[1]]) == 2
+
+    def test_batch_preserves_dissent_data(self, consensus_memory, consensus_with_dissents):
+        """Should correctly deserialize DissentRecord data."""
+        result = consensus_memory._get_dissents_batch([consensus_with_dissents[0]])
+
+        dissents = result[consensus_with_dissents[0]]
+        assert len(dissents) == 2
+        for d in dissents:
+            assert isinstance(d, DissentRecord)
+            assert d.dissent_type == DissentType.ALTERNATIVE_APPROACH
+            assert d.confidence == 0.7
+
+    def test_find_similar_debates_uses_batch(self, consensus_memory):
+        """Should use batch fetching in find_similar_debates."""
+        # Store multiple similar debates
+        for i in range(5):
+            record = consensus_memory.store_consensus(
+                topic=f"Python async programming topic {i}",
+                conclusion=f"Use asyncio {i}",
+                strength=ConsensusStrength.STRONG,
+                confidence=0.8,
+                participating_agents=["a", "b"],
+                agreeing_agents=["a"],
+            )
+            consensus_memory.store_dissent(
+                debate_id=record.id,
+                agent_id="critic",
+                dissent_type=DissentType.EDGE_CASE_CONCERN,
+                content=f"Edge case {i}",
+                reasoning="Needs attention",
+            )
+
+        # Find similar debates - should use batch fetching internally
+        results = consensus_memory.find_similar_debates(
+            "Python async programming", limit=3
+        )
+
+        assert len(results) <= 3
+        for result in results:
+            assert isinstance(result, SimilarDebate)
+            # Each should have dissents fetched via batch
+            assert len(result.dissents) >= 1
+
+    def test_batch_handles_many_ids(self, consensus_memory):
+        """Should handle large number of consensus IDs efficiently."""
+        # Create many consensus records
+        consensus_ids = []
+        for i in range(50):
+            record = consensus_memory.store_consensus(
+                topic=f"Large batch topic {i}",
+                conclusion=f"Conclusion {i}",
+                strength=ConsensusStrength.MODERATE,
+                confidence=0.6,
+                participating_agents=["a"],
+                agreeing_agents=["a"],
+            )
+            consensus_ids.append(record.id)
+            if i % 5 == 0:  # Add dissents to every 5th consensus
+                consensus_memory.store_dissent(
+                    debate_id=record.id,
+                    agent_id="critic",
+                    dissent_type=DissentType.MINOR_QUIBBLE,
+                    content=f"Minor issue {i}",
+                    reasoning="Small concern",
+                )
+
+        # Batch fetch all 50
+        result = consensus_memory._get_dissents_batch(consensus_ids)
+
+        assert len(result) == 50
+        # 10 should have dissents (0, 5, 10, 15, 20, 25, 30, 35, 40, 45)
+        with_dissents = sum(1 for v in result.values() if len(v) > 0)
+        assert with_dissents == 10

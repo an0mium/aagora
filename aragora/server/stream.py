@@ -2633,7 +2633,8 @@ class AiohttpUnifiedServer:
 
                         elif msg_type in ("user_vote", "user_suggestion"):
                             # Handle audience participation with validation
-                            loop_id = data.get("loop_id", "")
+                            # Proprioceptive Socket: Use ws-bound loop_id as fallback
+                            loop_id = data.get("loop_id") or getattr(ws, '_bound_loop_id', "")
 
                             # Optional per-message token validation for high-security operations
                             # Allows revoking access mid-session
@@ -2660,6 +2661,9 @@ class AiohttpUnifiedServer:
                                     "data": {"message": f"Invalid or inactive loop_id: {loop_id}"}
                                 })
                                 continue
+
+                            # Proprioceptive Socket: Bind loop_id to WebSocket for future reference
+                            ws._bound_loop_id = loop_id
 
                             # Validate payload structure and size (DoS protection)
                             payload = data.get("payload", {})

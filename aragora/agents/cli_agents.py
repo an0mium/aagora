@@ -32,14 +32,45 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Patterns that indicate rate limiting or quota errors in CLI output
+# Patterns that indicate rate limiting, quota errors, or service issues in CLI output
 RATE_LIMIT_PATTERNS = [
+    # Rate limiting
     "rate limit", "rate_limit", "ratelimit",
     "429", "too many requests",
+    "throttl",  # throttled, throttling
+    # Quota/usage limit errors
     "quota exceeded", "quota_exceeded",
     "resource exhausted", "resource_exhausted",
-    "billing", "credit balance",
-    "insufficient_quota",
+    "insufficient_quota", "limit exceeded",
+    "usage_limit", "usage limit",  # OpenAI/Codex usage limits
+    "limit has been reached",
+    # Billing errors
+    "billing", "credit balance", "payment required",
+    "purchase credits", "402",
+    # Capacity/availability errors
+    "503", "service unavailable",
+    "502", "bad gateway",
+    "overloaded", "capacity",
+    "temporarily unavailable", "try again later",
+    "server busy", "high demand",
+    # Connection errors
+    "connection refused", "connection reset",
+    "timed out", "timeout",
+    "network error", "socket error",
+    "could not resolve host", "name or service not known",
+    "econnrefused", "econnreset", "etimedout",
+    "no route to host", "network is unreachable",
+    # API-specific errors
+    "model overloaded", "model is currently overloaded",
+    "engine is currently overloaded",
+    "model_not_found", "model not found",
+    "invalid_api_key", "invalid api key", "unauthorized",
+    "authentication failed", "auth error",
+    # CLI-specific errors
+    "argument list too long",  # E2BIG - prompt too large for CLI
+    "command not found", "no such file or directory",
+    "permission denied", "access denied",
+    "broken pipe",  # EPIPE - connection closed unexpectedly
 ]
 
 
@@ -53,6 +84,7 @@ class CLIAgent(CritiqueMixin, Agent):
     # Map CLI agent models to OpenRouter model identifiers
     OPENROUTER_MODEL_MAP: dict[str, str] = {
         # Claude models
+        "claude": "anthropic/claude-sonnet-4",  # Default claude CLI
         "claude-opus-4-5-20251101": "anthropic/claude-opus-4",
         "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
         "claude-3-opus-20240229": "anthropic/claude-3-opus",
@@ -63,10 +95,12 @@ class CLIAgent(CritiqueMixin, Agent):
         "gpt-4-turbo": "openai/gpt-4-turbo",
         "gpt-4": "openai/gpt-4",
         # Gemini models
+        "gemini-3-pro-preview": "google/gemini-2.0-flash-001",
         "gemini-3-pro": "google/gemini-2.0-flash-001",
         "gemini-2.0-flash": "google/gemini-2.0-flash-001",
         "gemini-1.5-pro": "google/gemini-pro-1.5",
         # Grok models
+        "grok-4": "x-ai/grok-2-1212",  # Grok 4 -> latest available on OpenRouter
         "grok-3": "x-ai/grok-2-1212",
         "grok-2": "x-ai/grok-2-1212",
         # Deepseek models
@@ -116,7 +150,6 @@ class CLIAgent(CritiqueMixin, Agent):
                 name=f"{self.name}_fallback",
                 model=openrouter_model,
                 role=self.role,
-                api_key=api_key,
                 timeout=self.timeout,
             )
             # Copy system prompt if set
@@ -129,21 +162,53 @@ class CLIAgent(CritiqueMixin, Agent):
     def _is_fallback_error(self, error: Exception) -> bool:
         """Check if the error should trigger a fallback to OpenRouter.
 
-        Detects rate limits, timeouts, and CLI-specific errors.
+        Detects rate limits, timeouts, CLI-specific errors, and network issues.
+        This method is intentionally permissive to maximize fallback opportunities.
         """
         error_str = str(error).lower()
 
-        # Check for rate limit patterns
+        # Check for rate limit and service error patterns
         for pattern in RATE_LIMIT_PATTERNS:
             if pattern in error_str:
+                logger.debug(f"[{self.name}] Detected fallback pattern: {pattern}")
                 return True
 
         # Timeout errors should trigger fallback
         if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+            logger.debug(f"[{self.name}] Detected timeout error")
+            return True
+
+        # Connection errors should trigger fallback
+        if isinstance(error, (ConnectionError, ConnectionRefusedError, ConnectionResetError, BrokenPipeError)):
+            logger.debug(f"[{self.name}] Detected connection error")
+            return True
+
+        # OS-level errors (file not found for CLI, etc.)
+        if isinstance(error, OSError) and error.errno in (
+            7,    # E2BIG - Argument list too long (prompt too large for CLI)
+            32,   # EPIPE - Broken pipe (connection closed)
+            111,  # ECONNREFUSED
+            104,  # ECONNRESET
+            110,  # ETIMEDOUT
+            113,  # EHOSTUNREACH
+        ):
+            logger.debug(f"[{self.name}] Detected OS-level connection error")
             return True
 
         # CLI command failures (non-zero exit, process errors)
-        if isinstance(error, RuntimeError) and "cli command failed" in error_str:
+        if isinstance(error, RuntimeError):
+            # Always fallback on CLI failures - the CLI might be broken
+            if "cli command failed" in error_str or "cli" in error_str:
+                logger.debug(f"[{self.name}] Detected CLI error")
+                return True
+            # Also check for API-related runtime errors
+            if any(kw in error_str for kw in ["api error", "http error", "status"]):
+                logger.debug(f"[{self.name}] Detected API error in RuntimeError")
+                return True
+
+        # Subprocess errors
+        if isinstance(error, subprocess.SubprocessError):
+            logger.debug(f"[{self.name}] Detected subprocess error")
             return True
 
         return False
@@ -442,7 +507,10 @@ class KiloCodeAgent(CLIAgent):
         self.mode = mode  # architect, code, ask, debug
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
-        """Generate a response using kilocode CLI with codebase access."""
+        """Generate a response using kilocode CLI with codebase access.
+
+        Automatically falls back to OpenRouter API on rate limits or CLI errors.
+        """
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -468,8 +536,22 @@ class KiloCodeAgent(CLIAgent):
             full_prompt,
         ]
 
-        result = await self._run_cli(cmd)
-        return self._extract_kilocode_response(result)
+        try:
+            result = await self._run_cli(cmd)
+            return self._extract_kilocode_response(result)
+
+        except Exception as e:
+            # Check if we should fallback
+            if self._is_fallback_error(e):
+                fallback = self._get_fallback_agent()
+                if fallback:
+                    logger.warning(
+                        f"[{self.name}] CLI failed ({type(e).__name__}: {str(e)[:100]}), "
+                        f"falling back to OpenRouter"
+                    )
+                    self._fallback_used = True
+                    return await fallback.generate(prompt, context)
+            raise
 
     def _extract_kilocode_response(self, output: str) -> str:
         """Extract the assistant response from Kilo Code JSON output."""

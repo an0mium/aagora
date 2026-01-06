@@ -437,7 +437,10 @@ class ConsensusMemory:
         min_confidence: float = 0.0,
         limit: int = 10,
     ) -> list[SimilarDebate]:
-        """Find similar past debates on a topic."""
+        """Find similar past debates on a topic.
+
+        Optimized to batch-fetch dissents instead of N+1 queries.
+        """
 
         topic_hash = self._hash_topic(topic)
         topic_words = set(topic.lower().split())
@@ -460,8 +463,8 @@ class ConsensusMemory:
             cursor.execute(query, params)
             rows = cursor.fetchall()
 
-        # Score similarity
-        candidates = []
+        # Score similarity and collect qualifying consensus IDs
+        scored_candidates: list[tuple[ConsensusRecord, float]] = []
         for row in rows:
             data = safe_json_loads(row[0], {})
             if not data:
@@ -482,18 +485,65 @@ class ConsensusMemory:
                 similarity = 1.0
 
             if similarity > 0.1:  # Minimum threshold
-                dissents = self.get_dissents(consensus.id)
-                candidates.append(
-                    SimilarDebate(
-                        consensus=consensus,
-                        similarity_score=similarity,
-                        dissents=dissents,
-                    )
-                )
+                scored_candidates.append((consensus, similarity))
+
+        # Batch-fetch all dissents in a single query (optimization)
+        consensus_ids = [c.id for c, _ in scored_candidates]
+        dissents_by_consensus = self._get_dissents_batch(consensus_ids)
+
+        # Build final candidates with pre-fetched dissents
+        candidates = [
+            SimilarDebate(
+                consensus=consensus,
+                similarity_score=similarity,
+                dissents=dissents_by_consensus.get(consensus.id, []),
+            )
+            for consensus, similarity in scored_candidates
+        ]
 
         # Sort by similarity and limit
         candidates.sort(key=lambda x: -x.similarity_score)
         return candidates[:limit]
+
+    def _get_dissents_batch(
+        self, consensus_ids: list[str]
+    ) -> dict[str, list[DissentRecord]]:
+        """Batch-fetch dissents for multiple consensus IDs.
+
+        Optimization to avoid N+1 queries in find_similar_debates().
+
+        Args:
+            consensus_ids: List of consensus IDs to fetch dissents for
+
+        Returns:
+            Dict mapping consensus_id -> list of DissentRecords
+        """
+        if not consensus_ids:
+            return {}
+
+        # Build parameterized IN query
+        placeholders = ",".join("?" * len(consensus_ids))
+        query = f"""
+            SELECT debate_id, data FROM dissent
+            WHERE debate_id IN ({placeholders})
+            ORDER BY timestamp DESC
+        """
+
+        result: dict[str, list[DissentRecord]] = {cid: [] for cid in consensus_ids}
+
+        try:
+            with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, consensus_ids)
+                for row in cursor.fetchall():
+                    debate_id = row[0]
+                    data = safe_json_loads(row[1], {})
+                    if data and debate_id in result:
+                        result[debate_id].append(DissentRecord.from_dict(data))
+        except Exception as e:
+            logger.warning(f"Failed to batch fetch dissents: {e}")
+
+        return result
 
     def find_relevant_dissent(
         self,

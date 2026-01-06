@@ -7,6 +7,7 @@ Aggregates data from ELO, consensus, prometheus, and debate storage systems.
 
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Optional
 
 from .base import (
@@ -73,17 +74,16 @@ class DashboardHandler(BaseHandler):
             except Exception as e:
                 logger.debug(f"Failed to fetch debates: {e}")
 
-        # Gather summary metrics
-        result["summary"] = self._get_summary_metrics(domain, debates)
-
-        # Gather recent activity
-        result["recent_activity"] = self._get_recent_activity(domain, hours, debates)
+        # Process all debate metrics in a single pass
+        summary, activity, patterns = self._process_debates_single_pass(
+            debates, domain, hours
+        )
+        result["summary"] = summary
+        result["recent_activity"] = activity
+        result["debate_patterns"] = patterns
 
         # Gather agent performance
         result["agent_performance"] = self._get_agent_performance(limit)
-
-        # Gather debate patterns
-        result["debate_patterns"] = self._get_debate_patterns(debates)
 
         # Gather consensus insights
         result["consensus_insights"] = self._get_consensus_insights(domain)
@@ -92,6 +92,138 @@ class DashboardHandler(BaseHandler):
         result["system_health"] = self._get_system_health()
 
         return json_response(result)
+
+    def _process_debates_single_pass(
+        self, debates: list, domain: Optional[str], hours: int
+    ) -> tuple[dict, dict, dict]:
+        """Process all debate metrics in a single pass through the data.
+
+        This optimization consolidates 3 separate loops into one, reducing
+        iteration overhead for large debate lists.
+
+        Args:
+            debates: List of debate records
+            domain: Optional domain filter
+            hours: Time window for recent activity
+
+        Returns:
+            Tuple of (summary, activity, patterns) dicts
+        """
+        # Initialize summary metrics
+        summary = {
+            "total_debates": 0,
+            "consensus_reached": 0,
+            "consensus_rate": 0.0,
+            "avg_confidence": 0.0,
+            "avg_rounds": 0.0,
+            "total_tokens_used": 0,
+        }
+
+        # Initialize activity metrics
+        activity = {
+            "debates_last_period": 0,
+            "consensus_last_period": 0,
+            "domains_active": [],
+            "most_active_domain": None,
+            "period_hours": hours,
+        }
+
+        # Initialize pattern metrics
+        patterns = {
+            "disagreement_stats": {
+                "with_disagreements": 0,
+                "disagreement_types": {},
+            },
+            "early_stopping": {
+                "early_stopped": 0,
+                "full_duration": 0,
+            },
+        }
+
+        if not debates:
+            return summary, activity, patterns
+
+        try:
+            cutoff = datetime.now() - timedelta(hours=hours)
+
+            # Accumulators for single-pass processing
+            total = len(debates)
+            consensus_count = 0
+            confidences = []
+            domain_counts: dict[str, int] = {}
+            recent_count = 0
+            recent_consensus = 0
+            with_disagreement = 0
+            disagreement_types: dict[str, int] = {}
+            early_stopped = 0
+            full_duration = 0
+
+            for d in debates:
+                # Summary metrics
+                if d.get("consensus_reached"):
+                    consensus_count += 1
+
+                conf = d.get("confidence")
+                if conf:
+                    confidences.append(conf)
+
+                # Activity metrics - check if recent
+                created_at = d.get("created_at")
+                if created_at:
+                    try:
+                        dt = datetime.fromisoformat(
+                            created_at.replace("Z", "+00:00")
+                        )
+                        if dt.replace(tzinfo=None) > cutoff:
+                            recent_count += 1
+                            if d.get("consensus_reached"):
+                                recent_consensus += 1
+                            d_domain = d.get("domain", "general")
+                            domain_counts[d_domain] = domain_counts.get(d_domain, 0) + 1
+                    except (ValueError, KeyError):
+                        pass
+
+                # Pattern metrics
+                if d.get("disagreement_report"):
+                    with_disagreement += 1
+                    report = d.get("disagreement_report", {})
+                    for dt_type in report.get("types", []):
+                        disagreement_types[dt_type] = disagreement_types.get(dt_type, 0) + 1
+
+                if d.get("early_stopped"):
+                    early_stopped += 1
+                else:
+                    full_duration += 1
+
+            # Build summary
+            summary["total_debates"] = total
+            summary["consensus_reached"] = consensus_count
+            if total > 0:
+                summary["consensus_rate"] = round(consensus_count / total, 3)
+            if confidences:
+                summary["avg_confidence"] = round(
+                    sum(confidences) / len(confidences), 3
+                )
+
+            # Build activity
+            activity["debates_last_period"] = recent_count
+            activity["consensus_last_period"] = recent_consensus
+            activity["domains_active"] = list(domain_counts.keys())[:10]
+            if domain_counts:
+                activity["most_active_domain"] = max(
+                    domain_counts, key=domain_counts.get
+                )
+
+            # Build patterns
+            patterns["disagreement_stats"]["with_disagreements"] = with_disagreement
+            patterns["disagreement_stats"]["disagreement_types"] = disagreement_types
+            patterns["early_stopping"]["early_stopped"] = early_stopped
+            patterns["early_stopping"]["full_duration"] = full_duration
+
+        except Exception as e:
+            logger.debug(f"Single-pass processing error: {e}")
+
+        return summary, activity, patterns
 
     def _get_summary_metrics(self, domain: Optional[str], debates: list) -> dict:
         """Get high-level summary metrics."""

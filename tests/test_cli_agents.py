@@ -1007,3 +1007,554 @@ class TestListAvailableAgents:
         result = list_available_agents()
         for name, info in result.items():
             assert "env_vars" in info, f"Missing 'env_vars' for {name}"
+
+
+# =============================================================================
+# CLI Fallback Tests
+# =============================================================================
+
+
+class TestCLIAgentFallback:
+    """Tests for CLI agent fallback to OpenRouter functionality."""
+
+    def test_enable_fallback_default_true(self):
+        """Should enable fallback by default."""
+        agent = CodexAgent(name="test", model="test")
+        assert agent.enable_fallback is True
+
+    def test_enable_fallback_can_be_disabled(self):
+        """Should allow disabling fallback."""
+        agent = CodexAgent(name="test", model="test", enable_fallback=False)
+        assert agent.enable_fallback is False
+
+    def test_fallback_agent_initially_none(self):
+        """Should not create fallback agent until needed."""
+        agent = CodexAgent(name="test", model="test")
+        assert agent._fallback_agent is None
+
+    def test_fallback_used_initially_false(self):
+        """Should track fallback usage."""
+        agent = CodexAgent(name="test", model="test")
+        assert agent._fallback_used is False
+
+
+class TestCLIAgentIsFallbackError:
+    """Tests for _is_fallback_error() detection method."""
+
+    @pytest.fixture
+    def agent(self):
+        return CodexAgent(name="test", model="test")
+
+    def test_detects_rate_limit_pattern(self, agent):
+        """Should detect rate limit errors."""
+        error = RuntimeError("CLI command failed: rate limit exceeded")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_429_pattern(self, agent):
+        """Should detect 429 status code."""
+        error = RuntimeError("CLI command failed: 429 Too Many Requests")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_quota_exceeded(self, agent):
+        """Should detect quota exceeded errors."""
+        error = RuntimeError("CLI command failed: quota exceeded")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_resource_exhausted(self, agent):
+        """Should detect resource exhausted errors."""
+        error = RuntimeError("CLI command failed: resource exhausted")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_billing_error(self, agent):
+        """Should detect billing errors."""
+        error = RuntimeError("CLI command failed: billing issue")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_timeout_error(self, agent):
+        """Should detect TimeoutError."""
+        error = TimeoutError("CLI command timed out")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_asyncio_timeout(self, agent):
+        """Should detect asyncio.TimeoutError."""
+        error = asyncio.TimeoutError()
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_cli_command_failed(self, agent):
+        """Should detect CLI command failures."""
+        error = RuntimeError("cli command failed: process exited with 1")
+        assert agent._is_fallback_error(error) is True
+
+    def test_ignores_generic_errors(self, agent):
+        """Should not trigger on generic errors."""
+        error = ValueError("Invalid argument")
+        assert agent._is_fallback_error(error) is False
+
+    def test_ignores_key_errors(self, agent):
+        """Should not trigger on key errors."""
+        error = KeyError("missing_key")
+        assert agent._is_fallback_error(error) is False
+
+
+class TestCLIAgentGetFallbackAgent:
+    """Tests for _get_fallback_agent() method."""
+
+    @pytest.fixture
+    def agent(self):
+        return CodexAgent(name="test", model="gpt-5.2-codex")
+
+    def test_returns_none_when_disabled(self, agent):
+        """Should return None when fallback is disabled."""
+        agent.enable_fallback = False
+        assert agent._get_fallback_agent() is None
+
+    def test_returns_none_without_api_key(self, agent):
+        """Should return None without OPENROUTER_API_KEY."""
+        with patch.dict("os.environ", {}, clear=True):
+            import os
+            if "OPENROUTER_API_KEY" in os.environ:
+                del os.environ["OPENROUTER_API_KEY"]
+            result = agent._get_fallback_agent()
+            assert result is None
+
+    def test_creates_openrouter_agent_with_api_key(self, agent):
+        """Should create OpenRouterAgent when API key is set."""
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+            with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                mock_instance = MagicMock()
+                mock_or.return_value = mock_instance
+
+                result = agent._get_fallback_agent()
+
+                assert result is mock_instance
+                mock_or.assert_called_once()
+
+    def test_maps_model_to_openrouter_format(self, agent):
+        """Should map model to OpenRouter format."""
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+            with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                mock_or.return_value = MagicMock()
+
+                agent._get_fallback_agent()
+
+                call_kwargs = mock_or.call_args[1]
+                # gpt-5.2-codex should map to openai/gpt-4o
+                assert call_kwargs["model"] == "openai/gpt-4o"
+                # Should not pass api_key (OpenRouterAgent reads from env)
+                assert "api_key" not in call_kwargs
+
+    def test_caches_fallback_agent(self, agent):
+        """Should cache and reuse fallback agent."""
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+            with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                mock_instance = MagicMock()
+                mock_or.return_value = mock_instance
+
+                result1 = agent._get_fallback_agent()
+                result2 = agent._get_fallback_agent()
+
+                assert result1 is result2
+                mock_or.assert_called_once()  # Only created once
+
+    def test_copies_system_prompt_to_fallback(self, agent):
+        """Should copy system prompt to fallback agent."""
+        agent.set_system_prompt("You are helpful")
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+            with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                mock_instance = MagicMock()
+                mock_or.return_value = mock_instance
+
+                agent._get_fallback_agent()
+
+                assert mock_instance.system_prompt == "You are helpful"
+
+
+class TestCLIAgentFallbackIntegration:
+    """Integration tests for CLI fallback behavior."""
+
+    @pytest.mark.asyncio
+    async def test_codex_falls_back_on_timeout(self):
+        """CodexAgent should fallback on timeout."""
+        agent = CodexAgent(name="test", model="test")
+
+        with patch.object(agent, "_run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.side_effect = TimeoutError("timed out")
+
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+                with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                    mock_fallback = AsyncMock()
+                    mock_fallback.generate = AsyncMock(return_value="Fallback response")
+                    mock_or.return_value = mock_fallback
+
+                    result = await agent.generate("Test prompt")
+
+                    assert result == "Fallback response"
+                    assert agent._fallback_used is True
+
+    @pytest.mark.asyncio
+    async def test_claude_falls_back_on_rate_limit(self):
+        """ClaudeAgent should fallback on rate limit."""
+        agent = ClaudeAgent(name="test", model="test")
+
+        with patch.object(agent, "_run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.side_effect = RuntimeError("CLI command failed: rate limit exceeded")
+
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+                with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                    mock_fallback = AsyncMock()
+                    mock_fallback.generate = AsyncMock(return_value="Fallback response")
+                    mock_or.return_value = mock_fallback
+
+                    result = await agent.generate("Test prompt")
+
+                    assert result == "Fallback response"
+                    assert agent._fallback_used is True
+
+    @pytest.mark.asyncio
+    async def test_gemini_falls_back_on_cli_failure(self):
+        """GeminiCLIAgent should fallback on CLI failure."""
+        agent = GeminiCLIAgent(name="test", model="test")
+
+        with patch.object(agent, "_run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.side_effect = RuntimeError("CLI command failed: process crashed")
+
+            with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+                with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                    mock_fallback = AsyncMock()
+                    mock_fallback.generate = AsyncMock(return_value="Fallback response")
+                    mock_or.return_value = mock_fallback
+
+                    result = await agent.generate("Test prompt")
+
+                    assert result == "Fallback response"
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_on_generic_error(self):
+        """Should not fallback on generic errors."""
+        agent = CodexAgent(name="test", model="test")
+
+        with patch.object(agent, "_run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.side_effect = ValueError("Invalid argument")
+
+            with pytest.raises(ValueError, match="Invalid argument"):
+                await agent.generate("Test prompt")
+
+            assert agent._fallback_used is False
+
+    @pytest.mark.asyncio
+    async def test_raises_if_no_fallback_available(self):
+        """Should raise original error if no fallback available."""
+        agent = CodexAgent(name="test", model="test", enable_fallback=False)
+
+        with patch.object(agent, "_run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.side_effect = TimeoutError("timed out")
+
+            with pytest.raises(TimeoutError, match="timed out"):
+                await agent.generate("Test prompt")
+
+    @pytest.mark.asyncio
+    async def test_raises_if_no_api_key(self):
+        """Should raise original error if no API key set."""
+        agent = CodexAgent(name="test", model="test")
+
+        with patch.object(agent, "_run_cli", new_callable=AsyncMock) as mock_cli:
+            mock_cli.side_effect = TimeoutError("timed out")
+
+            with patch.dict("os.environ", {}, clear=True):
+                import os
+                if "OPENROUTER_API_KEY" in os.environ:
+                    del os.environ["OPENROUTER_API_KEY"]
+
+                with pytest.raises(TimeoutError, match="timed out"):
+                    await agent.generate("Test prompt")
+
+
+class TestCLIAgentModelMapping:
+    """Tests for model mapping to OpenRouter."""
+
+    def test_claude_model_mapping(self):
+        """Should map Claude models correctly."""
+        agent = ClaudeAgent(name="test", model="claude-opus-4-5-20251101")
+        assert agent.OPENROUTER_MODEL_MAP.get("claude-opus-4-5-20251101") == "anthropic/claude-opus-4"
+
+    def test_codex_model_mapping(self):
+        """Should map Codex models correctly."""
+        agent = CodexAgent(name="test", model="gpt-5.2-codex")
+        assert agent.OPENROUTER_MODEL_MAP.get("gpt-5.2-codex") == "openai/gpt-4o"
+
+    def test_gemini_model_mapping(self):
+        """Should map Gemini models correctly."""
+        agent = GeminiCLIAgent(name="test", model="gemini-3-pro")
+        assert agent.OPENROUTER_MODEL_MAP.get("gemini-3-pro") == "google/gemini-2.0-flash-001"
+
+    def test_grok_model_mapping(self):
+        """Should map Grok models correctly."""
+        agent = GrokCLIAgent(name="test", model="grok-3")
+        assert agent.OPENROUTER_MODEL_MAP.get("grok-3") == "x-ai/grok-2-1212"
+
+    def test_deepseek_model_mapping(self):
+        """Should map Deepseek models correctly."""
+        agent = DeepseekCLIAgent(name="test", model="deepseek-v3")
+        assert agent.OPENROUTER_MODEL_MAP.get("deepseek-v3") == "deepseek/deepseek-chat"
+
+    def test_qwen_model_mapping(self):
+        """Should map Qwen models correctly."""
+        agent = QwenCLIAgent(name="test", model="qwen-2.5-coder")
+        assert agent.OPENROUTER_MODEL_MAP.get("qwen-2.5-coder") == "qwen/qwen-2.5-coder-32b-instruct"
+
+    def test_unknown_model_uses_default(self):
+        """Unknown models should use default fallback model."""
+        agent = CodexAgent(name="test", model="unknown-model-xyz")
+
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+            with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                mock_or.return_value = MagicMock()
+
+                agent._get_fallback_agent()
+
+                call_kwargs = mock_or.call_args[1]
+                # Should default to claude-sonnet-4
+                assert call_kwargs["model"] == "anthropic/claude-sonnet-4"
+
+
+# =============================================================================
+# Fallback Error Detection Tests
+# =============================================================================
+
+
+class TestFallbackErrorDetection:
+    """Tests for CLIAgent._is_fallback_error() method.
+
+    These tests verify that the fallback mechanism correctly identifies
+    various error conditions that should trigger OpenRouter fallback.
+    """
+
+    @pytest.fixture
+    def agent(self):
+        """Create a CodexAgent for testing."""
+        return CodexAgent(name="test", model="test-model")
+
+    # --- Rate Limit Pattern Tests ---
+
+    def test_detects_rate_limit_429(self, agent):
+        """Should detect HTTP 429 rate limit errors."""
+        error = RuntimeError("API returned 429 Too Many Requests")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_rate_limit_text(self, agent):
+        """Should detect rate limit in error text."""
+        error = RuntimeError("Rate limit exceeded, please wait")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_quota_exceeded(self, agent):
+        """Should detect quota exceeded errors."""
+        error = RuntimeError("Quota exceeded for model gpt-4")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_resource_exhausted(self, agent):
+        """Should detect resource exhausted errors."""
+        error = RuntimeError("RESOURCE_EXHAUSTED: Model is busy")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_billing_error(self, agent):
+        """Should detect billing-related errors."""
+        error = RuntimeError("Your credit balance is too low")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_throttling(self, agent):
+        """Should detect throttling errors."""
+        error = RuntimeError("Request throttled, try again later")
+        assert agent._is_fallback_error(error) is True
+
+    # --- Service Unavailability Tests ---
+
+    def test_detects_503_service_unavailable(self, agent):
+        """Should detect HTTP 503 errors."""
+        error = RuntimeError("HTTP 503 Service Unavailable")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_502_bad_gateway(self, agent):
+        """Should detect HTTP 502 errors."""
+        error = RuntimeError("502 Bad Gateway")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_overloaded_error(self, agent):
+        """Should detect model overloaded errors."""
+        error = RuntimeError("The model is currently overloaded")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_capacity_error(self, agent):
+        """Should detect capacity errors."""
+        error = RuntimeError("Server at capacity, try later")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_temporarily_unavailable(self, agent):
+        """Should detect temporarily unavailable errors."""
+        error = RuntimeError("Service temporarily unavailable")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_high_demand(self, agent):
+        """Should detect high demand errors."""
+        error = RuntimeError("High demand on this model")
+        assert agent._is_fallback_error(error) is True
+
+    # --- Timeout Tests ---
+
+    def test_detects_timeout_error(self, agent):
+        """Should detect TimeoutError."""
+        error = TimeoutError("Connection timed out")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_asyncio_timeout_error(self, agent):
+        """Should detect asyncio.TimeoutError."""
+        error = asyncio.TimeoutError()
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_timeout_in_text(self, agent):
+        """Should detect timeout in error text."""
+        error = RuntimeError("Request timed out after 30s")
+        assert agent._is_fallback_error(error) is True
+
+    # --- Connection Error Tests ---
+
+    def test_detects_connection_error(self, agent):
+        """Should detect ConnectionError."""
+        error = ConnectionError("Failed to connect")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_connection_refused(self, agent):
+        """Should detect ConnectionRefusedError."""
+        error = ConnectionRefusedError("Connection refused")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_connection_reset(self, agent):
+        """Should detect ConnectionResetError."""
+        error = ConnectionResetError("Connection reset by peer")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_connection_refused_text(self, agent):
+        """Should detect connection refused in error text."""
+        error = RuntimeError("Connection refused by host")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_network_error_text(self, agent):
+        """Should detect network error in error text."""
+        error = RuntimeError("Network error occurred")
+        assert agent._is_fallback_error(error) is True
+
+    # --- CLI Error Tests ---
+
+    def test_detects_cli_command_failed(self, agent):
+        """Should detect CLI command failure."""
+        error = RuntimeError("CLI command failed: non-zero exit")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_cli_in_error(self, agent):
+        """Should detect CLI-related errors."""
+        error = RuntimeError("cli error: unable to parse response")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_api_error_runtime(self, agent):
+        """Should detect API errors in RuntimeError."""
+        error = RuntimeError("api error 500: internal server error")
+        assert agent._is_fallback_error(error) is True
+
+    def test_detects_http_error_runtime(self, agent):
+        """Should detect HTTP errors in RuntimeError."""
+        error = RuntimeError("http error: connection failed")
+        assert agent._is_fallback_error(error) is True
+
+    # --- Subprocess Error Tests ---
+
+    def test_detects_subprocess_error(self, agent):
+        """Should detect subprocess errors."""
+        import subprocess
+        error = subprocess.SubprocessError("Process failed")
+        assert agent._is_fallback_error(error) is True
+
+    # --- Negative Tests (should NOT trigger fallback) ---
+
+    def test_ignores_value_error(self, agent):
+        """Should not trigger fallback for ValueError."""
+        error = ValueError("Invalid argument")
+        assert agent._is_fallback_error(error) is False
+
+    def test_ignores_key_error(self, agent):
+        """Should not trigger fallback for KeyError."""
+        error = KeyError("missing_key")
+        assert agent._is_fallback_error(error) is False
+
+    def test_ignores_type_error(self, agent):
+        """Should not trigger fallback for TypeError."""
+        error = TypeError("Invalid type")
+        assert agent._is_fallback_error(error) is False
+
+    def test_ignores_generic_runtime_error(self, agent):
+        """Should not trigger fallback for generic RuntimeError."""
+        error = RuntimeError("Something went wrong")
+        assert agent._is_fallback_error(error) is False
+
+    def test_ignores_attribute_error(self, agent):
+        """Should not trigger fallback for AttributeError."""
+        error = AttributeError("'object' has no attribute 'x'")
+        assert agent._is_fallback_error(error) is False
+
+    # --- Case Insensitivity Tests ---
+
+    def test_case_insensitive_rate_limit(self, agent):
+        """Should detect rate limit regardless of case."""
+        error = RuntimeError("RATE LIMIT exceeded")
+        assert agent._is_fallback_error(error) is True
+
+    def test_case_insensitive_quota(self, agent):
+        """Should detect quota exceeded regardless of case."""
+        error = RuntimeError("QUOTA_EXCEEDED")
+        assert agent._is_fallback_error(error) is True
+
+
+class TestFallbackIntegration:
+    """Integration tests for the fallback mechanism."""
+
+    @pytest.fixture
+    def agent(self):
+        """Create a CodexAgent with fallback enabled."""
+        return CodexAgent(name="test", model="gpt-4o", enable_fallback=True)
+
+    @pytest.mark.asyncio
+    async def test_fallback_triggered_on_rate_limit(self, agent):
+        """Should use fallback agent when rate limited."""
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}):
+            with patch.object(agent, "_run_cli") as mock_cli:
+                mock_cli.side_effect = RuntimeError("429 Too Many Requests")
+
+                with patch("aragora.agents.api_agents.OpenRouterAgent") as mock_or:
+                    mock_fallback = MagicMock()
+                    mock_fallback.generate = AsyncMock(return_value="Fallback response")
+                    mock_or.return_value = mock_fallback
+
+                    result = await agent.generate("Test prompt")
+
+                    assert result == "Fallback response"
+                    assert agent._fallback_used is True
+
+    @pytest.mark.asyncio
+    async def test_fallback_not_triggered_when_disabled(self, agent):
+        """Should not use fallback when disabled."""
+        agent.enable_fallback = False
+
+        with patch.object(agent, "_run_cli") as mock_cli:
+            mock_cli.side_effect = RuntimeError("429 Too Many Requests")
+
+            with pytest.raises(RuntimeError):
+                await agent.generate("Test prompt")
+
+    @pytest.mark.asyncio
+    async def test_fallback_not_triggered_without_api_key(self, agent):
+        """Should not use fallback without OPENROUTER_API_KEY."""
+        with patch.dict("os.environ", {}, clear=True):
+            with patch.object(agent, "_run_cli") as mock_cli:
+                mock_cli.side_effect = RuntimeError("429 Too Many Requests")
+
+                with pytest.raises(RuntimeError):
+                    await agent.generate("Test prompt")
