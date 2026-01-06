@@ -249,6 +249,12 @@ class StreamEventType(Enum):
     AUDIT_CROSS_EXAM = "audit_cross_exam"  # Cross-examination phase
     AUDIT_VERDICT = "audit_verdict"      # Final audit verdict ready
 
+    # Telemetry events (Cognitive Firewall)
+    TELEMETRY_THOUGHT = "telemetry_thought"        # Agent thought process (may be redacted)
+    TELEMETRY_CAPABILITY = "telemetry_capability"  # Agent capability verification result
+    TELEMETRY_REDACTION = "telemetry_redaction"    # Content was redacted (notification only)
+    TELEMETRY_DIAGNOSTIC = "telemetry_diagnostic"  # Internal diagnostic info (dev only)
+
 
 @dataclass
 class StreamEvent:
@@ -537,6 +543,89 @@ class SyncEventEmitter:
         except queue.Empty:
             pass
         return events
+
+    def broadcast_event(
+        self,
+        event_type: StreamEventType,
+        data: dict,
+        agent: str = "",
+        round_num: int = 0,
+        redactor: Optional[Callable[[dict], dict]] = None,
+    ) -> bool:
+        """
+        Broadcast an event with optional redaction for telemetry.
+
+        This method respects the TelemetryConfig settings:
+        - SILENT: Event is not emitted
+        - DIAGNOSTIC: Event is logged but not broadcast
+        - CONTROLLED: Event is emitted with redaction applied
+        - SPECTACLE: Event is emitted without redaction
+
+        Args:
+            event_type: Type of event to emit
+            data: Event payload data
+            agent: Agent name (optional)
+            round_num: Debate round number (optional)
+            redactor: Optional function to redact sensitive data
+
+        Returns:
+            True if event was emitted, False if suppressed
+        """
+        try:
+            from aragora.debate.telemetry_config import TelemetryConfig
+
+            config = TelemetryConfig.get_instance()
+
+            # Check if telemetry should be suppressed
+            if config.is_silent():
+                return False
+
+            # Check if this is a telemetry-specific event
+            is_telemetry_event = event_type.value.startswith("telemetry_")
+
+            if is_telemetry_event:
+                if config.is_diagnostic():
+                    # Log only, don't broadcast
+                    logger.debug(f"[telemetry] {event_type.value}: {data}")
+                    return False
+
+                # Apply redaction if in controlled mode
+                if config.should_redact() and redactor is not None:
+                    try:
+                        data = redactor(data)
+                        # Emit redaction notification
+                        self.emit(StreamEvent(
+                            type=StreamEventType.TELEMETRY_REDACTION,
+                            data={"agent": agent, "event_type": event_type.value},
+                            agent=agent,
+                            round=round_num,
+                        ))
+                    except Exception as e:
+                        logger.warning(f"[telemetry] Redaction failed: {e}")
+                        # On redaction failure, suppress the event for security
+                        return False
+
+            # Emit the event
+            self.emit(StreamEvent(
+                type=event_type,
+                data=data,
+                agent=agent,
+                round=round_num,
+            ))
+            return True
+
+        except ImportError:
+            # TelemetryConfig not available, emit without telemetry controls
+            self.emit(StreamEvent(
+                type=event_type,
+                data=data,
+                agent=agent,
+                round=round_num,
+            ))
+            return True
+        except Exception as e:
+            logger.error(f"[telemetry] broadcast_event failed: {e}")
+            return False
 
 
 @dataclass
