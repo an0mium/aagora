@@ -7,6 +7,7 @@ and prompt refinement.
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,8 +16,11 @@ from pathlib import Path
 from typing import Optional
 import sqlite3
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.core import Agent, DebateResult, Critique
 from aragora.memory.store import CritiqueStore, Pattern
+
+logger = logging.getLogger(__name__)
 
 
 class EvolutionStrategy(Enum):
@@ -65,7 +69,7 @@ class PromptEvolver:
 
     def _init_db(self):
         """Initialize evolution database."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Prompt versions table
@@ -166,7 +170,7 @@ class PromptEvolver:
 
     def store_patterns(self, patterns: list[dict]):
         """Store extracted patterns in database."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             for pattern in patterns:
@@ -186,7 +190,7 @@ class PromptEvolver:
         limit: int = 10,
     ) -> list[dict]:
         """Get most effective patterns."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             if pattern_type:
@@ -223,9 +227,9 @@ class PromptEvolver:
 
         return patterns
 
-    def get_prompt_version(self, agent_name: str, version: int = None) -> Optional[PromptVersion]:
+    def get_prompt_version(self, agent_name: str, version: int | None = None) -> Optional[PromptVersion]:
         """Get a specific prompt version or the latest."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             if version is not None:
@@ -266,7 +270,7 @@ class PromptEvolver:
 
     def save_prompt_version(self, agent_name: str, prompt: str, metadata: dict = None) -> int:
         """Save a new prompt version."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Get next version number
@@ -292,8 +296,8 @@ class PromptEvolver:
     def evolve_prompt(
         self,
         agent: Agent,
-        patterns: list[dict] = None,
-        strategy: EvolutionStrategy = None,
+        patterns: list[dict] | None = None,
+        strategy: EvolutionStrategy | None = None,
     ) -> str:
         """
         Evolve an agent's prompt based on patterns.
@@ -360,10 +364,23 @@ class PromptEvolver:
         """
         import os
         import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
 
         api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
         if not api_key or not patterns:
             return self._evolve_append(current_prompt, patterns)
+
+        # Configure retry strategy for transient failures
+        retry_strategy = Retry(
+            total=2,
+            backoff_factor=1.0,
+            status_forcelist=[429, 502, 503, 504],
+            allowed_methods=["POST"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session = requests.Session()
+        session.mount("https://", adapter)
 
         # Format patterns for the refinement prompt
         patterns_text = "\n".join([
@@ -392,7 +409,7 @@ Return ONLY the refined prompt, no explanations."""
             openai_key = os.environ.get("OPENAI_API_KEY")
 
             if anthropic_key:
-                response = requests.post(
+                response = session.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
                         "x-api-key": anthropic_key,
@@ -404,12 +421,18 @@ Return ONLY the refined prompt, no explanations."""
                         "max_tokens": 2048,
                         "messages": [{"role": "user", "content": refinement_prompt}],
                     },
-                    timeout=30,
+                    timeout=(5, 30),  # (connect timeout, read timeout)
                 )
                 if response.status_code == 200:
-                    return response.json()["content"][0]["text"].strip()
+                    try:
+                        data = response.json()
+                        return data["content"][0]["text"].strip()
+                    except (json.JSONDecodeError, KeyError, IndexError, ValueError, TypeError) as e:
+                        logger.warning(f"Failed to parse Anthropic response: {e}")
+                else:
+                    logger.warning(f"Anthropic API returned status {response.status_code}")
             elif openai_key:
-                response = requests.post(
+                response = session.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={
                         "Authorization": f"Bearer {openai_key}",
@@ -420,19 +443,25 @@ Return ONLY the refined prompt, no explanations."""
                         "max_tokens": 2048,
                         "messages": [{"role": "user", "content": refinement_prompt}],
                     },
-                    timeout=30,
+                    timeout=(5, 30),  # (connect timeout, read timeout)
                 )
                 if response.status_code == 200:
-                    return response.json()["choices"][0]["message"]["content"].strip()
+                    try:
+                        data = response.json()
+                        return data["choices"][0]["message"]["content"].strip()
+                    except (json.JSONDecodeError, KeyError, IndexError, ValueError, TypeError) as e:
+                        logger.warning(f"Failed to parse OpenAI response: {e}")
+                else:
+                    logger.warning(f"OpenAI API returned status {response.status_code}")
             # No API key available - fall through to append fallback
 
-        except Exception:
-            pass
+        except requests.RequestException as e:
+            logger.warning(f"LLM API request failed: {e}")
 
         # Fall back to append if LLM call fails
         return self._evolve_append(current_prompt, patterns)
 
-    def apply_evolution(self, agent: Agent, patterns: list[dict] = None) -> str:
+    def apply_evolution(self, agent: Agent, patterns: list[dict] | None = None) -> str:
         """
         Apply evolution to an agent and save the new version.
 
@@ -456,7 +485,7 @@ Return ONLY the refined prompt, no explanations."""
         agent.set_system_prompt(new_prompt)
 
         # Record evolution history
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -477,7 +506,7 @@ Return ONLY the refined prompt, no explanations."""
 
     def get_evolution_history(self, agent_name: str, limit: int = 10) -> list[dict]:
         """Get evolution history for an agent."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -511,7 +540,7 @@ Return ONLY the refined prompt, no explanations."""
         debate_result: DebateResult,
     ):
         """Update performance metrics for a prompt version."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
 
             # Get current stats

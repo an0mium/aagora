@@ -23,6 +23,21 @@ from typing import Optional, Set, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_log(level: int, msg: str) -> None:
+    """Log a message safely, ignoring errors during interpreter shutdown.
+
+    During atexit or interpreter shutdown, the logging module may be
+    partially torn down, causing ValueError or other exceptions.
+    """
+    try:
+        if logging.root.handlers:  # Check if logging is still functional
+            logger.log(level, msg)
+    except (ValueError, RuntimeError, AttributeError):
+        # Logging system is shutting down - silently ignore
+        pass
+
+
 # Default event types that webhooks receive (low-frequency, high-value)
 DEFAULT_EVENT_TYPES = frozenset({
     "debate_start",
@@ -208,7 +223,7 @@ class WebhookDispatcher:
         if queue_max_size is None:
             env_size = os.environ.get("ARAGORA_WEBHOOK_QUEUE_SIZE", "").strip()
             if env_size.isdigit():
-                queue_max_size = int(env_size)
+                queue_max_size = min(int(env_size), 100000)  # Cap at 100k
             else:
                 queue_max_size = self.DEFAULT_QUEUE_SIZE
 
@@ -246,16 +261,14 @@ class WebhookDispatcher:
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=timeout)
         with self._stats_lock:
-            try:
-                logger.info(
-                    f"Webhook dispatcher stopped. "
-                    f"Delivered: {self._delivery_count}, "
-                    f"Failed: {self._failure_count}, "
-                    f"Dropped: {self._drop_count}"
-                )
-            except ValueError:
-                # Logger may be closed during interpreter shutdown (atexit)
-                pass
+            # Use safe logging to avoid errors during interpreter shutdown
+            _safe_log(
+                logging.INFO,
+                f"Webhook dispatcher stopped. "
+                f"Delivered: {self._delivery_count}, "
+                f"Failed: {self._failure_count}, "
+                f"Dropped: {self._drop_count}"
+            )
 
     def enqueue(self, event_dict: Dict[str, Any]) -> bool:
         """Non-blocking enqueue of an event for delivery.
@@ -333,7 +346,7 @@ class WebhookDispatcher:
             "User-Agent": "Aragora-Webhook/1.0",
             "X-Aragora-Event-Type": str(event_dict.get("type", "")),
             "X-Aragora-Loop-Id": str(event_dict.get("loop_id", "")),
-            "X-Aragora-Event-Id": f"{event_dict.get('timestamp', int(time.time()))}-{id(event_dict) % 100000}",
+            "X-Aragora-Event-Id": f"{event_dict.get('timestamp', int(time.time()))}-{hashlib.sha256(body).hexdigest()[:8]}",
         }
         if signature:
             headers["X-Aragora-Signature"] = signature

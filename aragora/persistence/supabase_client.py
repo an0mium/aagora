@@ -149,14 +149,25 @@ class SupabaseClient:
 
     def _dict_to_cycle(self, data: dict) -> NomicCycle:
         """Convert database row to NomicCycle."""
+        # Safe datetime parsing with fallback
+        try:
+            started_at = datetime.fromisoformat(data["started_at"].replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            started_at = datetime.now()
+
+        try:
+            completed_at = datetime.fromisoformat(data["completed_at"].replace("Z", "+00:00")) if data.get("completed_at") else None
+        except (ValueError, TypeError):
+            completed_at = None
+
         return NomicCycle(
             id=data.get("id"),
             loop_id=data["loop_id"],
             cycle_number=data["cycle_number"],
             phase=data["phase"],
             stage=data.get("stage", ""),
-            started_at=datetime.fromisoformat(data["started_at"].replace("Z", "+00:00")),
-            completed_at=datetime.fromisoformat(data["completed_at"].replace("Z", "+00:00")) if data.get("completed_at") else None,
+            started_at=started_at,
+            completed_at=completed_at,
             success=data.get("success"),
             git_commit=data.get("git_commit"),
             task_description=data.get("task_description"),
