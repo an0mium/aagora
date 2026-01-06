@@ -350,6 +350,267 @@ class TestParameterParsing:
         result = get_bounded_string_param(params, "text", max_length=100)
         assert len(result) == 100
 
+
+# ============================================================================
+# Bounded Parameter Edge Case Tests
+# ============================================================================
+
+class TestClampedIntParamEdgeCases:
+    """Comprehensive edge case tests for get_clamped_int_param."""
+
+    def test_exact_min_value(self):
+        """Should accept value exactly at minimum."""
+        params = {"val": "1"}
+        result = get_clamped_int_param(params, "val", 10, min_val=1, max_val=100)
+        assert result == 1
+
+    def test_exact_max_value(self):
+        """Should accept value exactly at maximum."""
+        params = {"val": "100"}
+        result = get_clamped_int_param(params, "val", 10, min_val=1, max_val=100)
+        assert result == 100
+
+    def test_missing_key_uses_default_then_clamps(self):
+        """Should use default and clamp it if outside range."""
+        params = {}
+        # Default 200 should be clamped to max of 100
+        result = get_clamped_int_param(params, "val", 200, min_val=1, max_val=100)
+        assert result == 100
+
+    def test_missing_key_with_default_in_range(self):
+        """Should use default when in valid range."""
+        params = {}
+        result = get_clamped_int_param(params, "val", 50, min_val=1, max_val=100)
+        assert result == 50
+
+    def test_invalid_string_falls_back_to_default(self):
+        """Should use default for non-numeric string."""
+        params = {"val": "not_a_number"}
+        result = get_clamped_int_param(params, "val", 10, min_val=1, max_val=100)
+        assert result == 10
+
+    def test_list_value_uses_first(self):
+        """Should handle list values from query string."""
+        params = {"val": ["50", "100"]}
+        result = get_clamped_int_param(params, "val", 10, min_val=1, max_val=100)
+        assert result == 50
+
+    def test_float_string_uses_default(self):
+        """Should use default for float string (not valid int)."""
+        params = {"val": "3.7"}
+        result = get_clamped_int_param(params, "val", 10, min_val=1, max_val=100)
+        # Float strings are not valid integers, so default is used
+        assert result == 10
+
+    def test_negative_range(self):
+        """Should handle negative min/max values."""
+        params = {"val": "-50"}
+        result = get_clamped_int_param(params, "val", 0, min_val=-100, max_val=-10)
+        assert result == -50
+
+    def test_clamps_below_negative_min(self):
+        """Should clamp to negative minimum."""
+        params = {"val": "-200"}
+        result = get_clamped_int_param(params, "val", 0, min_val=-100, max_val=-10)
+        assert result == -100
+
+    def test_large_value_clamps(self):
+        """Should clamp very large values."""
+        params = {"val": "999999999"}
+        result = get_clamped_int_param(params, "val", 10, min_val=1, max_val=100)
+        assert result == 100
+
+    def test_min_equals_max(self):
+        """Should always return min_val when min == max."""
+        params = {"val": "999"}
+        result = get_clamped_int_param(params, "val", 10, min_val=50, max_val=50)
+        assert result == 50
+
+    def test_zero_in_range(self):
+        """Should accept zero when in range."""
+        params = {"val": "0"}
+        result = get_clamped_int_param(params, "val", 10, min_val=-10, max_val=10)
+        assert result == 0
+
+    def test_empty_string_uses_default(self):
+        """Should use default for empty string."""
+        params = {"val": ""}
+        result = get_clamped_int_param(params, "val", 25, min_val=1, max_val=100)
+        assert result == 25
+
+
+class TestBoundedFloatParamEdgeCases:
+    """Comprehensive edge case tests for get_bounded_float_param."""
+
+    def test_exact_min_value(self):
+        """Should accept value exactly at minimum."""
+        params = {"val": "0.0"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.0
+
+    def test_exact_max_value(self):
+        """Should accept value exactly at maximum."""
+        params = {"val": "1.0"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 1.0
+
+    def test_scientific_notation(self):
+        """Should parse scientific notation."""
+        params = {"val": "1.5e-1"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.15
+
+    def test_negative_range(self):
+        """Should handle negative min/max values."""
+        params = {"val": "-0.5"}
+        result = get_bounded_float_param(params, "val", 0.0, min_val=-1.0, max_val=0.0)
+        assert result == -0.5
+
+    def test_very_small_value(self):
+        """Should handle very small values."""
+        params = {"val": "1e-10"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 1e-10
+
+    def test_missing_key_uses_default(self):
+        """Should use default for missing key."""
+        params = {}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.5
+
+    def test_missing_key_clamps_default_above_max(self):
+        """Should clamp default if above max."""
+        params = {}
+        result = get_bounded_float_param(params, "val", 2.0, min_val=0.0, max_val=1.0)
+        assert result == 1.0
+
+    def test_missing_key_clamps_default_below_min(self):
+        """Should clamp default if below min."""
+        params = {}
+        result = get_bounded_float_param(params, "val", -0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.0
+
+    def test_list_value_uses_first(self):
+        """Should handle list values from query string."""
+        params = {"val": ["0.75", "0.25"]}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.75
+
+    def test_invalid_string_uses_default(self):
+        """Should use default for invalid string."""
+        params = {"val": "invalid"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.5
+
+    def test_integer_string(self):
+        """Should accept integer string as float."""
+        params = {"val": "1"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=2.0)
+        assert result == 1.0
+
+    def test_min_equals_max(self):
+        """Should always return min_val when min == max."""
+        params = {"val": "999.0"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.5, max_val=0.5)
+        assert result == 0.5
+
+    def test_infinity_clamps_to_max(self):
+        """Should clamp infinity to max."""
+        params = {"val": "inf"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 1.0
+
+    def test_negative_infinity_clamps_to_min(self):
+        """Should clamp negative infinity to min."""
+        params = {"val": "-inf"}
+        result = get_bounded_float_param(params, "val", 0.5, min_val=0.0, max_val=1.0)
+        assert result == 0.0
+
+
+class TestBoundedStringParamEdgeCases:
+    """Comprehensive edge case tests for get_bounded_string_param."""
+
+    def test_exact_max_length(self):
+        """Should accept string at exactly max length."""
+        params = {"val": "a" * 100}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == "a" * 100
+        assert len(result) == 100
+
+    def test_unicode_characters(self):
+        """Should handle unicode characters."""
+        params = {"val": "héllo wörld 🌍"}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == "héllo wörld 🌍"
+
+    def test_unicode_truncation(self):
+        """Should truncate unicode strings by character count."""
+        params = {"val": "🌍" * 20}
+        result = get_bounded_string_param(params, "val", max_length=10)
+        assert len(result) == 10
+        assert result == "🌍" * 10
+
+    def test_empty_string(self):
+        """Should return empty string."""
+        params = {"val": ""}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == ""
+
+    def test_missing_key_returns_none(self):
+        """Should return None for missing key with no default."""
+        params = {}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result is None
+
+    def test_missing_key_with_default(self):
+        """Should return default for missing key."""
+        params = {}
+        result = get_bounded_string_param(params, "val", default="default", max_length=100)
+        assert result == "default"
+
+    def test_list_value_uses_first(self):
+        """Should handle list values from query string."""
+        params = {"val": ["first", "second"]}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == "first"
+
+    def test_newlines_preserved(self):
+        """Should preserve newlines in string."""
+        params = {"val": "line1\nline2\rline3"}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == "line1\nline2\rline3"
+
+    def test_whitespace_preserved(self):
+        """Should preserve whitespace."""
+        params = {"val": "  spaced  text  "}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == "  spaced  text  "
+
+    def test_special_characters(self):
+        """Should handle special characters."""
+        params = {"val": "a<script>b</script>c"}
+        result = get_bounded_string_param(params, "val", max_length=100)
+        assert result == "a<script>b</script>c"
+
+    def test_sql_like_content_truncated(self):
+        """Should truncate SQL-like content without interpretation."""
+        params = {"val": "'; DROP TABLE users; --" * 10}
+        result = get_bounded_string_param(params, "val", max_length=20)
+        assert len(result) == 20
+        assert result == "'; DROP TABLE users;"
+
+    def test_zero_max_length(self):
+        """Should return empty string for zero max length."""
+        params = {"val": "test string"}
+        result = get_bounded_string_param(params, "val", max_length=0)
+        assert result == ""
+
+    def test_default_truncated_if_too_long(self):
+        """Should truncate default if exceeds max length."""
+        params = {}
+        result = get_bounded_string_param(params, "val", default="a" * 200, max_length=50)
+        assert len(result) == 50
+
     def test_parse_query_params(self):
         """Should parse query string to dict."""
         result = parse_query_params("limit=20&domain=test")
@@ -678,3 +939,250 @@ class TestCacheStats:
         assert "hits" in stats
         assert "misses" in stats
         assert "hit_rate" in stats
+
+
+# ============================================================================
+# Exception Handling Edge Case Tests
+# ============================================================================
+
+class TestExceptionStatusMapping:
+    """Edge case tests for exception to HTTP status mapping."""
+
+    def test_file_not_found_maps_to_404(self):
+        """FileNotFoundError should map to 404."""
+        assert _map_exception_to_status(FileNotFoundError("missing")) == 404
+
+    def test_key_error_maps_to_404(self):
+        """KeyError should map to 404."""
+        assert _map_exception_to_status(KeyError("key")) == 404
+
+    def test_value_error_maps_to_400(self):
+        """ValueError should map to 400."""
+        assert _map_exception_to_status(ValueError("bad value")) == 400
+
+    def test_type_error_maps_to_400(self):
+        """TypeError should map to 400."""
+        assert _map_exception_to_status(TypeError("bad type")) == 400
+
+    def test_permission_error_maps_to_403(self):
+        """PermissionError should map to 403."""
+        assert _map_exception_to_status(PermissionError("denied")) == 403
+
+    def test_timeout_error_maps_to_504(self):
+        """TimeoutError should map to 504."""
+        assert _map_exception_to_status(TimeoutError("timeout")) == 504
+
+    def test_connection_error_maps_to_502(self):
+        """ConnectionError should map to 502."""
+        assert _map_exception_to_status(ConnectionError("conn failed")) == 502
+
+    def test_os_error_maps_to_500(self):
+        """OSError should map to 500."""
+        assert _map_exception_to_status(OSError("os error")) == 500
+
+    def test_generic_exception_maps_to_500(self):
+        """Unknown exceptions should map to 500."""
+        assert _map_exception_to_status(Exception("generic")) == 500
+
+    def test_runtime_error_maps_to_500(self):
+        """RuntimeError should map to 500."""
+        assert _map_exception_to_status(RuntimeError("runtime")) == 500
+
+    def test_custom_exception_maps_to_500(self):
+        """Custom exceptions should map to 500."""
+        class CustomError(Exception):
+            pass
+        assert _map_exception_to_status(CustomError("custom")) == 500
+
+
+class TestHandleErrorsDecorator:
+    """Edge case tests for @handle_errors decorator."""
+
+    def test_preserves_return_value_on_success(self):
+        """Should return original value when no exception."""
+        @handle_errors("test")
+        def success_func():
+            return json_response({"key": "value"})
+
+        result = success_func()
+        assert result.status_code == 200
+
+    def test_maps_file_not_found_to_404(self):
+        """Should return 404 for FileNotFoundError."""
+        @handle_errors("test")
+        def not_found_func():
+            raise FileNotFoundError("missing file")
+
+        result = not_found_func()
+        assert result.status_code == 404
+
+    def test_maps_key_error_to_404(self):
+        """Should return 404 for KeyError."""
+        @handle_errors("test")
+        def key_error_func():
+            raise KeyError("missing key")
+
+        result = key_error_func()
+        assert result.status_code == 404
+
+    def test_maps_permission_error_to_403(self):
+        """Should return 403 for PermissionError."""
+        @handle_errors("test")
+        def permission_func():
+            raise PermissionError("access denied")
+
+        result = permission_func()
+        assert result.status_code == 403
+
+    def test_maps_timeout_error_to_504(self):
+        """Should return 504 for TimeoutError."""
+        @handle_errors("test")
+        def timeout_func():
+            raise TimeoutError("timed out")
+
+        result = timeout_func()
+        assert result.status_code == 504
+
+    def test_maps_connection_error_to_502(self):
+        """Should return 502 for ConnectionError."""
+        @handle_errors("test")
+        def connection_func():
+            raise ConnectionError("connection failed")
+
+        result = connection_func()
+        assert result.status_code == 502
+
+    def test_uses_custom_default_status(self):
+        """Should use custom default status when provided."""
+        @handle_errors("test", default_status=503)
+        def failing_func():
+            raise RuntimeError("unknown error")
+
+        result = failing_func()
+        assert result.status_code == 503
+
+    def test_includes_trace_id_in_headers(self):
+        """Should include X-Trace-Id header on error."""
+        @handle_errors("test")
+        def failing_func():
+            raise ValueError("error")
+
+        result = failing_func()
+        assert "X-Trace-Id" in result.headers
+        assert len(result.headers["X-Trace-Id"]) == 8
+
+    def test_error_body_contains_message(self):
+        """Should include error message in response body."""
+        @handle_errors("test")
+        def failing_func():
+            raise ValueError("test error message")
+
+        result = failing_func()
+        body = json.loads(result.body)
+        assert "error" in body
+
+
+class TestWithErrorRecoveryDecorator:
+    """Edge case tests for @with_error_recovery decorator."""
+
+    def test_returns_none_fallback(self):
+        """Should return None as fallback value."""
+        @with_error_recovery(fallback_value=None)
+        def failing_func():
+            raise RuntimeError("error")
+
+        result = failing_func()
+        assert result is None
+
+    def test_returns_empty_dict_fallback(self):
+        """Should return empty dict as fallback value."""
+        @with_error_recovery(fallback_value={})
+        def failing_func():
+            raise RuntimeError("error")
+
+        result = failing_func()
+        assert result == {}
+
+    def test_returns_empty_list_fallback(self):
+        """Should return empty list as fallback value."""
+        @with_error_recovery(fallback_value=[])
+        def failing_func():
+            raise RuntimeError("error")
+
+        result = failing_func()
+        assert result == []
+
+    def test_returns_default_value_fallback(self):
+        """Should return specific default value as fallback."""
+        @with_error_recovery(fallback_value={"status": "degraded", "data": []})
+        def failing_func():
+            raise RuntimeError("error")
+
+        result = failing_func()
+        assert result == {"status": "degraded", "data": []}
+
+    def test_returns_actual_result_on_success(self):
+        """Should return actual result when no exception."""
+        @with_error_recovery(fallback_value=[])
+        def success_func():
+            return [1, 2, 3]
+
+        result = success_func()
+        assert result == [1, 2, 3]
+
+    def test_logs_error_when_enabled(self):
+        """Should log error when log_errors=True."""
+        with patch('aragora.server.handlers.base.logger') as mock_logger:
+            @with_error_recovery(fallback_value=None, log_errors=True)
+            def failing_func():
+                raise ValueError("test error")
+
+            failing_func()
+            mock_logger.error.assert_called()
+
+    def test_does_not_log_when_disabled(self):
+        """Should not log when log_errors=False."""
+        with patch('aragora.server.handlers.base.logger') as mock_logger:
+            @with_error_recovery(fallback_value=None, log_errors=False)
+            def failing_func():
+                raise ValueError("test error")
+
+            failing_func()
+            mock_logger.error.assert_not_called()
+
+    def test_handles_nested_exceptions(self):
+        """Should handle exceptions raised during exception handling."""
+        @with_error_recovery(fallback_value="safe_default")
+        def complex_failing_func():
+            try:
+                raise ValueError("inner")
+            except ValueError:
+                raise RuntimeError("outer")
+
+        result = complex_failing_func()
+        assert result == "safe_default"
+
+
+class TestTraceIdGeneration:
+    """Edge case tests for trace ID generation."""
+
+    def test_trace_id_is_8_chars(self):
+        """Trace ID should be exactly 8 characters."""
+        trace_id = generate_trace_id()
+        assert len(trace_id) == 8
+
+    def test_trace_id_is_alphanumeric(self):
+        """Trace ID should be alphanumeric."""
+        trace_id = generate_trace_id()
+        assert trace_id.isalnum()
+
+    def test_trace_ids_are_unique(self):
+        """Generated trace IDs should be unique."""
+        ids = {generate_trace_id() for _ in range(1000)}
+        assert len(ids) == 1000
+
+    def test_trace_id_is_lowercase(self):
+        """Trace ID should be lowercase hex."""
+        for _ in range(100):
+            trace_id = generate_trace_id()
+            assert trace_id == trace_id.lower()

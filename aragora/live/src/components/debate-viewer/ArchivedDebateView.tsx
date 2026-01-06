@@ -2,6 +2,7 @@
 
 import { getAgentColors } from '@/utils/agentColors';
 import { TranscriptMessageCard } from './TranscriptMessageCard';
+import { BroadcastPanel } from '@/components/broadcast';
 import type { ArchivedDebateViewProps, TranscriptMessage } from './types';
 
 export function ArchivedDebateView({ debate, onShare, copied }: ArchivedDebateViewProps) {
@@ -85,6 +86,9 @@ export function ArchivedDebateView({ debate, onShare, copied }: ArchivedDebateVi
           ))}
         </div>
       </div>
+
+      {/* Broadcast Panel */}
+      <BroadcastPanel debateId={debate.id} debateTitle={debate.task} />
 
       {/* Metadata */}
       <div className="text-center text-xs font-mono text-text-muted py-4 border-t border-acid-green/20">

@@ -64,17 +64,26 @@ class DashboardHandler(BaseHandler):
             "generated_at": time.time(),
         }
 
+        # Fetch debates once for all metrics (performance optimization)
+        debates = []
+        storage = self.get_storage()
+        if storage:
+            try:
+                debates = storage.list_debates(limit=10000)
+            except Exception as e:
+                logger.debug(f"Failed to fetch debates: {e}")
+
         # Gather summary metrics
-        result["summary"] = self._get_summary_metrics(domain)
+        result["summary"] = self._get_summary_metrics(domain, debates)
 
         # Gather recent activity
-        result["recent_activity"] = self._get_recent_activity(domain, hours)
+        result["recent_activity"] = self._get_recent_activity(domain, hours, debates)
 
         # Gather agent performance
         result["agent_performance"] = self._get_agent_performance(limit)
 
         # Gather debate patterns
-        result["debate_patterns"] = self._get_debate_patterns()
+        result["debate_patterns"] = self._get_debate_patterns(debates)
 
         # Gather consensus insights
         result["consensus_insights"] = self._get_consensus_insights(domain)
@@ -84,7 +93,7 @@ class DashboardHandler(BaseHandler):
 
         return json_response(result)
 
-    def _get_summary_metrics(self, domain: Optional[str]) -> dict:
+    def _get_summary_metrics(self, domain: Optional[str], debates: list) -> dict:
         """Get high-level summary metrics."""
         summary = {
             "total_debates": 0,
@@ -96,36 +105,32 @@ class DashboardHandler(BaseHandler):
         }
 
         try:
-            # Get debate counts from storage
-            storage = self.get_storage()
-            if storage:
-                debates = storage.list_debates(limit=10000)
-                if debates:
-                    total = len(debates)
-                    consensus_count = sum(
-                        1 for d in debates if d.get("consensus_reached")
-                    )
-                    summary["total_debates"] = total
-                    summary["consensus_reached"] = consensus_count
-                    if total > 0:
-                        summary["consensus_rate"] = round(consensus_count / total, 3)
+            if debates:
+                total = len(debates)
+                consensus_count = sum(
+                    1 for d in debates if d.get("consensus_reached")
+                )
+                summary["total_debates"] = total
+                summary["consensus_reached"] = consensus_count
+                if total > 0:
+                    summary["consensus_rate"] = round(consensus_count / total, 3)
 
-                        # Average confidence
-                        confidences = [
-                            d.get("confidence", 0.5)
-                            for d in debates
-                            if d.get("confidence")
-                        ]
-                        if confidences:
-                            summary["avg_confidence"] = round(
-                                sum(confidences) / len(confidences), 3
-                            )
+                    # Average confidence
+                    confidences = [
+                        d.get("confidence", 0.5)
+                        for d in debates
+                        if d.get("confidence")
+                    ]
+                    if confidences:
+                        summary["avg_confidence"] = round(
+                            sum(confidences) / len(confidences), 3
+                        )
         except Exception as e:
             logger.debug(f"Summary metrics error: {e}")
 
         return summary
 
-    def _get_recent_activity(self, domain: Optional[str], hours: int) -> dict:
+    def _get_recent_activity(self, domain: Optional[str], hours: int, debates: list) -> dict:
         """Get recent debate activity metrics."""
         activity = {
             "debates_last_period": 0,
@@ -136,13 +141,10 @@ class DashboardHandler(BaseHandler):
         }
 
         try:
-            storage = self.get_storage()
-            if storage:
-                # Get recent debates
+            if debates:
                 from datetime import datetime, timedelta
 
                 cutoff = datetime.now() - timedelta(hours=hours)
-                debates = storage.list_debates(limit=1000)
 
                 recent = []
                 domain_counts = {}
@@ -219,7 +221,7 @@ class DashboardHandler(BaseHandler):
 
         return performance
 
-    def _get_debate_patterns(self) -> dict:
+    def _get_debate_patterns(self, debates: list) -> dict:
         """Get debate pattern statistics."""
         patterns = {
             "disagreement_stats": {
@@ -233,10 +235,7 @@ class DashboardHandler(BaseHandler):
         }
 
         try:
-            storage = self.get_storage()
-            if storage:
-                debates = storage.list_debates(limit=1000)
-
+            if debates:
                 # Analyze disagreements
                 with_disagreement = 0
                 disagreement_types = {}

@@ -662,5 +662,123 @@ class TestEloHistory:
         assert newest_elo > 1500  # Should have gained ELO from wins
 
 
+class TestBatchOperations:
+    """Test batch operations for performance optimization."""
+
+    def test_get_ratings_batch_empty_list(self, elo):
+        """Test that empty list returns empty dict."""
+        result = elo.get_ratings_batch([])
+        assert result == {}
+
+    def test_get_ratings_batch_single_agent(self, elo):
+        """Test batch fetch with single agent."""
+        elo.record_match("m1", ["alice", "bob"], {"alice": 1.0, "bob": 0.0})
+
+        result = elo.get_ratings_batch(["alice"])
+        assert "alice" in result
+        assert result["alice"].elo > 1500  # Won a match
+
+    def test_get_ratings_batch_multiple_agents(self, elo):
+        """Test batch fetch with multiple agents."""
+        elo.record_match("m1", ["alice", "bob"], {"alice": 1.0, "bob": 0.0})
+        elo.record_match("m2", ["charlie", "david"], {"charlie": 1.0, "david": 0.0})
+
+        result = elo.get_ratings_batch(["alice", "bob", "charlie", "david"])
+        assert len(result) == 4
+        assert all(name in result for name in ["alice", "bob", "charlie", "david"])
+
+    def test_get_ratings_batch_unknown_agents_get_defaults(self, elo):
+        """Test that unknown agents get default ratings."""
+        result = elo.get_ratings_batch(["unknown1", "unknown2"])
+        assert len(result) == 2
+        assert result["unknown1"].elo == 1500  # Default
+        assert result["unknown2"].elo == 1500
+        assert result["unknown1"].games_played == 0
+
+    def test_get_ratings_batch_mixed_known_unknown(self, elo):
+        """Test batch with mix of known and unknown agents."""
+        elo.record_match("m1", ["known", "opponent"], {"known": 1.0, "opponent": 0.0})
+
+        result = elo.get_ratings_batch(["known", "unknown"])
+        assert result["known"].elo > 1500  # Has played
+        assert result["unknown"].elo == 1500  # Default
+
+    def test_get_ratings_batch_preserves_all_fields(self, elo):
+        """Test that batch fetch preserves all rating fields."""
+        elo.record_match("m1", ["agent", "opp"], {"agent": 1.0, "opp": 0.0})
+        elo.record_domain_prediction("agent", "pred1", 0.8, "general")
+
+        result = elo.get_ratings_batch(["agent"])
+        rating = result["agent"]
+
+        assert rating.agent_name == "agent"
+        assert rating.elo > 1500
+        assert rating.wins == 1
+        assert rating.games_played == 1
+
+    def test_update_relationships_batch_empty_list(self, elo):
+        """Test that empty updates list does nothing."""
+        elo.update_relationships_batch([])
+        # Should not raise
+
+    def test_update_relationships_batch_single_update(self, elo):
+        """Test batch update with single relationship."""
+        elo.update_relationships_batch([{
+            "agent_a": "alice",
+            "agent_b": "bob",
+            "debate_increment": 1,
+            "agreement_increment": 1,
+            "a_win": 1,
+            "b_win": 0,
+        }])
+
+        rel = elo.get_relationship_raw("alice", "bob")
+        assert rel is not None
+        assert rel["debate_count"] == 1
+        assert rel["agreement_count"] == 1
+
+    def test_update_relationships_batch_multiple_updates(self, elo):
+        """Test batch update with multiple relationships."""
+        updates = [
+            {"agent_a": "a", "agent_b": "b", "debate_increment": 1},
+            {"agent_a": "b", "agent_b": "c", "debate_increment": 2},
+            {"agent_a": "c", "agent_b": "a", "debate_increment": 3},
+        ]
+        elo.update_relationships_batch(updates)
+
+        assert elo.get_relationship_raw("a", "b")["debate_count"] == 1
+        assert elo.get_relationship_raw("b", "c")["debate_count"] == 2
+        assert elo.get_relationship_raw("a", "c")["debate_count"] == 3
+
+    def test_update_relationships_batch_canonical_ordering(self, elo):
+        """Test that batch updates maintain canonical ordering."""
+        # Update with b, a order (should be stored as a, b)
+        elo.update_relationships_batch([{
+            "agent_a": "zoe",
+            "agent_b": "alice",
+            "debate_increment": 1,
+            "a_win": 1,  # zoe wins
+        }])
+
+        # Query with canonical order
+        rel = elo.get_relationship_raw("alice", "zoe")
+        assert rel is not None
+        assert rel["debate_count"] == 1
+        # zoe > alice, so a_win becomes b_win in canonical form
+        assert rel["b_wins_over_a"] == 1
+
+    def test_update_relationships_batch_skips_invalid(self, elo):
+        """Test that invalid updates are skipped."""
+        elo.update_relationships_batch([
+            {"agent_a": "", "agent_b": "bob", "debate_increment": 1},  # Empty agent_a
+            {"agent_a": "alice", "agent_b": "", "debate_increment": 1},  # Empty agent_b
+            {"agent_a": "charlie", "agent_b": "david", "debate_increment": 1},  # Valid
+        ])
+
+        # Only charlie-david should be recorded
+        assert elo.get_relationship_raw("charlie", "david") is not None
+        assert elo.get_relationship_raw("", "bob") is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

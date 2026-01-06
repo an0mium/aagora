@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 from aragora.debate.memory_manager import MemoryManager
+from aragora.memory.continuum import MemoryTier
 
 
 class TestMemoryManagerCreation:
@@ -96,7 +97,7 @@ class TestStoreDebateOutcome:
 
         mock_continuum.add.assert_called_once()
         call_kwargs = mock_continuum.add.call_args.kwargs
-        assert call_kwargs["tier"] == "fast"  # High quality = fast tier
+        assert call_kwargs["tier"] == MemoryTier.FAST  # High quality = fast tier
         assert call_kwargs["importance"] > 0.8
 
     def test_stores_medium_tier_for_moderate_quality(self):
@@ -116,7 +117,7 @@ class TestStoreDebateOutcome:
         manager.store_debate_outcome(mock_result, "test task")
 
         call_kwargs = mock_continuum.add.call_args.kwargs
-        assert call_kwargs["tier"] == "medium"
+        assert call_kwargs["tier"] == MemoryTier.MEDIUM
 
 
 class TestStoreEvidence:

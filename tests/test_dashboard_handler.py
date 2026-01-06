@@ -110,15 +110,14 @@ class TestDashboardWithMockedDependencies:
 
     def test_summary_metrics_with_storage(self):
         """Summary metrics method processes storage data."""
-        mock_storage = MagicMock()
-        mock_storage.list_debates.return_value = [
+        debates = [
             {"consensus_reached": True, "confidence": 0.8},
             {"consensus_reached": False, "confidence": 0.5},
             {"consensus_reached": True, "confidence": 0.9},
         ]
 
-        handler = DashboardHandler({"storage": mock_storage})
-        summary = handler._get_summary_metrics(None)
+        handler = DashboardHandler({})
+        summary = handler._get_summary_metrics(None, debates)
 
         assert summary["total_debates"] == 3
         assert summary["consensus_reached"] == 2

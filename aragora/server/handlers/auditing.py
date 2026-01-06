@@ -56,6 +56,7 @@ except ImportError:
     pass
 
 from aragora.server.error_utils import safe_error_message as _safe_error_message
+from aragora.debate.sanitization import OutputSanitizer
 
 
 class AuditingHandler(BaseHandler):
@@ -166,9 +167,10 @@ class AuditingHandler(BaseHandler):
             async def run_agent_fn(target_agent, prompt: str) -> str:
                 try:
                     if asyncio.iscoroutinefunction(target_agent.generate):
-                        return await target_agent.generate(prompt)
+                        raw_output = await target_agent.generate(prompt)
                     else:
-                        return target_agent.generate(prompt)
+                        raw_output = target_agent.generate(prompt)
+                    return OutputSanitizer.sanitize_agent_output(raw_output, target_agent.name)
                 except Exception as e:
                     return f"[Agent Error: {str(e)}]"
 

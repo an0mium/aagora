@@ -535,3 +535,158 @@ class TestGetSimilarityBackend:
             ):
                 backend = get_similarity_backend("auto")
                 assert isinstance(backend, JaccardBackend)
+
+
+# =============================================================================
+# Batch Similarity Tests (Performance Optimizations)
+# =============================================================================
+
+
+class TestBatchSimilarityMethods:
+    """Tests for batch similarity computation methods."""
+
+    def test_compute_batch_similarity_with_jaccard(self):
+        """Test batch similarity with JaccardBackend."""
+        backend = JaccardBackend()
+        texts = ["hello world", "hello there", "goodbye world"]
+
+        similarity = backend.compute_batch_similarity(texts)
+
+        # Should be between 0 and 1
+        assert 0.0 <= similarity <= 1.0
+        # With partial overlaps, should be moderate
+        assert 0.1 < similarity < 0.9
+
+    def test_compute_batch_similarity_identical_texts(self):
+        """Identical texts should have similarity of 1.0."""
+        backend = JaccardBackend()
+        texts = ["same text here", "same text here", "same text here"]
+
+        similarity = backend.compute_batch_similarity(texts)
+        assert similarity == pytest.approx(1.0, rel=1e-9)
+
+    def test_compute_batch_similarity_different_texts(self):
+        """Very different texts should have low similarity."""
+        backend = JaccardBackend()
+        texts = ["alpha beta gamma", "one two three", "red green blue"]
+
+        similarity = backend.compute_batch_similarity(texts)
+        # No common words, should be close to 0
+        assert similarity == pytest.approx(0.0, rel=1e-9)
+
+    def test_compute_batch_similarity_tfidf(self):
+        """Test batch similarity with TFIDFBackend."""
+        pytest.importorskip("sklearn")
+        backend = TFIDFBackend()
+        texts = ["machine learning", "deep learning", "neural networks"]
+
+        similarity = backend.compute_batch_similarity(texts)
+        assert 0.0 <= similarity <= 1.0
+
+    @requires_sentence_transformers
+    def test_sentence_transformer_compute_batch_optimized(self):
+        """Test that SentenceTransformerBackend uses optimized batch encoding."""
+        backend = SentenceTransformerBackend()
+        texts = ["The quick brown fox", "A fast red fox", "The slow gray dog"]
+
+        # This should use single encode call internally
+        similarity = backend.compute_batch_similarity(texts)
+        assert 0.0 <= similarity <= 1.0
+
+    @requires_sentence_transformers
+    def test_compute_pairwise_similarities_basic(self):
+        """Test pairwise similarities with equal length lists."""
+        backend = SentenceTransformerBackend()
+        texts_a = ["hello world", "good morning", "python programming"]
+        texts_b = ["hello world", "good evening", "javascript coding"]
+
+        similarities = backend.compute_pairwise_similarities(texts_a, texts_b)
+
+        assert len(similarities) == 3
+        # First pair is identical
+        assert similarities[0] == pytest.approx(1.0, rel=0.01)
+        # Second pair is similar
+        assert 0.3 < similarities[1] < 0.9
+        # Third pair is somewhat related
+        assert 0.0 < similarities[2] < 0.8
+
+    @requires_sentence_transformers
+    def test_compute_pairwise_similarities_empty_lists(self):
+        """Test pairwise with empty lists returns empty."""
+        backend = SentenceTransformerBackend()
+
+        assert backend.compute_pairwise_similarities([], []) == []
+
+    @requires_sentence_transformers
+    def test_compute_pairwise_similarities_unequal_length(self):
+        """Test pairwise with unequal lists returns empty."""
+        backend = SentenceTransformerBackend()
+        texts_a = ["one", "two"]
+        texts_b = ["one", "two", "three"]
+
+        # Unequal length should return empty
+        assert backend.compute_pairwise_similarities(texts_a, texts_b) == []
+
+    @requires_sentence_transformers
+    def test_convergence_detector_uses_batch_method(self):
+        """Test that ConvergenceDetector uses batch method when available."""
+        detector = ConvergenceDetector(min_rounds_before_check=1)
+
+        current = {
+            "agent1": "TypeScript is a typed superset of JavaScript",
+            "agent2": "Python is a dynamic language",
+            "agent3": "Rust is a systems language",
+        }
+        previous = {
+            "agent1": "TypeScript adds types to JavaScript",
+            "agent2": "Python is dynamically typed",
+            "agent3": "Rust focuses on memory safety",
+        }
+
+        result = detector.check_convergence(current, previous, round_number=2)
+
+        assert result is not None
+        assert len(result.per_agent_similarity) == 3
+        # Each agent should have some similarity with their previous response
+        for agent, sim in result.per_agent_similarity.items():
+            assert 0.0 <= sim <= 1.0
+
+
+class TestConvergenceDetectorBatchIntegration:
+    """Test that ConvergenceDetector correctly uses batch methods."""
+
+    def test_uses_pairwise_method_when_available(self):
+        """Detector should use compute_pairwise_similarities when available."""
+        # Create a mock backend with the method
+        mock_backend = MagicMock(spec=SimilarityBackend)
+        mock_backend.compute_pairwise_similarities = MagicMock(return_value=[0.9, 0.8])
+
+        detector = ConvergenceDetector(min_rounds_before_check=1)
+        detector.backend = mock_backend
+
+        current = {"a": "text1", "b": "text2"}
+        previous = {"a": "text1_old", "b": "text2_old"}
+
+        result = detector.check_convergence(current, previous, round_number=2)
+
+        # Should have called the batch method
+        mock_backend.compute_pairwise_similarities.assert_called_once()
+        assert result is not None
+
+    def test_falls_back_to_individual_without_batch_method(self):
+        """Detector should fall back to individual calls without batch method."""
+        mock_backend = MagicMock(spec=SimilarityBackend)
+        mock_backend.compute_similarity = MagicMock(return_value=0.85)
+        # Don't add compute_pairwise_similarities
+
+        detector = ConvergenceDetector(min_rounds_before_check=1)
+        detector.backend = mock_backend
+
+        current = {"a": "text1", "b": "text2"}
+        previous = {"a": "text1_old", "b": "text2_old"}
+
+        result = detector.check_convergence(current, previous, round_number=2)
+
+        # Should have called individual method twice
+        assert mock_backend.compute_similarity.call_count == 2
+        assert result is not None

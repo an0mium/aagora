@@ -16,6 +16,7 @@ from typing import Optional
 
 from aragora.utils.optional_imports import try_import
 from aragora.server.validation import SAFE_ID_PATTERN
+from aragora.debate.sanitization import OutputSanitizer
 from .base import (
     BaseHandler,
     HandlerResult,
@@ -181,9 +182,10 @@ class ProbesHandler(BaseHandler):
             """Execute agent with probe prompt."""
             try:
                 if asyncio.iscoroutinefunction(target_agent.generate):
-                    return await target_agent.generate(prompt)
+                    raw_output = await target_agent.generate(prompt)
                 else:
-                    return target_agent.generate(prompt)
+                    raw_output = target_agent.generate(prompt)
+                return OutputSanitizer.sanitize_agent_output(raw_output, target_agent.name)
             except Exception as e:
                 return f"[Agent Error: {str(e)}]"
 

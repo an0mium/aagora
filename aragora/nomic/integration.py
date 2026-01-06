@@ -483,7 +483,8 @@ class NomicIntegration:
         # Check claim statement for file patterns
         import re
         # Match common file path patterns
-        path_pattern = r'(?:[\w./\\-]+\.(?:py|ts|js|tsx|jsx|json|yaml|yml|md|txt))'
+        # Order extensions longest-first to avoid partial matches (tsx before ts, json before js)
+        path_pattern = r'(?:[\w./\\-]+\.(?:py|tsx|jsx|ts|json|js|yaml|yml|md|txt))'
         text = claim.statement if hasattr(claim, 'statement') else getattr(claim, 'text', '')
         matches = re.findall(path_pattern, text)
         files.extend(matches)

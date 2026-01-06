@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional, List, Callable, Any
 import traceback
 import logging
+from collections import defaultdict
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -4739,19 +4740,24 @@ The most valuable proposals combine deep analysis with actionable implementation
             return None
 
     async def _run_forked_debate(self, fork_decision: "ForkDecision", base_context: str) -> "MergeResult":
-        """Run forked parallel debates (P30: DebateForker)."""
+        """Run forked parallel debates (P30: DebateForker).
+
+        Note: This feature requires proper Environment, agents, and run_debate_fn
+        to be passed to run_branches. Currently disabled until full integration.
+        """
         if not DEBATE_FORKER_AVAILABLE or not self.fork_debate_enabled or not fork_decision:
             return None
         try:
             branches = getattr(fork_decision, 'branches', [])
-            self._log(f"  [forking] Running {len(branches)} parallel branches...")
-            # Create forker on demand
-            forker = DebateForker()
-            result = await forker.run_branches(fork_decision, base_context)
-            if result:
-                winning = getattr(result, 'winning_hypothesis', '')
-                self._log(f"  [forking] Merged: {winning}")
-            return result
+            if not branches:
+                self._log(f"  [forking] No branches in fork decision")
+                return None
+
+            self._log(f"  [forking] Fork detected with {len(branches)} branches")
+            # TODO: Full forking requires Environment, agents list, and run_debate_fn
+            # For now, log the fork but don't execute parallel branches
+            self._log(f"  [forking] Skipping parallel execution (integration pending)")
+            return None
         except Exception as e:
             self._log(f"  [forking] Run error: {e}")
             return None
@@ -6258,7 +6264,7 @@ Recent changes:
                 for agent in debate_team:
                     positions = self.position_ledger.get_agent_positions(
                         agent_name=agent.name,
-                        debate_id=debate_id,
+                        limit=10,  # Get recent positions
                     )
                     for pos in positions:
                         agent_outcome = "correct" if self._agent_in_consensus(agent.name, result) else "incorrect"
@@ -6296,11 +6302,18 @@ Recent changes:
                                 'accepted': getattr(msg.critique, 'accepted', False),
                             })
 
+                # Convert votes list to dict[agent -> choice] for relationship tracker
+                votes_dict = {}
+                if hasattr(result, 'votes') and result.votes:
+                    for v in result.votes:
+                        if hasattr(v, 'agent') and hasattr(v, 'choice'):
+                            votes_dict[v.agent] = v.choice
+
                 self.relationship_tracker.update_from_debate(
                     debate_id=f"cycle-{self.cycle_count}",
                     participants=participants,
                     winner=winner,
-                    votes=result.votes if hasattr(result, 'votes') else [],
+                    votes=votes_dict,
                     critiques=critiques_data,
                     position_changes=position_changes,
                 )
