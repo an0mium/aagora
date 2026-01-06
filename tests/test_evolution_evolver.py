@@ -194,6 +194,83 @@ class TestPatternExtraction:
         structured = [p for p in patterns if p["type"] == "structured_response"]
         assert len(structured) > 0
 
+    def test_extract_patterns_high_severity_skipped(self, evolver):
+        """Should skip high-severity critiques (issues not addressed)."""
+        critique = Mock(spec=Critique)
+        critique.issues = ["Critical flaw"]
+        critique.suggestions = []
+        critique.severity = 0.9  # High severity = issue NOT addressed
+
+        debate = Mock(spec=DebateResult)
+        debate.id = "debate-3"
+        debate.consensus_reached = True
+        debate.confidence = 0.8
+        debate.critiques = [critique]
+        debate.final_answer = "Answer"
+
+        patterns = evolver.extract_winning_patterns([debate])
+
+        # High severity patterns should be skipped
+        issue_patterns = [p for p in patterns if p["type"] == "issue_identification"]
+        assert len(issue_patterns) == 0
+
+    def test_extract_patterns_empty_critiques(self, evolver):
+        """Should handle debates with empty critiques list."""
+        debate = Mock(spec=DebateResult)
+        debate.id = "debate-4"
+        debate.consensus_reached = True
+        debate.confidence = 0.8
+        debate.critiques = []  # No critiques
+        debate.final_answer = "Simple answer"
+
+        patterns = evolver.extract_winning_patterns([debate])
+
+        # Should not crash, may have zero patterns
+        assert isinstance(patterns, list)
+
+    def test_extract_patterns_none_final_answer(self, evolver):
+        """Should handle debate with None final_answer."""
+        critique = Mock(spec=Critique)
+        critique.issues = ["Issue"]
+        critique.suggestions = []
+        critique.severity = 0.5
+
+        debate = Mock(spec=DebateResult)
+        debate.id = "debate-5"
+        debate.consensus_reached = True
+        debate.confidence = 0.8
+        debate.critiques = [critique]
+        debate.final_answer = None  # No final answer
+
+        patterns = evolver.extract_winning_patterns([debate])
+
+        # Should have issue pattern but no code/structured patterns
+        issue_patterns = [p for p in patterns if p["type"] == "issue_identification"]
+        assert len(issue_patterns) > 0
+
+    def test_extract_patterns_multiple_debates(self, evolver):
+        """Should extract patterns from multiple debates."""
+        debates = []
+        for i in range(3):
+            critique = Mock(spec=Critique)
+            critique.issues = [f"Issue {i}"]
+            critique.suggestions = []
+            critique.severity = 0.5
+
+            debate = Mock(spec=DebateResult)
+            debate.id = f"debate-{i}"
+            debate.consensus_reached = True
+            debate.confidence = 0.8
+            debate.critiques = [critique]
+            debate.final_answer = "Answer"
+            debates.append(debate)
+
+        patterns = evolver.extract_winning_patterns(debates)
+
+        # Should have patterns from all debates
+        issue_patterns = [p for p in patterns if p["type"] == "issue_identification"]
+        assert len(issue_patterns) == 3
+
 
 class TestPatternStorage:
     """Tests for pattern storage and retrieval."""
@@ -386,11 +463,153 @@ class TestEvolutionStrategies:
         # Short prompt should use append
         assert "Learned patterns" in new_prompt
 
+    def test_evolve_hybrid_uses_refine_when_too_long(self, evolver):
+        """HYBRID strategy should use refine when prompt would exceed 2000 chars."""
+        # Create agent with long prompt
+        long_agent = Mock(spec=Agent)
+        long_agent.name = "long-agent"
+        long_agent.system_prompt = "x" * 1800  # Long base prompt
+
+        # Many patterns would make it exceed 2000
+        patterns = [
+            {"type": "issue_identification", "text": "Pattern " + str(i) * 20}
+            for i in range(10)
+        ]
+
+        # Mock the refine method to verify it's called
+        with patch.object(evolver, '_evolve_refine') as mock_refine:
+            mock_refine.return_value = "Refined prompt"
+            new_prompt = evolver.evolve_prompt(
+                long_agent,
+                patterns=patterns,
+                strategy=EvolutionStrategy.HYBRID,
+            )
+
+            # Should have called refine since append would be too long
+            mock_refine.assert_called_once()
+
     def test_evolve_no_patterns(self, evolver, mock_agent):
         """Evolution with no patterns should return original prompt."""
         original = mock_agent.system_prompt
         new_prompt = evolver._evolve_append(original, [])
         assert new_prompt == original
+
+
+class TestRefineStrategy:
+    """Tests for REFINE strategy with API calls."""
+
+    @pytest.fixture
+    def temp_db(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        yield path
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+    @pytest.fixture
+    def evolver(self, temp_db):
+        return PromptEvolver(db_path=temp_db, strategy=EvolutionStrategy.REFINE)
+
+    def test_refine_with_anthropic_api(self, evolver):
+        """REFINE should use Anthropic API when available."""
+        patterns = [{"type": "test", "text": "Be helpful"}]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "content": [{"text": "Refined prompt from Claude"}]
+        }
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
+            with patch("requests.Session.post", return_value=mock_response):
+                result = evolver._evolve_refine("Original prompt", patterns)
+
+        assert result == "Refined prompt from Claude"
+
+    def test_refine_with_openai_fallback(self, evolver):
+        """REFINE should use OpenAI when Anthropic not available."""
+        patterns = [{"type": "test", "text": "Be helpful"}]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Refined prompt from GPT"}}]
+        }
+
+        # Only OpenAI key available
+        env_vars = {"OPENAI_API_KEY": "test-key"}
+        with patch.dict(os.environ, env_vars, clear=False):
+            # Remove Anthropic key if present
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}, clear=False):
+                with patch("requests.Session.post", return_value=mock_response):
+                    result = evolver._evolve_refine("Original prompt", patterns)
+
+        assert result == "Refined prompt from GPT"
+
+    def test_refine_fallback_on_api_error(self, evolver):
+        """REFINE should fallback to append on API error."""
+        import requests
+
+        patterns = [{"type": "issue_identification", "text": "Check errors"}]
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
+            with patch("requests.Session.post", side_effect=requests.RequestException("API down")):
+                result = evolver._evolve_refine("Original prompt", patterns)
+
+        # Should fallback to append
+        assert "Learned patterns" in result
+        assert "Check errors" in result
+
+    def test_refine_fallback_on_invalid_response(self, evolver):
+        """REFINE should fallback to append on invalid JSON response."""
+        patterns = [{"type": "issue_identification", "text": "Check errors"}]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = json.JSONDecodeError("Invalid", "", 0)
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
+            with patch("requests.Session.post", return_value=mock_response):
+                result = evolver._evolve_refine("Original prompt", patterns)
+
+        # Should fallback to append
+        assert "Learned patterns" in result
+
+    def test_refine_fallback_on_non_200_status(self, evolver):
+        """REFINE should fallback on non-200 API status."""
+        patterns = [{"type": "issue_identification", "text": "Check errors"}]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.json.return_value = {"error": "Internal error"}
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
+            with patch("requests.Session.post", return_value=mock_response):
+                result = evolver._evolve_refine("Original prompt", patterns)
+
+        # Should fallback to append
+        assert "Learned patterns" in result
+
+    def test_refine_no_api_key_uses_append(self, evolver):
+        """REFINE without API key should use append."""
+        patterns = [{"type": "issue_identification", "text": "Check errors"}]
+
+        # No API keys
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": ""}, clear=False):
+            result = evolver._evolve_refine("Original prompt", patterns)
+
+        # Should fallback to append
+        assert "Learned patterns" in result
+
+    def test_refine_empty_patterns_uses_append(self, evolver):
+        """REFINE with empty patterns should use append."""
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
+            result = evolver._evolve_refine("Original prompt", [])
+
+        # Should return original (append with no patterns)
+        assert result == "Original prompt"
 
 
 class TestApplyEvolution:

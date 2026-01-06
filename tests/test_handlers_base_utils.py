@@ -1,0 +1,680 @@
+"""
+Tests for aragora/server/handlers/base.py utilities.
+
+Covers:
+- BoundedTTLCache class
+- ttl_cache decorator
+- Parameter parsing utilities
+- Validation functions
+- Error handling decorators
+- JSON response helpers
+"""
+
+import json
+import time
+import pytest
+from unittest.mock import Mock, patch, MagicMock
+
+from aragora.server.handlers.base import (
+    BoundedTTLCache,
+    ttl_cache,
+    clear_cache,
+    get_cache_stats,
+    HandlerResult,
+    json_response,
+    error_response,
+    generate_trace_id,
+    handle_errors,
+    with_error_recovery,
+    ValidationResult,
+    validate_against_schema,
+    validate_params,
+    parse_query_params,
+    get_int_param,
+    get_float_param,
+    get_bool_param,
+    get_string_param,
+    get_clamped_int_param,
+    get_bounded_float_param,
+    get_bounded_string_param,
+    validate_path_segment,
+    validate_agent_name,
+    validate_debate_id,
+    _map_exception_to_status,
+)
+
+
+# ============================================================================
+# BoundedTTLCache Tests
+# ============================================================================
+
+class TestBoundedTTLCache:
+    """Tests for BoundedTTLCache class."""
+
+    def test_cache_set_and_get(self):
+        """Should store and retrieve values."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+
+        hit, value = cache.get("key1", ttl_seconds=60)
+
+        assert hit is True
+        assert value == "value1"
+
+    def test_cache_miss_returns_none(self):
+        """Should return miss for non-existent keys."""
+        cache = BoundedTTLCache(max_entries=10)
+
+        hit, value = cache.get("nonexistent", ttl_seconds=60)
+
+        assert hit is False
+        assert value is None
+
+    def test_cache_expires_after_ttl(self):
+        """Should expire entries after TTL."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+
+        # Simulate time passing
+        with patch('aragora.server.handlers.base.time.time') as mock_time:
+            # Initial set was at time 0
+            mock_time.return_value = 0
+            cache.set("key2", "value2")
+
+            # Get after TTL expired
+            mock_time.return_value = 100
+            hit, value = cache.get("key2", ttl_seconds=60)
+
+            assert hit is False
+            assert value is None
+
+    def test_cache_evicts_oldest_when_full(self):
+        """Should evict oldest entries when at capacity."""
+        cache = BoundedTTLCache(max_entries=3, evict_percent=0.5)
+
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+        cache.set("key3", "value3")
+
+        # This should trigger eviction
+        cache.set("key4", "value4")
+
+        # Oldest should be evicted
+        hit, _ = cache.get("key1", ttl_seconds=60)
+        assert hit is False
+
+        # Newest should exist
+        hit, value = cache.get("key4", ttl_seconds=60)
+        assert hit is True
+        assert value == "value4"
+
+    def test_cache_clear_all(self):
+        """Should clear all entries."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+
+        count = cache.clear()
+
+        assert count == 2
+        assert len(cache) == 0
+
+    def test_cache_clear_by_prefix(self):
+        """Should clear entries matching prefix."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("user:1", "alice")
+        cache.set("user:2", "bob")
+        cache.set("post:1", "hello")
+
+        count = cache.clear("user:")
+
+        assert count == 2
+        assert len(cache) == 1
+        hit, value = cache.get("post:1", ttl_seconds=60)
+        assert hit is True
+
+    def test_cache_stats(self):
+        """Should track hits and misses."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+
+        # Hit
+        cache.get("key1", ttl_seconds=60)
+        # Miss
+        cache.get("key2", ttl_seconds=60)
+
+        stats = cache.stats
+        assert stats["hits"] == 1
+        assert stats["misses"] == 1
+        assert stats["hit_rate"] == 0.5
+
+    def test_cache_contains(self):
+        """Should support 'in' operator."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+
+        assert "key1" in cache
+        assert "key2" not in cache
+
+    def test_cache_len(self):
+        """Should return correct length."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+
+        assert len(cache) == 2
+
+    def test_cache_update_existing(self):
+        """Should update existing entries."""
+        cache = BoundedTTLCache(max_entries=10)
+        cache.set("key1", "value1")
+        cache.set("key1", "value2")
+
+        hit, value = cache.get("key1", ttl_seconds=60)
+        assert value == "value2"
+        assert len(cache) == 1
+
+
+# ============================================================================
+# ttl_cache Decorator Tests
+# ============================================================================
+
+class TestTTLCacheDecorator:
+    """Tests for ttl_cache decorator."""
+
+    def setup_method(self):
+        """Clear cache before each test."""
+        clear_cache()
+
+    def test_caches_result(self):
+        """Should cache function results."""
+        call_count = 0
+
+        @ttl_cache(ttl_seconds=60, key_prefix="test", skip_first=False)
+        def expensive_func(x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        result1 = expensive_func(5)
+        result2 = expensive_func(5)
+
+        assert result1 == 10
+        assert result2 == 10
+        assert call_count == 1  # Only called once
+
+    def test_different_args_different_cache(self):
+        """Should cache different args separately."""
+        call_count = 0
+
+        @ttl_cache(ttl_seconds=60, key_prefix="test", skip_first=False)
+        def expensive_func(x):
+            nonlocal call_count
+            call_count += 1
+            return x * 2
+
+        expensive_func(5)
+        expensive_func(10)
+
+        assert call_count == 2
+
+    def test_skips_self_for_methods(self):
+        """Should skip self when building cache key for methods."""
+        call_count = 0
+
+        class MyClass:
+            @ttl_cache(ttl_seconds=60, key_prefix="test", skip_first=True)
+            def method(self, x):
+                nonlocal call_count
+                call_count += 1
+                return x * 2
+
+        obj1 = MyClass()
+        obj2 = MyClass()
+
+        # Different instances, same args should hit same cache
+        obj1.method(5)
+        obj2.method(5)
+
+        assert call_count == 1
+
+    def test_clear_cache_by_prefix(self):
+        """Should clear cache by prefix."""
+        @ttl_cache(ttl_seconds=60, key_prefix="prefix1", skip_first=False)
+        def func1(x):
+            return x
+
+        @ttl_cache(ttl_seconds=60, key_prefix="prefix2", skip_first=False)
+        def func2(x):
+            return x
+
+        func1(1)
+        func2(2)
+
+        count = clear_cache("prefix1:")
+        assert count >= 1
+
+
+# ============================================================================
+# Parameter Parsing Tests
+# ============================================================================
+
+class TestParameterParsing:
+    """Tests for parameter parsing utilities."""
+
+    def test_get_int_param_valid(self):
+        """Should parse valid integer."""
+        params = {"limit": "20"}
+        assert get_int_param(params, "limit", 10) == 20
+
+    def test_get_int_param_default(self):
+        """Should return default for missing key."""
+        params = {}
+        assert get_int_param(params, "limit", 10) == 10
+
+    def test_get_int_param_invalid(self):
+        """Should return default for invalid value."""
+        params = {"limit": "not_a_number"}
+        assert get_int_param(params, "limit", 10) == 10
+
+    def test_get_int_param_list_value(self):
+        """Should handle list values from query strings."""
+        params = {"limit": ["20", "30"]}
+        assert get_int_param(params, "limit", 10) == 20
+
+    def test_get_float_param_valid(self):
+        """Should parse valid float."""
+        params = {"threshold": "0.75"}
+        assert get_float_param(params, "threshold", 0.5) == 0.75
+
+    def test_get_float_param_default(self):
+        """Should return default for missing key."""
+        params = {}
+        assert get_float_param(params, "threshold", 0.5) == 0.5
+
+    def test_get_float_param_invalid(self):
+        """Should return default for invalid value."""
+        params = {"threshold": "invalid"}
+        assert get_float_param(params, "threshold", 0.5) == 0.5
+
+    def test_get_bool_param_true_values(self):
+        """Should recognize various true values."""
+        assert get_bool_param({"flag": "true"}, "flag") is True
+        assert get_bool_param({"flag": "1"}, "flag") is True
+        assert get_bool_param({"flag": "yes"}, "flag") is True
+        assert get_bool_param({"flag": "on"}, "flag") is True
+        assert get_bool_param({"flag": "TRUE"}, "flag") is True
+
+    def test_get_bool_param_false_values(self):
+        """Should recognize various false values."""
+        assert get_bool_param({"flag": "false"}, "flag") is False
+        assert get_bool_param({"flag": "0"}, "flag") is False
+        assert get_bool_param({"flag": "no"}, "flag") is False
+
+    def test_get_string_param_valid(self):
+        """Should get string parameter."""
+        params = {"name": "test"}
+        assert get_string_param(params, "name") == "test"
+
+    def test_get_string_param_default(self):
+        """Should return default for missing key."""
+        params = {}
+        assert get_string_param(params, "name", "default") == "default"
+
+    def test_get_string_param_list_value(self):
+        """Should handle list values."""
+        params = {"name": ["first", "second"]}
+        assert get_string_param(params, "name") == "first"
+
+    def test_get_clamped_int_param(self):
+        """Should clamp integer to range."""
+        params = {"limit": "200"}
+        result = get_clamped_int_param(params, "limit", 10, 1, 100)
+        assert result == 100
+
+    def test_get_clamped_int_param_below_min(self):
+        """Should clamp to minimum."""
+        params = {"limit": "-5"}
+        result = get_clamped_int_param(params, "limit", 10, 1, 100)
+        assert result == 1
+
+    def test_get_bounded_float_param(self):
+        """Should bound float to range."""
+        params = {"score": "1.5"}
+        result = get_bounded_float_param(params, "score", 0.5, 0.0, 1.0)
+        assert result == 1.0
+
+    def test_get_bounded_string_param(self):
+        """Should truncate string to max length."""
+        params = {"text": "a" * 1000}
+        result = get_bounded_string_param(params, "text", max_length=100)
+        assert len(result) == 100
+
+    def test_parse_query_params(self):
+        """Should parse query string to dict."""
+        result = parse_query_params("limit=20&domain=test")
+        assert result == {"limit": "20", "domain": "test"}
+
+    def test_parse_query_params_empty(self):
+        """Should handle empty query string."""
+        assert parse_query_params("") == {}
+        assert parse_query_params(None) == {}
+
+
+# ============================================================================
+# Validation Tests
+# ============================================================================
+
+class TestValidation:
+    """Tests for validation functions."""
+
+    def test_validate_path_segment_valid(self):
+        """Should accept valid segments."""
+        is_valid, error = validate_path_segment("debate-123", "debate_id")
+        assert is_valid is True
+        assert error is None
+
+    def test_validate_path_segment_empty(self):
+        """Should reject empty segments."""
+        is_valid, error = validate_path_segment("", "debate_id")
+        assert is_valid is False
+        assert "Missing" in error
+
+    def test_validate_path_segment_traversal(self):
+        """Should reject path traversal attempts."""
+        is_valid, error = validate_path_segment("../etc/passwd", "file")
+        assert is_valid is False
+        assert "path traversal" in error
+
+    def test_validate_path_segment_slash(self):
+        """Should reject paths with slashes."""
+        is_valid, error = validate_path_segment("foo/bar", "segment")
+        assert is_valid is False
+        assert "path traversal" in error
+
+    def test_validate_agent_name_valid(self):
+        """Should accept valid agent names."""
+        is_valid, error = validate_agent_name("claude-3")
+        assert is_valid is True
+
+    def test_validate_agent_name_invalid(self):
+        """Should reject invalid agent names."""
+        is_valid, error = validate_agent_name("agent<script>")
+        assert is_valid is False
+
+    def test_validate_debate_id_valid(self):
+        """Should accept valid debate IDs."""
+        is_valid, error = validate_debate_id("debate-abc123")
+        assert is_valid is True
+
+    def test_validate_debate_id_traversal(self):
+        """Should reject path traversal in debate IDs."""
+        is_valid, error = validate_debate_id("../../secret")
+        assert is_valid is False
+
+
+class TestSchemaValidation:
+    """Tests for schema-based validation."""
+
+    def test_validates_required_param(self):
+        """Should reject missing required params."""
+        schema = {"name": {"required": True, "type": "string"}}
+        result = validate_against_schema({}, schema)
+
+        assert result.is_valid is False
+        assert "Missing required" in result.error
+
+    def test_applies_default_value(self):
+        """Should apply default values."""
+        schema = {"limit": {"type": "int", "default": 20}}
+        result = validate_against_schema({}, schema)
+
+        assert result.is_valid is True
+        assert result.validated_params["limit"] == 20
+
+    def test_validates_int_type(self):
+        """Should convert string to int."""
+        schema = {"limit": {"type": "int"}}
+        result = validate_against_schema({"limit": "50"}, schema)
+
+        assert result.is_valid is True
+        assert result.validated_params["limit"] == 50
+
+    def test_validates_int_min_max(self):
+        """Should enforce min/max for ints."""
+        schema = {"limit": {"type": "int", "min": 1, "max": 100}}
+        result = validate_against_schema({"limit": "200"}, schema)
+
+        assert result.is_valid is False
+        assert "<=" in result.error or "100" in result.error
+
+    def test_validates_float_type(self):
+        """Should convert string to float."""
+        schema = {"score": {"type": "float"}}
+        result = validate_against_schema({"score": "0.75"}, schema)
+
+        assert result.is_valid is True
+        assert result.validated_params["score"] == 0.75
+
+    def test_validates_choices(self):
+        """Should enforce allowed choices."""
+        schema = {"status": {"type": "string", "choices": ["active", "inactive"]}}
+        result = validate_against_schema({"status": "invalid"}, schema)
+
+        assert result.is_valid is False
+        assert "must be one of" in result.error or "active" in result.error
+
+
+# ============================================================================
+# Error Handling Tests
+# ============================================================================
+
+class TestErrorHandling:
+    """Tests for error handling decorators."""
+
+    def test_handle_errors_catches_exception(self):
+        """Should catch exceptions and return error response."""
+        @handle_errors("test operation")
+        def failing_func():
+            raise ValueError("Test error")
+
+        result = failing_func()
+
+        assert isinstance(result, HandlerResult)
+        assert result.status_code == 400  # ValueError maps to 400
+
+    def test_handle_errors_includes_trace_id(self):
+        """Should include trace ID in response headers."""
+        @handle_errors("test operation")
+        def failing_func():
+            raise ValueError("Test error")
+
+        result = failing_func()
+
+        assert "X-Trace-Id" in result.headers
+
+    def test_handle_errors_logs_exception(self):
+        """Should log the exception."""
+        with patch('aragora.server.handlers.base.logger') as mock_logger:
+            @handle_errors("test operation")
+            def failing_func():
+                raise ValueError("Test error")
+
+            failing_func()
+
+            mock_logger.error.assert_called_once()
+
+    def test_handle_errors_returns_success_on_no_error(self):
+        """Should pass through successful results."""
+        @handle_errors("test operation")
+        def success_func():
+            return json_response({"result": "ok"})
+
+        result = success_func()
+
+        assert result.status_code == 200
+
+    def test_map_exception_to_status(self):
+        """Should map exceptions to appropriate status codes."""
+        assert _map_exception_to_status(FileNotFoundError()) == 404
+        assert _map_exception_to_status(ValueError()) == 400
+        assert _map_exception_to_status(PermissionError()) == 403
+        assert _map_exception_to_status(TimeoutError()) == 504
+        assert _map_exception_to_status(Exception()) == 500  # Default
+
+
+class TestErrorRecovery:
+    """Tests for error recovery decorator."""
+
+    def test_returns_fallback_on_error(self):
+        """Should return fallback value on error."""
+        @with_error_recovery(fallback_value=[])
+        def failing_func():
+            raise RuntimeError("Error")
+
+        result = failing_func()
+        assert result == []
+
+    def test_returns_result_on_success(self):
+        """Should return actual result on success."""
+        @with_error_recovery(fallback_value=[])
+        def success_func():
+            return [1, 2, 3]
+
+        result = success_func()
+        assert result == [1, 2, 3]
+
+    def test_logs_error_when_enabled(self):
+        """Should log errors when log_errors=True."""
+        with patch('aragora.server.handlers.base.logger') as mock_logger:
+            @with_error_recovery(fallback_value=None, log_errors=True)
+            def failing_func():
+                raise RuntimeError("Error")
+
+            failing_func()
+
+            mock_logger.error.assert_called_once()
+
+    def test_no_log_when_disabled(self):
+        """Should not log when log_errors=False."""
+        with patch('aragora.server.handlers.base.logger') as mock_logger:
+            @with_error_recovery(fallback_value=None, log_errors=False)
+            def failing_func():
+                raise RuntimeError("Error")
+
+            failing_func()
+
+            mock_logger.error.assert_not_called()
+
+
+# ============================================================================
+# JSON Response Tests
+# ============================================================================
+
+class TestJSONResponse:
+    """Tests for JSON response helpers."""
+
+    def test_json_response_structure(self):
+        """Should create proper HandlerResult."""
+        result = json_response({"key": "value"})
+
+        assert result.status_code == 200
+        assert result.content_type == "application/json"
+        assert b'"key"' in result.body
+
+    def test_json_response_custom_status(self):
+        """Should accept custom status code."""
+        result = json_response({"key": "value"}, status=201)
+        assert result.status_code == 201
+
+    def test_json_response_serializes_dates(self):
+        """Should serialize datetime objects."""
+        from datetime import datetime
+        data = {"timestamp": datetime(2024, 1, 1, 12, 0, 0)}
+
+        result = json_response(data)
+
+        assert b"2024-01-01" in result.body
+
+    def test_json_response_custom_headers(self):
+        """Should include custom headers."""
+        result = json_response({"key": "value"}, headers={"X-Custom": "test"})
+        assert result.headers["X-Custom"] == "test"
+
+    def test_error_response_structure(self):
+        """Should create error response with message."""
+        result = error_response("Something went wrong", 400)
+
+        assert result.status_code == 400
+        body = json.loads(result.body)
+        assert body["error"] == "Something went wrong"
+
+    def test_error_response_default_status(self):
+        """Should default to 400 status."""
+        result = error_response("Error")
+        assert result.status_code == 400
+
+
+# ============================================================================
+# Trace ID Tests
+# ============================================================================
+
+class TestTraceID:
+    """Tests for trace ID generation."""
+
+    def test_generates_trace_id(self):
+        """Should generate valid trace ID."""
+        trace_id = generate_trace_id()
+
+        assert len(trace_id) == 8
+        assert trace_id.isalnum()
+
+    def test_generates_unique_ids(self):
+        """Should generate unique IDs."""
+        ids = {generate_trace_id() for _ in range(100)}
+        assert len(ids) == 100
+
+
+# ============================================================================
+# HandlerResult Tests
+# ============================================================================
+
+class TestHandlerResult:
+    """Tests for HandlerResult dataclass."""
+
+    def test_default_headers(self):
+        """Should initialize empty headers dict."""
+        result = HandlerResult(status_code=200, content_type="text/plain", body=b"test")
+        assert result.headers == {}
+
+    def test_custom_headers(self):
+        """Should accept custom headers."""
+        result = HandlerResult(
+            status_code=200,
+            content_type="text/plain",
+            body=b"test",
+            headers={"X-Custom": "value"}
+        )
+        assert result.headers["X-Custom"] == "value"
+
+
+# ============================================================================
+# Cache Stats Tests
+# ============================================================================
+
+class TestCacheStats:
+    """Tests for cache statistics."""
+
+    def setup_method(self):
+        """Clear cache before each test."""
+        clear_cache()
+
+    def test_get_cache_stats(self):
+        """Should return cache statistics."""
+        stats = get_cache_stats()
+
+        assert "entries" in stats
+        assert "max_entries" in stats
+        assert "hits" in stats
+        assert "misses" in stats
+        assert "hit_rate" in stats

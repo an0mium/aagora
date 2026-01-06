@@ -123,6 +123,33 @@ class TestMixer:
             result = mix_audio([], output)
             assert not result
 
+    def test_mix_audio_all_files_missing(self):
+        """Test mixing when all provided files are missing (Round 24 edge case).
+
+        This verifies the fix for silent data loss where mix_audio() would
+        return True even when no files were actually mixed because all
+        provided files were missing from disk.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            output = temp_path / "output.mp3"
+
+            # Create list of non-existent files
+            missing_files = [
+                temp_path / "missing1.mp3",
+                temp_path / "missing2.mp3",
+                temp_path / "missing3.mp3",
+            ]
+
+            # Verify files don't exist
+            for f in missing_files:
+                assert not f.exists()
+
+            # mix_audio should return False when all files are missing
+            result = mix_audio(missing_files, output)
+            assert not result
+            assert not output.exists()
+
 
 # Integration test
 @pytest.mark.asyncio

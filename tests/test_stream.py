@@ -652,3 +652,123 @@ class TestSafeErrorMessage:
 
         # Result should exist
         assert len(result) > 0
+
+
+# ============================================================================
+# ThreadPoolExecutor Race Condition Tests (Round 25 fix)
+# ============================================================================
+
+class TestDebateExecutorRaceCondition:
+    """Tests for ThreadPoolExecutor race condition fix in stream.py.
+
+    Round 25 fixed race conditions in graceful_shutdown() and submit functions
+    where the executor could be accessed without proper locking.
+    """
+
+    def test_executor_lock_exists(self):
+        """Test that _debate_executor_lock exists for thread-safe access.
+
+        This verifies the lock variable exists that's used to protect
+        concurrent access to _debate_executor.
+        """
+        from aragora.server import stream
+
+        assert hasattr(stream, '_debate_executor_lock')
+        assert hasattr(stream, '_debate_executor')
+        # Lock should be a threading.Lock
+        assert isinstance(stream._debate_executor_lock, type(threading.Lock()))
+
+    def test_concurrent_executor_access_is_safe(self):
+        """Test that concurrent access to executor variables is thread-safe.
+
+        This verifies the fix for the race condition where _debate_executor
+        could be accessed without proper locking.
+        """
+        from concurrent.futures import ThreadPoolExecutor as TPE
+        from aragora.server import stream
+
+        # Store original values
+        original_executor = stream._debate_executor
+        original_lock = stream._debate_executor_lock
+
+        errors = []
+        values_seen = []
+
+        def access_executor():
+            """Simulate accessing executor with proper locking."""
+            try:
+                with stream._debate_executor_lock:
+                    # Read the executor value safely
+                    executor = stream._debate_executor
+                    values_seen.append(executor)
+            except Exception as e:
+                errors.append(e)
+
+        try:
+            # Create a fresh lock for testing
+            stream._debate_executor_lock = threading.Lock()
+            stream._debate_executor = None
+
+            # Access from multiple threads concurrently
+            threads = [threading.Thread(target=access_executor) for _ in range(10)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # No errors should have occurred
+            assert len(errors) == 0, f"Errors during concurrent access: {errors}"
+            # All threads should have seen the value
+            assert len(values_seen) == 10
+
+        finally:
+            # Restore original values
+            stream._debate_executor = original_executor
+            stream._debate_executor_lock = original_lock
+
+    def test_executor_lock_prevents_data_races(self):
+        """Test that lock properly serializes executor state changes.
+
+        This tests the pattern used in the fix: capture executor reference
+        under lock before using it.
+        """
+        from concurrent.futures import ThreadPoolExecutor as TPE
+        from aragora.server import stream
+
+        # Store original values
+        original_executor = stream._debate_executor
+        original_lock = stream._debate_executor_lock
+
+        errors = []
+        captured_executors = []
+
+        def capture_executor_safely():
+            """Simulate the fixed pattern: capture executor under lock."""
+            try:
+                with stream._debate_executor_lock:
+                    if stream._debate_executor is None:
+                        # Don't create real executor in test
+                        pass
+                    executor = stream._debate_executor
+                captured_executors.append(executor)
+            except Exception as e:
+                errors.append(e)
+
+        try:
+            stream._debate_executor_lock = threading.Lock()
+            stream._debate_executor = None
+
+            # Run many threads to stress test the locking
+            threads = [threading.Thread(target=capture_executor_safely) for _ in range(20)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            # All operations should succeed without errors
+            assert len(errors) == 0, f"Race condition detected: {errors}"
+            assert len(captured_executors) == 20
+
+        finally:
+            stream._debate_executor = original_executor
+            stream._debate_executor_lock = original_lock

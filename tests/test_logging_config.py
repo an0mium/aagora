@@ -477,3 +477,120 @@ class TestIntegration:
 
 
 import logging.handlers
+
+from aragora.logging_config import log_request
+
+
+class TestLogRequestDecorator:
+    """Test log_request decorator for HTTP handlers."""
+
+    def test_logs_request_lifecycle(self):
+        """Test that decorator logs request start and completion."""
+        class MockHandler:
+            method = "GET"
+
+            @log_request()
+            def handle(self, path, query_params):
+                return {"status": "ok"}
+
+        handler = MockHandler()
+        result = handler.handle("/api/test", {"key": "value"})
+        assert result == {"status": "ok"}
+
+    def test_logs_request_error(self):
+        """Test that decorator logs request failures."""
+        class MockHandler:
+            method = "POST"
+
+            @log_request()
+            def handle(self, path, query_params):
+                raise RuntimeError("Request failed")
+
+        handler = MockHandler()
+        with pytest.raises(RuntimeError):
+            handler.handle("/api/fail", {})
+
+    def test_passes_through_return_value(self):
+        """Test that decorator passes through return values."""
+        class MockHandler:
+            @log_request()
+            def handle(self, path, query_params):
+                return {"data": query_params.get("key")}
+
+        handler = MockHandler()
+        result = handler.handle("/api/echo", {"key": "value"})
+        assert result == {"data": "value"}
+
+    def test_accepts_custom_logger(self):
+        """Test that decorator accepts custom logger."""
+        custom_logger = get_logger("custom.logger")
+
+        class MockHandler:
+            @log_request(logger=custom_logger)
+            def handle(self, path, query_params):
+                return "ok"
+
+        handler = MockHandler()
+        result = handler.handle("/api/custom", {})
+        assert result == "ok"
+
+
+class TestStructuredLoggerProperties:
+    """Test StructuredLogger properties and methods."""
+
+    def test_level_property(self):
+        """Test level property returns logger level."""
+        logger = StructuredLogger("test.level_prop")
+        # Level is inherited from parent logger
+        level = logger.level
+        assert isinstance(level, int)
+
+    def test_is_enabled_for(self):
+        """Test isEnabledFor method."""
+        logger = StructuredLogger("test.enabled")
+        # Should return bool for any level
+        result = logger.isEnabledFor(logging.DEBUG)
+        assert isinstance(result, bool)
+
+
+class TestLogRecordEdgeCases:
+    """Test LogRecord edge cases."""
+
+    def test_to_text_with_debate_id(self):
+        """Test text format includes debate_id."""
+        record = LogRecord(
+            timestamp="2024-01-01 00:00:00",
+            level="INFO",
+            logger="test",
+            message="Debate message",
+            debate_id="debate_abc",
+        )
+        text = record.to_text()
+        assert "[debate_abc]" in text
+
+    def test_to_text_with_fields_and_exception(self):
+        """Test text format with both fields and exception."""
+        record = LogRecord(
+            timestamp="2024-01-01 00:00:00",
+            level="ERROR",
+            logger="test",
+            message="Failed",
+            fields={"attempt": 3},
+            exception={"traceback": "ValueError: bad"},
+        )
+        text = record.to_text()
+        assert "attempt=3" in text
+        assert "ValueError" in text
+
+    def test_to_dict_omits_none_values(self):
+        """Test that to_dict doesn't include None trace/span/debate_id."""
+        record = LogRecord(
+            timestamp="2024-01-01T00:00:00Z",
+            level="INFO",
+            logger="test",
+            message="Clean",
+        )
+        d = record.to_dict()
+        assert "trace_id" not in d
+        assert "span_id" not in d
+        assert "debate_id" not in d

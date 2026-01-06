@@ -536,3 +536,200 @@ class TestBroadcastEdgeCases:
         result = broadcast_handler.handle_post("/api/debates//broadcast", {}, mock_handler)
         # Empty ID should fail validation
         assert result is None or result.status_code == 400
+
+
+# ============================================================================
+# OAuth CSRF Protection Tests
+# ============================================================================
+
+class TestOAuthCSRFProtection:
+    """Tests for OAuth state parameter CSRF protection."""
+
+    def test_oauth_state_storage_and_validation(self):
+        """Test that OAuth state is stored and can be validated."""
+        from aragora.server.handlers.broadcast import _store_oauth_state, _validate_oauth_state
+
+        state = "test-state-token-12345"
+        _store_oauth_state(state)
+
+        # First validation should succeed
+        assert _validate_oauth_state(state) is True
+
+    def test_oauth_state_one_time_use(self):
+        """Test that OAuth state can only be validated once (one-time use)."""
+        from aragora.server.handlers.broadcast import _store_oauth_state, _validate_oauth_state
+
+        state = "one-time-state-token"
+        _store_oauth_state(state)
+
+        # First validation succeeds
+        assert _validate_oauth_state(state) is True
+
+        # Second validation fails (already consumed)
+        assert _validate_oauth_state(state) is False
+
+    def test_oauth_state_invalid_token_rejected(self):
+        """Test that invalid/unknown state tokens are rejected."""
+        from aragora.server.handlers.broadcast import _validate_oauth_state
+
+        # Never stored this state
+        assert _validate_oauth_state("never-stored-state") is False
+        assert _validate_oauth_state("") is False
+        assert _validate_oauth_state("random-garbage-12345") is False
+
+    def test_oauth_state_expired_token_rejected(self):
+        """Test that expired state tokens are rejected."""
+        from aragora.server.handlers.broadcast import (
+            _oauth_states, _oauth_states_lock, _validate_oauth_state
+        )
+        import time
+
+        state = "expiring-state-token"
+
+        # Manually store with past expiry
+        with _oauth_states_lock:
+            _oauth_states[state] = time.time() - 1  # Already expired
+
+        # Validation should fail
+        assert _validate_oauth_state(state) is False
+
+    def test_oauth_callback_rejects_invalid_state(self, broadcast_handler, mock_handler, mock_youtube_connector):
+        """Test that OAuth callback rejects invalid state parameter."""
+        mock_youtube_connector.client_id = "test-client-id"
+
+        result = broadcast_handler.handle(
+            "/api/youtube/callback",
+            {"code": "valid-code", "state": "invalid-never-stored-state"},
+            mock_handler
+        )
+
+        assert result is not None
+        assert result.status_code == 400
+        data = json.loads(result.body)
+        assert "invalid" in data["error"].lower() or "expired" in data["error"].lower()
+
+    def test_oauth_callback_rejects_expired_state(self, broadcast_handler, mock_handler, mock_youtube_connector):
+        """Test that OAuth callback rejects expired state."""
+        from aragora.server.handlers.broadcast import _oauth_states, _oauth_states_lock
+        import time
+
+        mock_youtube_connector.client_id = "test-client-id"
+
+        # Store expired state
+        expired_state = "expired-state-for-callback"
+        with _oauth_states_lock:
+            _oauth_states[expired_state] = time.time() - 100  # Expired 100 seconds ago
+
+        result = broadcast_handler.handle(
+            "/api/youtube/callback",
+            {"code": "valid-code", "state": expired_state},
+            mock_handler
+        )
+
+        assert result is not None
+        assert result.status_code == 400
+
+
+# ============================================================================
+# Host Header Validation Tests (Open Redirect Prevention)
+# ============================================================================
+
+class TestHostHeaderValidation:
+    """Tests for Host header validation to prevent open redirect."""
+
+    def test_youtube_auth_rejects_untrusted_host(self, broadcast_handler, mock_youtube_connector):
+        """Test that YouTube auth rejects untrusted Host headers."""
+        mock_youtube_connector.client_id = "test-client-id"
+
+        # Create handler with untrusted host
+        evil_handler = Mock()
+        evil_handler.headers = {"Host": "evil.com"}
+
+        result = broadcast_handler.handle("/api/youtube/auth", {}, evil_handler)
+
+        assert result is not None
+        assert result.status_code == 400
+        data = json.loads(result.body)
+        assert "untrusted" in data["error"].lower()
+
+    def test_youtube_auth_accepts_trusted_localhost(self, broadcast_handler, mock_youtube_connector):
+        """Test that YouTube auth accepts trusted localhost."""
+        mock_youtube_connector.client_id = "test-client-id"
+        mock_youtube_connector.get_auth_url = Mock(return_value="https://accounts.google.com/auth?...")
+
+        trusted_handler = Mock()
+        trusted_handler.headers = {"Host": "localhost:8080"}
+
+        result = broadcast_handler.handle("/api/youtube/auth", {}, trusted_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert "auth_url" in data
+
+    def test_youtube_auth_accepts_trusted_127_0_0_1(self, broadcast_handler, mock_youtube_connector):
+        """Test that YouTube auth accepts trusted 127.0.0.1."""
+        mock_youtube_connector.client_id = "test-client-id"
+        mock_youtube_connector.get_auth_url = Mock(return_value="https://accounts.google.com/auth?...")
+
+        trusted_handler = Mock()
+        trusted_handler.headers = {"Host": "127.0.0.1:8080"}
+
+        result = broadcast_handler.handle("/api/youtube/auth", {}, trusted_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+
+    def test_youtube_callback_rejects_untrusted_host(self, broadcast_handler, mock_youtube_connector):
+        """Test that YouTube callback rejects untrusted Host headers."""
+        from aragora.server.handlers.broadcast import _store_oauth_state
+
+        mock_youtube_connector.client_id = "test-client-id"
+
+        # Store valid state
+        valid_state = "valid-state-for-host-test"
+        _store_oauth_state(valid_state)
+
+        # Try callback with untrusted host
+        evil_handler = Mock()
+        evil_handler.headers = {"Host": "attacker.com"}
+
+        result = broadcast_handler.handle(
+            "/api/youtube/callback",
+            {"code": "auth-code", "state": valid_state},
+            evil_handler
+        )
+
+        assert result is not None
+        assert result.status_code == 400
+        data = json.loads(result.body)
+        assert "untrusted" in data["error"].lower()
+
+    def test_host_validation_subdomain_bypass_prevention(self, broadcast_handler, mock_youtube_connector):
+        """Test that subdomain variations don't bypass host validation."""
+        mock_youtube_connector.client_id = "test-client-id"
+
+        bypass_attempts = [
+            "evil.localhost:8080",
+            "localhost.evil.com:8080",
+            "localhost:8080.evil.com",
+            "localhost:8081",  # Different port
+        ]
+
+        for evil_host in bypass_attempts:
+            evil_handler = Mock()
+            evil_handler.headers = {"Host": evil_host}
+
+            result = broadcast_handler.handle("/api/youtube/auth", {}, evil_handler)
+
+            assert result is not None, f"No result for host: {evil_host}"
+            assert result.status_code == 400, f"Should reject host: {evil_host}"
+
+    def test_host_validation_whitespace_handling(self):
+        """Test that ALLOWED_OAUTH_HOSTS strips whitespace from config."""
+        from aragora.server.handlers.broadcast import ALLOWED_OAUTH_HOSTS
+
+        # Verify default hosts are properly trimmed
+        for host in ALLOWED_OAUTH_HOSTS:
+            assert host == host.strip(), f"Host '{host}' has whitespace"
+            assert " " not in host, f"Host '{host}' contains spaces"

@@ -309,5 +309,432 @@ class TestWebhookDelivery(unittest.TestCase):
         dispatcher.stop()
 
 
+class TestRetryLogic(unittest.TestCase):
+    """Tests for webhook retry behavior."""
+
+    def setUp(self):
+        self.received = []
+        self.port = 19877
+        self.server = None
+        self.response_codes = []  # Queue of response codes to return
+        self.retry_after = None
+
+    def tearDown(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+
+    def _start_server(self, status_codes):
+        """Start server that returns different status codes for each request."""
+        self.response_codes = list(status_codes)
+        received = self.received
+        parent = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len)
+                received.append({
+                    "body": json.loads(body),
+                    "headers": dict(self.headers),
+                    "time": time.time(),
+                })
+                # Pop next status code or use 200 as default
+                code = parent.response_codes.pop(0) if parent.response_codes else 200
+                self.send_response(code)
+                if parent.retry_after and code == 429:
+                    self.send_header("Retry-After", str(parent.retry_after))
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        class ReusableHTTPServer(http.server.HTTPServer):
+            def server_bind(self):
+                import socket
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                super().server_bind()
+
+        self.server = ReusableHTTPServer(("127.0.0.1", self.port), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        time.sleep(0.1)
+
+    def test_retries_on_5xx(self):
+        """Should retry with exponential backoff on 5xx responses."""
+        self._start_server([500, 500, 200])  # Fail twice, then succeed
+
+        cfg = WebhookConfig(
+            name="test",
+            url=f"http://127.0.0.1:{self.port}/x",
+            max_retries=3,
+            backoff_base_s=0.05,  # Fast for testing
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(1.0)  # Wait for retries
+        dispatcher.stop()
+
+        # Should have tried 3 times total
+        self.assertEqual(len(self.received), 3)
+        self.assertEqual(dispatcher.stats["delivered"], 1)
+        self.assertEqual(dispatcher.stats["failed"], 0)
+
+    def test_retries_on_429(self):
+        """Should retry on 429 Too Many Requests."""
+        self._start_server([429, 200])
+
+        cfg = WebhookConfig(
+            name="test",
+            url=f"http://127.0.0.1:{self.port}/x",
+            max_retries=3,
+            backoff_base_s=0.05,
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(0.5)
+        dispatcher.stop()
+
+        self.assertEqual(len(self.received), 2)
+        self.assertEqual(dispatcher.stats["delivered"], 1)
+
+    def test_respects_retry_after_header(self):
+        """Should use Retry-After header when present on 429."""
+        self.retry_after = 1  # 1 second
+        self._start_server([429, 200])
+
+        cfg = WebhookConfig(
+            name="test",
+            url=f"http://127.0.0.1:{self.port}/x",
+            max_retries=3,
+            backoff_base_s=0.01,  # Would be very fast without Retry-After
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(1.5)  # Wait for Retry-After delay
+        dispatcher.stop()
+
+        self.assertEqual(len(self.received), 2)
+        # Check that there was at least ~1 second between requests
+        if len(self.received) >= 2:
+            elapsed = self.received[1]["time"] - self.received[0]["time"]
+            self.assertGreaterEqual(elapsed, 0.9)  # Allow some tolerance
+
+    def test_no_retry_on_4xx(self):
+        """Should NOT retry on 4xx errors (except 429)."""
+        self._start_server([400])
+
+        cfg = WebhookConfig(
+            name="test",
+            url=f"http://127.0.0.1:{self.port}/x",
+            max_retries=3,
+            backoff_base_s=0.05,
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(0.3)
+        dispatcher.stop()
+
+        # Should only try once - 4xx is permanent failure
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(dispatcher.stats["failed"], 1)
+        self.assertEqual(dispatcher.stats["delivered"], 0)
+
+    def test_max_retries_exhausted(self):
+        """Should fail after max_retries exhausted."""
+        self._start_server([500, 500, 500])  # All failures
+
+        cfg = WebhookConfig(
+            name="test",
+            url=f"http://127.0.0.1:{self.port}/x",
+            max_retries=3,
+            backoff_base_s=0.02,
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(0.5)
+        dispatcher.stop()
+
+        # Should have tried exactly max_retries times
+        self.assertEqual(len(self.received), 3)
+        self.assertEqual(dispatcher.stats["failed"], 1)
+        self.assertEqual(dispatcher.stats["delivered"], 0)
+
+    def test_network_error_triggers_retry(self):
+        """Should retry on network errors (connection refused, timeout)."""
+        # Don't start server - connection will be refused
+        cfg = WebhookConfig(
+            name="test",
+            url="http://127.0.0.1:19999/x",  # Nothing listening here
+            max_retries=2,
+            backoff_base_s=0.02,
+            timeout_s=0.1,
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(0.5)
+        dispatcher.stop()
+
+        # Should have tried max_retries times and then failed
+        self.assertEqual(dispatcher.stats["failed"], 1)
+        self.assertEqual(dispatcher.stats["delivered"], 0)
+
+
+class TestTimeoutBehavior(unittest.TestCase):
+    """Tests for webhook timeout handling."""
+
+    def setUp(self):
+        self.port = 19878
+        self.server = None
+        self.delay = 0
+
+    def tearDown(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+
+    def _start_slow_server(self, delay_seconds):
+        """Start server that delays before responding."""
+        self.delay = delay_seconds
+        parent = self
+
+        class SlowHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                time.sleep(parent.delay)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        class ReusableHTTPServer(http.server.HTTPServer):
+            def server_bind(self):
+                import socket
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                super().server_bind()
+
+        self.server = ReusableHTTPServer(("127.0.0.1", self.port), SlowHandler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        time.sleep(0.1)
+
+    def test_timeout_is_respected(self):
+        """Should timeout if server takes too long."""
+        self._start_slow_server(2.0)  # 2 second delay
+
+        cfg = WebhookConfig(
+            name="test",
+            url=f"http://127.0.0.1:{self.port}/x",
+            timeout_s=0.2,  # 200ms timeout
+            max_retries=1,  # No retries
+        )
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(0.5)  # Should timeout before 2 seconds
+        dispatcher.stop()
+
+        # Should have failed due to timeout
+        self.assertEqual(dispatcher.stats["failed"], 1)
+
+    def test_custom_timeout_per_config(self):
+        """Each webhook can have different timeout."""
+        # This tests that WebhookConfig.timeout_s is used
+        cfg = WebhookConfig(
+            name="test",
+            url="http://127.0.0.1:19999/x",
+            timeout_s=0.05,  # Very short timeout
+        )
+        self.assertEqual(cfg.timeout_s, 0.05)
+
+
+class TestConcurrency(unittest.TestCase):
+    """Tests for thread safety and concurrent operations."""
+
+    def setUp(self):
+        self.port = 19879
+        self.server = None
+        self.received = []
+        self.lock = threading.Lock()
+
+    def tearDown(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+
+    def _start_server(self):
+        received = self.received
+        lock = self.lock
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len)
+                with lock:
+                    received.append(json.loads(body))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        class ReusableHTTPServer(http.server.HTTPServer):
+            def server_bind(self):
+                import socket
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                super().server_bind()
+
+        self.server = ReusableHTTPServer(("127.0.0.1", self.port), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        time.sleep(0.1)
+
+    def test_concurrent_enqueue(self):
+        """Multiple threads can enqueue simultaneously."""
+        self._start_server()
+
+        cfg = WebhookConfig(name="t", url=f"http://127.0.0.1:{self.port}/x")
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        num_threads = 10
+        events_per_thread = 5
+
+        def enqueue_events(thread_id):
+            for i in range(events_per_thread):
+                dispatcher.enqueue({
+                    "type": "debate_start",
+                    "thread": thread_id,
+                    "event": i,
+                })
+
+        threads = [
+            threading.Thread(target=enqueue_events, args=(i,))
+            for i in range(num_threads)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Wait for all to be processed
+        time.sleep(1.0)
+        dispatcher.stop()
+
+        # All events should be delivered
+        total_expected = num_threads * events_per_thread
+        self.assertEqual(len(self.received), total_expected)
+
+    def test_stats_thread_safe(self):
+        """Stats should be accurate under concurrent load."""
+        self._start_server()
+
+        cfg = WebhookConfig(name="t", url=f"http://127.0.0.1:{self.port}/x")
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        num_events = 50
+
+        for i in range(num_events):
+            dispatcher.enqueue({"type": "debate_start", "i": i})
+
+        time.sleep(1.0)
+        dispatcher.stop()
+
+        # Stats should match actual deliveries
+        self.assertEqual(dispatcher.stats["delivered"], num_events)
+        self.assertEqual(len(self.received), num_events)
+
+
+class TestLifecycle(unittest.TestCase):
+    """Tests for dispatcher lifecycle (start/stop)."""
+
+    def setUp(self):
+        self.port = 19880
+        self.server = None
+
+    def tearDown(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+
+    def _start_server(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        class ReusableHTTPServer(http.server.HTTPServer):
+            def server_bind(self):
+                import socket
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                super().server_bind()
+
+        self.server = ReusableHTTPServer(("127.0.0.1", self.port), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        time.sleep(0.1)
+
+    def test_stop_sets_running_false(self):
+        """Stop should prevent further enqueueing."""
+        cfg = WebhookConfig(name="t", url=f"http://127.0.0.1:{self.port}/x")
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        self.assertTrue(dispatcher._running)
+        dispatcher.stop()
+        self.assertFalse(dispatcher._running)
+
+        # Enqueue after stop should return False
+        result = dispatcher.enqueue({"type": "debate_start"})
+        self.assertFalse(result)
+
+    def test_graceful_shutdown_logs_stats(self):
+        """Stop should log final statistics."""
+        self._start_server()
+
+        cfg = WebhookConfig(name="t", url=f"http://127.0.0.1:{self.port}/x")
+        dispatcher = WebhookDispatcher([cfg])
+        dispatcher.start()
+
+        dispatcher.enqueue({"type": "debate_start"})
+        time.sleep(0.3)
+
+        # Stop should complete without error
+        dispatcher.stop(timeout=2.0)
+        self.assertFalse(dispatcher._running)
+
+    def test_start_is_idempotent(self):
+        """Calling start() twice should not create duplicate workers."""
+        cfg = WebhookConfig(name="t", url=f"http://127.0.0.1:{self.port}/x")
+        dispatcher = WebhookDispatcher([cfg])
+
+        dispatcher.start()
+        worker1 = dispatcher._worker
+
+        dispatcher.start()  # Second call
+        worker2 = dispatcher._worker
+
+        # Should be the same worker
+        self.assertIs(worker1, worker2)
+        dispatcher.stop()
+
+
 if __name__ == "__main__":
     unittest.main()

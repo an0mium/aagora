@@ -310,23 +310,31 @@ class TestModesEndpoint:
             data = json.loads(result.body)
             assert "modes" in data
 
-    def test_returns_empty_without_nomic_dir(self):
-        """Should return empty without nomic_dir."""
+    def test_returns_builtin_modes_without_nomic_dir(self):
+        """Should return builtin modes even without nomic_dir."""
         handler = SystemHandler({})
         result = handler.handle("/api/modes", {}, None)
 
         assert result.status_code == 200
         data = json.loads(result.body)
-        assert data["modes"] == []
+        # Should return 5 builtin modes
+        assert len(data["modes"]) == 5
+        assert all(m["type"] == "builtin" for m in data["modes"])
+        mode_names = {m["name"] for m in data["modes"]}
+        assert mode_names == {"architect", "coder", "debugger", "orchestrator", "reviewer"}
 
-    def test_handles_exception(self, system_handler):
-        """Should return 500 on exception."""
+    def test_returns_builtin_modes_on_custom_loader_exception(self, system_handler):
+        """Should return builtin modes even when custom loader fails."""
         with patch('aragora.modes.custom.CustomModeLoader') as MockLoader:
             MockLoader.side_effect = Exception("Mode error")
 
             result = system_handler.handle("/api/modes", {}, None)
 
-            assert result.status_code == 500
+            # Should still succeed with builtin modes
+            assert result.status_code == 200
+            data = json.loads(result.body)
+            assert len(data["modes"]) == 5
+            assert all(m["type"] == "builtin" for m in data["modes"])
 
 
 # ============================================================================

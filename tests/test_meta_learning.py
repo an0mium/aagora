@@ -171,6 +171,15 @@ class TestHyperparameterAdjustment:
 
         assert meta.state.slow_half_life_hours > original_half_life
 
+    def test_high_retention_decreases_half_lives(self, meta):
+        """Test that high retention allows faster decay."""
+        original_half_life = meta.state.slow_half_life_hours
+
+        metrics = LearningMetrics(pattern_retention_rate=0.95)  # Very high retention
+        meta.adjust_hyperparameters(metrics)
+
+        assert meta.state.slow_half_life_hours < original_half_life
+
     def test_high_forgetting_lowers_thresholds(self, meta):
         """Test that high forgetting lowers promotion thresholds."""
         original_threshold = meta.state.medium_promotion_threshold
@@ -179,6 +188,27 @@ class TestHyperparameterAdjustment:
         meta.adjust_hyperparameters(metrics)
 
         assert meta.state.medium_promotion_threshold < original_threshold
+
+    def test_low_forgetting_raises_thresholds(self, meta):
+        """Test that low forgetting raises promotion thresholds."""
+        original_threshold = meta.state.medium_promotion_threshold
+
+        metrics = LearningMetrics(forgetting_rate=0.05)  # Very low forgetting
+        meta.adjust_hyperparameters(metrics)
+
+        assert meta.state.medium_promotion_threshold > original_threshold
+
+    def test_tier_efficiency_balancing(self, meta):
+        """Test that fast tier underperformance raises fast threshold."""
+        original_threshold = meta.state.fast_promotion_threshold
+
+        # Fast tier performing worse than slow tier
+        metrics = LearningMetrics(
+            tier_efficiency={"fast": 0.4, "medium": 0.6, "slow": 0.6, "glacial": 0.5}
+        )
+        meta.adjust_hyperparameters(metrics)
+
+        assert meta.state.fast_promotion_threshold > original_threshold
 
     def test_poor_calibration_reduces_agent_weight(self, meta):
         """Test that poor agent calibration reduces agent weight."""
@@ -198,6 +228,22 @@ class TestHyperparameterAdjustment:
 
         assert meta.state.surprise_weight_agent > original_weight
 
+    def test_no_adjustment_when_metrics_normal(self, meta):
+        """Test that normal metrics don't trigger unnecessary adjustments."""
+        original_state = meta.state.to_dict()
+
+        # All metrics in normal range - no adjustments should trigger
+        metrics = LearningMetrics(
+            pattern_retention_rate=0.7,  # Between 0.6 and 0.9
+            forgetting_rate=0.2,  # Between 0.1 and 0.3
+            prediction_accuracy=0.5,  # Between 0.4 and 0.7
+            tier_efficiency={"fast": 0.6, "medium": 0.6, "slow": 0.6, "glacial": 0.6},
+        )
+        adjustments = meta.adjust_hyperparameters(metrics)
+
+        # No adjustments should be made
+        assert len(adjustments) == 0
+
     def test_weights_normalized_to_one(self, meta):
         """Test that surprise weights are normalized to sum to 1."""
         metrics = LearningMetrics(prediction_accuracy=0.8)
@@ -210,6 +256,19 @@ class TestHyperparameterAdjustment:
             meta.state.surprise_weight_agent
         )
         assert abs(total - 1.0) < 0.01  # Allow small floating point error
+
+    def test_multiple_adjustments_combine(self, meta):
+        """Test that multiple adjustment rules can apply together."""
+        # Trigger both low retention AND high forgetting
+        metrics = LearningMetrics(
+            pattern_retention_rate=0.4,  # Low retention
+            forgetting_rate=0.5,  # High forgetting
+        )
+        adjustments = meta.adjust_hyperparameters(metrics)
+
+        # Both adjustments should be recorded
+        assert "half_lives" in adjustments
+        assert "promotion_thresholds" in adjustments
 
 
 class TestHyperparameterClamping:
@@ -323,6 +382,105 @@ class TestTrend:
 
         trend = meta._compute_trend(meta.metrics_history)
         assert trend == "stable"
+
+    def test_insufficient_data_trend(self, meta):
+        """Test trend with insufficient data returns correct status."""
+        # Only one data point
+        meta.metrics_history.append(LearningMetrics(pattern_retention_rate=0.7))
+
+        trend = meta._compute_trend(meta.metrics_history)
+        assert trend == "insufficient_data"
+
+    def test_empty_history_trend(self, meta):
+        """Test trend with empty history."""
+        trend = meta._compute_trend([])
+        assert trend == "insufficient_data"
+
+
+class TestSQLEdgeCases:
+    """Test SQL query edge cases and robustness."""
+
+    def test_division_by_zero_protection(self, cms, meta):
+        """Test that SQL handles division by zero with NULLIF."""
+        # Add pattern with zero outcomes (success + failure = 0)
+        cms.add(id="zero_outcomes", content="No outcomes yet", tier=MemoryTier.SLOW)
+        # Don't update outcomes - leaves success_count=0, failure_count=0
+
+        cycle_results = {"cycle": 1}
+        # Should not raise division by zero
+        metrics = meta.evaluate_learning_efficiency(cms, cycle_results)
+
+        # Should handle gracefully
+        assert metrics is not None
+
+    def test_tier_efficiency_with_zero_count_tier(self, cms, meta):
+        """Test tier efficiency when a tier has no patterns."""
+        # Only add to slow tier
+        cms.add(id="slow_only", content="Slow pattern", tier=MemoryTier.SLOW)
+        cms.update_outcome("slow_only", success=True)
+
+        cycle_results = {"cycle": 1}
+        metrics = meta.evaluate_learning_efficiency(cms, cycle_results)
+
+        # Fast tier should default to 0.5 (no data)
+        assert metrics.tier_efficiency.get("fast", 0.5) == 0.5
+
+    def test_evaluate_with_null_timestamps(self, cms, meta):
+        """Test evaluation handles patterns robustly."""
+        # Add patterns normally
+        cms.add(id="pattern1", content="Pattern 1", tier=MemoryTier.SLOW)
+        cms.add(id="pattern2", content="Pattern 2", tier=MemoryTier.FAST)
+
+        cycle_results = {"cycle": 1}
+        metrics = meta.evaluate_learning_efficiency(cms, cycle_results)
+
+        # Should complete without error
+        assert metrics is not None
+        assert metrics.learning_velocity >= 0
+
+
+class TestStatePersistence:
+    """Test state persistence and loading."""
+
+    def test_state_persists_across_instances(self, temp_db):
+        """Test that state is properly saved and loaded."""
+        # Create first instance and modify state
+        meta1 = MetaLearner(db_path=temp_db)
+        meta1.state.meta_learning_rate = 0.05
+        meta1._save_state(reason="test persistence")
+
+        # Create second instance - should load saved state
+        meta2 = MetaLearner(db_path=temp_db)
+
+        assert meta2.state.meta_learning_rate == 0.05
+
+    def test_adjustments_persist(self, temp_db):
+        """Test that adjustments persist and can be retrieved."""
+        meta = MetaLearner(db_path=temp_db)
+
+        metrics = LearningMetrics(pattern_retention_rate=0.4)
+        meta.adjust_hyperparameters(metrics)
+
+        # Create new instance
+        meta2 = MetaLearner(db_path=temp_db)
+
+        # History should persist
+        history = meta2.get_adjustment_history()
+        assert len(history) >= 1
+        assert "low retention" in history[0].get("reason", "")
+
+    def test_history_limit_works(self, temp_db):
+        """Test that history limit parameter works."""
+        meta = MetaLearner(db_path=temp_db)
+
+        # Create multiple adjustments
+        for i in range(10):
+            metrics = LearningMetrics(pattern_retention_rate=0.3 + i * 0.05)
+            meta.adjust_hyperparameters(metrics)
+
+        # Limit to 5
+        history = meta.get_adjustment_history(limit=5)
+        assert len(history) <= 5
 
 
 if __name__ == "__main__":
