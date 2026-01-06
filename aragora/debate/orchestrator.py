@@ -33,6 +33,8 @@ from aragora.debate.protocol import CircuitBreaker, DebateProtocol, user_vote_mu
 from aragora.spectate.stream import SpectatorStream
 from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
 from aragora.debate.sanitization import OutputSanitizer
+from aragora.config import USER_EVENT_QUEUE_SIZE
+from aragora.server.prometheus import record_debate_completed
 
 # Optional position tracking for truth-grounded personas
 PositionTracker = None
@@ -228,7 +230,7 @@ class Arena:
             self.protocol.judge_selection = "elo_ranked"
 
         # User participation tracking (thread-safe mailbox pattern)
-        self._user_event_queue: queue.Queue = queue.Queue(maxsize=10000)
+        self._user_event_queue: queue.Queue = queue.Queue(maxsize=USER_EVENT_QUEUE_SIZE)
         self.user_votes: list[dict] = []  # Populated via _drain_user_events()
         self.user_suggestions: list[dict] = []  # Populated via _drain_user_events()
 
@@ -2403,6 +2405,14 @@ You are assigned to EVALUATE FAIRLY. Your role is to:
                         logger.debug(f"Failed to record pattern failure: {e}")
 
         result.duration_seconds = time.time() - start_time
+
+        # Record debate metrics for observability
+        record_debate_completed(
+            duration_seconds=result.duration_seconds,
+            rounds_used=result.rounds_used,
+            outcome="consensus" if result.consensus_reached else "no_consensus",
+            agent_count=len(self.agents),
+        )
 
         # Emit consensus event
         if "on_consensus" in self.hooks:
