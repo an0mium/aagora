@@ -6,17 +6,22 @@ to reduce the orchestrator's complexity and improve maintainability.
 
 Phases:
 - voting: Vote collection and aggregation
-- proposal: Initial proposal generation
-- critique: Critique collection and processing
-- revision: Proposal revision based on critiques
+- critique: Critique selection and routing
 - judgment: Judge selection and final decisions
+- roles_manager: Role and stance assignment
 - spectator: Event emission and spectator notifications
 """
 
 from aragora.debate.phases.voting import VotingPhase
+from aragora.debate.phases.critique import CritiquePhase
+from aragora.debate.phases.judgment import JudgmentPhase
+from aragora.debate.phases.roles_manager import RolesManager
 from aragora.debate.phases.spectator import SpectatorMixin
 
 __all__ = [
     "VotingPhase",
+    "CritiquePhase",
+    "JudgmentPhase",
+    "RolesManager",
     "SpectatorMixin",
 ]
