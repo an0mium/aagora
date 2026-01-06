@@ -11,6 +11,7 @@ Inspired by Project Sid's emergent civilization dynamics.
 """
 
 import json
+import logging
 import random
 import sqlite3
 from contextlib import contextmanager
@@ -19,12 +20,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.config import DB_LAB_PATH
 from aragora.agents.personas import (
     Persona,
     PersonaManager,
     EXPERTISE_DOMAINS,
     PERSONALITY_TRAITS,
 )
+from aragora.utils.json_helpers import safe_json_loads
+
+logger = logging.getLogger(__name__)
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -112,7 +120,7 @@ class PersonaLaboratory:
     def __init__(
         self,
         persona_manager: PersonaManager,
-        db_path: str = "aragora_lab.db",
+        db_path: str = DB_LAB_PATH,
     ):
         self.persona_manager = persona_manager
         self.db_path = Path(db_path)
@@ -121,7 +129,7 @@ class PersonaLaboratory:
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
         try:
             yield conn
         finally:
@@ -198,8 +206,8 @@ class PersonaLaboratory:
     def create_experiment(
         self,
         agent_name: str,
-        variant_traits: list[str] = None,
-        variant_expertise: dict[str, float] = None,
+        variant_traits: list[str] | None = None,
+        variant_expertise: dict[str, float] | None = None,
         hypothesis: str = "",
     ) -> PersonaExperiment:
         """
@@ -346,8 +354,8 @@ class PersonaLaboratory:
 
     def _row_to_experiment(self, row) -> PersonaExperiment:
         """Convert database row to PersonaExperiment."""
-        control_data = json.loads(row[2])
-        variant_data = json.loads(row[3])
+        control_data = safe_json_loads(row[2], {})
+        variant_data = safe_json_loads(row[3], {})
 
         return PersonaExperiment(
             experiment_id=row[0],
@@ -466,8 +474,8 @@ class PersonaLaboratory:
             return [
                 EmergentTrait(
                     trait_name=row[0],
-                    source_agents=json.loads(row[1]),
-                    supporting_evidence=json.loads(row[2]) if row[2] else [],
+                    source_agents=safe_json_loads(row[1], []),
+                    supporting_evidence=safe_json_loads(row[2], []),
                     confidence=row[3],
                     first_detected=row[4],
                 )
@@ -482,8 +490,8 @@ class PersonaLaboratory:
         self,
         from_agent: str,
         to_agent: str,
-        trait: str = None,
-        expertise_domain: str = None,
+        trait: str | None = None,
+        expertise_domain: str | None = None,
     ) -> Optional[TraitTransfer]:
         """
         Transfer a successful trait or expertise from one agent to another.
@@ -715,8 +723,8 @@ class PersonaLaboratory:
             return [
                 {
                     "mutation_type": row[0],
-                    "before": json.loads(row[1]),
-                    "after": json.loads(row[2]),
+                    "before": safe_json_loads(row[1], {}),
+                    "after": safe_json_loads(row[2], {}),
                     "reason": row[3],
                     "created_at": row[4],
                 }

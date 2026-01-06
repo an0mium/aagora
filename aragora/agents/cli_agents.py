@@ -12,17 +12,20 @@ import json
 import re
 from typing import Optional
 
+from aragora.agents.base import CritiqueMixin, MAX_CONTEXT_CHARS, MAX_MESSAGE_CHARS
 from aragora.core import Agent, Critique, Message
+
+# Re-export constants for backward compatibility
+__all__ = [
+    "CLIAgent", "CodexAgent", "ClaudeAgent", "OpenAIAgent",
+    "GeminiCLIAgent", "GrokCLIAgent", "QwenCLIAgent", "DeepseekCLIAgent", "KiloCodeAgent",
+    "MAX_CONTEXT_CHARS", "MAX_MESSAGE_CHARS",
+]
 
 logger = logging.getLogger(__name__)
 
-# Context window limits (in characters, ~4 chars per token)
-# Use 60% of available window to leave room for response
-MAX_CONTEXT_CHARS = 120_000  # ~30k tokens, safe for most models
-MAX_MESSAGE_CHARS = 20_000   # Individual message truncation limit
 
-
-class CLIAgent(Agent):
+class CLIAgent(CritiqueMixin, Agent):
     """Base class for CLI-based agents."""
 
     def __init__(self, name: str, model: str, role: str = "proposer", timeout: int = 120):
@@ -45,7 +48,7 @@ class CLIAgent(Agent):
         sanitized = re.sub(r'[\x01-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', sanitized)
         return sanitized
 
-    async def _run_cli(self, command: list[str], input_text: str = None) -> str:
+    async def _run_cli(self, command: list[str], input_text: str | None = None) -> str:
         """Run a CLI command and return output."""
         # Sanitize all command arguments to prevent 'embedded null byte' errors
         sanitized_command = [self._sanitize_cli_arg(arg) for arg in command]
@@ -66,9 +69,9 @@ class CLIAgent(Agent):
             )
 
             if proc.returncode != 0:
-                raise RuntimeError(f"CLI command failed: {stderr.decode()}")
+                raise RuntimeError(f"CLI command failed: {stderr.decode('utf-8', errors='replace')}")
 
-            return stdout.decode().strip()
+            return stdout.decode('utf-8', errors='replace').strip()
 
         except asyncio.TimeoutError:
             if proc:
@@ -82,112 +85,23 @@ class CLIAgent(Agent):
                 await proc.wait()  # Cleanup zombie processes
             raise
 
-    def _build_context_prompt(self, context: list[Message] = None) -> str:
-        """Build context from previous messages with truncation for large contexts."""
-        if not context:
-            return ""
+    def _build_context_prompt(self, context: list[Message] | None = None) -> str:
+        """Build context from previous messages with truncation for large contexts.
 
-        # Build messages with individual truncation
-        messages = []
-        total_chars = 0
-
-        for m in context[-10:]:  # Last 10 messages
-            # Sanitize content to remove null bytes that cause CLI failures
-            content = self._sanitize_cli_arg(m.content)
-            # Truncate individual messages that are too long
-            if len(content) > MAX_MESSAGE_CHARS:
-                # Keep start and end, truncate middle
-                half = MAX_MESSAGE_CHARS // 2 - 50
-                content = (
-                    content[:half] +
-                    f"\n\n[... {len(m.content) - MAX_MESSAGE_CHARS} chars truncated ...]\n\n" +
-                    content[-half:]
-                )
-
-            msg_str = f"[Round {m.round}] {m.role} ({m.agent}):\n{content}"
-
-            # Check if adding this message would exceed total limit
-            if total_chars + len(msg_str) > MAX_CONTEXT_CHARS:
-                # Truncate and stop adding more
-                remaining = MAX_CONTEXT_CHARS - total_chars - 100
-                if remaining > 500:
-                    msg_str = msg_str[:remaining] + "\n[... truncated ...]"
-                    messages.append(msg_str)
-                break
-
-            messages.append(msg_str)
-            total_chars += len(msg_str) + 4  # +4 for separator
-
-        context_str = "\n\n".join(messages)
-        return f"\n\nPrevious discussion:\n{context_str}\n\n"
-
-    def _parse_critique(self, response: str, target_agent: str, target_content: str) -> Critique:
-        """Parse a critique response into structured format."""
-        # Extract issues (lines starting with - or *)
-        issues = []
-        suggestions = []
-        severity = 0.5
-        reasoning = ""
-
-        lines = response.split('\n')
-        current_section = None
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            lower = line.lower()
-            if 'issue' in lower or 'problem' in lower or 'concern' in lower:
-                current_section = 'issues'
-            elif 'suggest' in lower or 'recommend' in lower or 'improvement' in lower:
-                current_section = 'suggestions'
-            elif 'severity' in lower:
-                # Try to extract severity
-                match = re.search(r'(\d+\.?\d*)', line)
-                if match:
-                    try:
-                        severity = min(1.0, max(0.0, float(match.group(1))))
-                        if severity > 1:
-                            severity = severity / 10  # Handle 0-10 scale
-                    except (ValueError, TypeError):
-                        pass
-            elif line.startswith(('-', '*', '•')):
-                item = line.lstrip('-*• ').strip()
-                if current_section == 'issues':
-                    issues.append(item)
-                elif current_section == 'suggestions':
-                    suggestions.append(item)
-                else:
-                    # Default to issues
-                    issues.append(item)
-
-        # If no structured extraction, use the whole response
-        if not issues and not suggestions:
-            # Split response into issues (first half) and suggestions (second half)
-            sentences = [s.strip() for s in response.replace('\n', ' ').split('.') if s.strip()]
-            mid = len(sentences) // 2
-            issues = sentences[:mid] if sentences else ["See full response"]
-            suggestions = sentences[mid:] if len(sentences) > mid else []
-            reasoning = response[:500]
-        else:
-            reasoning = response[:500]
-
-        return Critique(
-            agent=self.name,
-            target_agent=target_agent,
-            target_content=target_content[:200],
-            issues=issues[:5],  # Limit to 5 issues
-            suggestions=suggestions[:5],  # Limit to 5 suggestions
-            severity=severity,
-            reasoning=reasoning,
+        Delegates to CritiqueMixin with CLI-specific settings.
+        """
+        # Use mixin method with truncation and CLI sanitization
+        return CritiqueMixin._build_context_prompt(
+            self, context, truncate=True, sanitize_fn=self._sanitize_cli_arg
         )
+
+    # _parse_critique is inherited from CritiqueMixin
 
 
 class CodexAgent(CLIAgent):
     """Agent that uses OpenAI Codex CLI."""
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using codex exec."""
         full_prompt = prompt
         if context:
@@ -218,7 +132,7 @@ class CodexAgent(CLIAgent):
 
         return '\n'.join(response_lines).strip() if response_lines else result
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using codex."""
         critique_prompt = f"""You are a critical reviewer. Analyze this proposal for the given task.
 
@@ -242,7 +156,7 @@ Be constructive but thorough. Identify both technical and conceptual issues."""
 class ClaudeAgent(CLIAgent):
     """Agent that uses Claude CLI (claude-code)."""
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using claude CLI."""
         full_prompt = prompt
         if context:
@@ -260,7 +174,7 @@ class ClaudeAgent(CLIAgent):
 
         return result
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using claude."""
         critique_prompt = f"""Analyze this proposal critically for the given task.
 
@@ -282,7 +196,7 @@ Provide structured feedback:
 class GeminiCLIAgent(CLIAgent):
     """Agent that uses Google Gemini CLI (v0.22+)."""
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using gemini CLI."""
         full_prompt = prompt
         if context:
@@ -302,7 +216,7 @@ class GeminiCLIAgent(CLIAgent):
         filtered = [l for l in lines if not l.startswith('YOLO mode is enabled')]
         return '\n'.join(filtered).strip()
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using gemini."""
         critique_prompt = f"""Analyze this proposal critically for the given task.
 
@@ -343,7 +257,7 @@ class KiloCodeAgent(CLIAgent):
         self,
         name: str,
         provider_id: str = "gemini-explorer",
-        model: str = None,
+        model: str | None = None,
         role: str = "proposer",
         timeout: int = 600,
         mode: str = "architect",
@@ -353,7 +267,7 @@ class KiloCodeAgent(CLIAgent):
         self.provider_id = provider_id
         self.mode = mode  # architect, code, ask, debug
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using kilocode CLI with codebase access."""
         full_prompt = prompt
         if context:
@@ -414,7 +328,7 @@ class KiloCodeAgent(CLIAgent):
             return "\n\n".join(responses)
         return output
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using kilocode."""
         critique_prompt = f"""Analyze this proposal critically for the given task.
 
@@ -468,7 +382,7 @@ class GrokCLIAgent(CLIAgent):
         # Return the final content we found, or the raw output if nothing was extracted
         return final_content if final_content else output
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using grok CLI."""
         full_prompt = prompt
         if context:
@@ -485,7 +399,7 @@ class GrokCLIAgent(CLIAgent):
         # Extract actual response from JSON conversation format
         return self._extract_grok_response(result)
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using grok."""
         critique_prompt = f"""Analyze this proposal critically for the given task.
 
@@ -507,7 +421,7 @@ Provide structured feedback:
 class QwenCLIAgent(CLIAgent):
     """Agent that uses Alibaba Qwen Code CLI."""
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using qwen CLI."""
         full_prompt = prompt
         if context:
@@ -523,7 +437,7 @@ class QwenCLIAgent(CLIAgent):
 
         return result
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using qwen."""
         critique_prompt = f"""Analyze this proposal critically for the given task.
 
@@ -545,7 +459,7 @@ Provide structured feedback:
 class DeepseekCLIAgent(CLIAgent):
     """Agent that uses Deepseek CLI."""
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using deepseek CLI."""
         full_prompt = prompt
         if context:
@@ -561,7 +475,7 @@ class DeepseekCLIAgent(CLIAgent):
 
         return result
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using deepseek."""
         critique_prompt = f"""Analyze this proposal critically for the given task.
 
@@ -586,7 +500,7 @@ class OpenAIAgent(CLIAgent):
     def __init__(self, name: str, model: str = "gpt-4o", role: str = "proposer", timeout: int = 120):
         super().__init__(name, model, role, timeout)
 
-    async def generate(self, prompt: str, context: list[Message] = None) -> str:
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using openai CLI."""
         full_prompt = prompt
         if context:
@@ -607,11 +521,14 @@ class OpenAIAgent(CLIAgent):
         # Parse JSON response
         try:
             data = json.loads(result)
-            return data.get("choices", [{}])[0].get("message", {}).get("content", result)
+            choices = data.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", result)
+            return result
         except json.JSONDecodeError:
             return result
 
-    async def critique(self, proposal: str, task: str, context: list[Message] = None) -> Critique:
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using openai."""
         critique_prompt = f"""Critically analyze this proposal:
 
@@ -636,10 +553,9 @@ REASONING: explanation"""
 
 # Synchronous wrappers for convenience
 def run_sync(coro):
-    """Run an async function synchronously."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    """Run an async function synchronously.
+
+    Uses asyncio.run() which properly creates and closes the event loop,
+    avoiding resource leaks and deprecation warnings from get_event_loop().
+    """
+    return asyncio.run(coro)

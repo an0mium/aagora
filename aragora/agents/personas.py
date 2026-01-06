@@ -15,6 +15,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.config import DB_PERSONAS_PATH
+from aragora.utils.json_helpers import safe_json_loads
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
+
 
 # Predefined expertise domains
 EXPERTISE_DOMAINS = [
@@ -94,14 +100,14 @@ class PersonaManager:
     based on agent performance in debates.
     """
 
-    def __init__(self, db_path: str = "aragora_personas.db"):
+    def __init__(self, db_path: str = DB_PERSONAS_PATH):
         self.db_path = Path(db_path)
         self._init_db()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
         try:
             yield conn
         finally:
@@ -156,8 +162,8 @@ class PersonaManager:
             return Persona(
                 agent_name=row[0],
                 description=row[1] or "",
-                traits=json.loads(row[2]) if row[2] else [],
-                expertise=json.loads(row[3]) if row[3] else {},
+                traits=safe_json_loads(row[2], []),
+                expertise=safe_json_loads(row[3], {}),
                 created_at=row[4],
                 updated_at=row[5],
             )
@@ -283,7 +289,7 @@ class PersonaManager:
             row = cursor.fetchone()
 
             if row:
-                expertise = json.loads(row[0]) if row[0] else {}
+                expertise = safe_json_loads(row[0], {})
             else:
                 expertise = {}
 
@@ -362,8 +368,8 @@ class PersonaManager:
                 Persona(
                     agent_name=row[0],
                     description=row[1] or "",
-                    traits=json.loads(row[2]) if row[2] else [],
-                    expertise=json.loads(row[3]) if row[3] else {},
+                    traits=safe_json_loads(row[2], []),
+                    expertise=safe_json_loads(row[3], {}),
                     created_at=row[4],
                     updated_at=row[5],
                 )

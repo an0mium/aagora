@@ -16,41 +16,15 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from aragora.agents.base import CritiqueMixin
+from aragora.config import DB_TIMEOUT_SECONDS, get_api_key
 from aragora.core import Agent, Critique, Message
+from aragora.server.error_utils import sanitize_error_text as _sanitize_error_message
 
 logger = logging.getLogger(__name__)
 
-
-# Patterns that might contain sensitive data in error messages
-_SENSITIVE_PATTERNS = [
-    (r'sk-[a-zA-Z0-9]{20,}', '<REDACTED_KEY>'),  # OpenAI key pattern
-    (r'AIza[a-zA-Z0-9_-]{35}', '<REDACTED_KEY>'),  # Google API key pattern
-    (r'["\']?api[_-]?key["\']?\s*[:=]\s*["\']?[\w-]+["\']?', 'api_key=<REDACTED>'),
-    (r'["\']?authorization["\']?\s*[:=]\s*["\']?Bearer\s+[\w.-]+["\']?', 'authorization=<REDACTED>'),
-    (r'["\']?token["\']?\s*[:=]\s*["\']?[\w.-]+["\']?', 'token=<REDACTED>'),
-    (r'["\']?secret["\']?\s*[:=]\s*["\']?[\w-]+["\']?', 'secret=<REDACTED>'),
-    (r'x-api-key:\s*[\w-]+', 'x-api-key: <REDACTED>'),
-]
-
-
-def _sanitize_error_message(error_text: str, max_length: int = 500) -> str:
-    """Sanitize error message to remove potential secrets.
-
-    - Redacts patterns that look like API keys or tokens
-    - Truncates to prevent log flooding
-    - Preserves useful diagnostic info (status codes, error types)
-    """
-    sanitized = error_text
-
-    # Apply all redaction patterns
-    for pattern, replacement in _SENSITIVE_PATTERNS:
-        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
-
-    # Truncate long messages
-    if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length] + "... [truncated]"
-
-    return sanitized
+# Maximum buffer size for streaming responses (prevents DoS via memory exhaustion)
+MAX_STREAM_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 # ============================================================================
@@ -214,7 +188,7 @@ def set_openrouter_tier(tier: str) -> None:
         _openrouter_limiter = OpenRouterRateLimiter(tier=tier)
 
 
-class APIAgent(Agent):
+class APIAgent(CritiqueMixin, Agent):
     """Base class for API-based agents."""
 
     def __init__(
@@ -233,72 +207,13 @@ class APIAgent(Agent):
         self.agent_type = "api"  # Default for API agents
 
     def _build_context_prompt(self, context: list[Message] | None = None) -> str:
-        """Build context from previous messages."""
-        if not context:
-            return ""
+        """Build context from previous messages.
 
-        context_str = "\n\n".join([
-            f"[Round {m.round}] {m.role} ({m.agent}):\n{m.content}"
-            for m in context[-10:]
-        ])
-        return f"\n\nPrevious discussion:\n{context_str}\n\n"
+        Delegates to CritiqueMixin (no truncation for API agents).
+        """
+        return CritiqueMixin._build_context_prompt(self, context, truncate=False)
 
-    def _parse_critique(self, response: str, target_agent: str, target_content: str) -> Critique:
-        """Parse a critique response into structured format."""
-        issues = []
-        suggestions = []
-        severity = 0.5
-        reasoning = ""
-
-        lines = response.split('\n')
-        current_section = None
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            lower = line.lower()
-            if 'issue' in lower or 'problem' in lower or 'concern' in lower:
-                current_section = 'issues'
-            elif 'suggest' in lower or 'recommend' in lower or 'improvement' in lower:
-                current_section = 'suggestions'
-            elif 'severity' in lower:
-                match = re.search(r'(\d+\.?\d*)', line)
-                if match:
-                    try:
-                        severity = min(1.0, max(0.0, float(match.group(1))))
-                        if severity > 1:
-                            severity = severity / 10
-                    except (ValueError, TypeError):
-                        pass
-            elif line.startswith(('-', '*', '•')):
-                item = line.lstrip('-*• ').strip()
-                if current_section == 'issues':
-                    issues.append(item)
-                elif current_section == 'suggestions':
-                    suggestions.append(item)
-                else:
-                    issues.append(item)
-
-        if not issues and not suggestions:
-            sentences = [s.strip() for s in response.replace('\n', ' ').split('.') if s.strip()]
-            mid = len(sentences) // 2
-            issues = sentences[:mid] if sentences else ["See full response"]
-            suggestions = sentences[mid:] if len(sentences) > mid else []
-            reasoning = response[:500]
-        else:
-            reasoning = response[:500]
-
-        return Critique(
-            agent=self.name,
-            target_agent=target_agent,
-            target_content=target_content[:200],
-            issues=issues[:5],
-            suggestions=suggestions[:5],
-            severity=severity,
-            reasoning=reasoning,
-        )
+    # _parse_critique is inherited from CritiqueMixin
 
 
 class GeminiAgent(APIAgent):
@@ -321,15 +236,13 @@ class GeminiAgent(APIAgent):
             model=model,
             role=role,
             timeout=timeout,
-            api_key=api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+            api_key=api_key or get_api_key("GEMINI_API_KEY", "GOOGLE_API_KEY"),
             base_url="https://generativelanguage.googleapis.com/v1beta",
         )
         self.agent_type = "gemini"
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using Gemini API."""
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable required")
 
         full_prompt = prompt
         if context:
@@ -405,9 +318,6 @@ class GeminiAgent(APIAgent):
 
         Yields chunks of text as they arrive from the API.
         """
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable required")
-
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -445,51 +355,66 @@ class GeminiAgent(APIAgent):
 
                 # Gemini streams as JSON array chunks
                 buffer = b""
-                async for chunk in response.content.iter_any():
-                    buffer += chunk
-                    # Try to parse complete JSON objects from buffer
-                    # Gemini streams as a JSON array: [{...}, {...}, ...]
-                    text = buffer.decode('utf-8', errors='ignore')
+                try:
+                    async for chunk in response.content.iter_any():
+                        buffer += chunk
+                        # Prevent unbounded buffer growth (DoS protection)
+                        if len(buffer) > MAX_STREAM_BUFFER_SIZE:
+                            raise RuntimeError("Streaming buffer exceeded maximum size")
 
-                    # Find complete candidate objects
-                    while True:
-                        # Look for text content in the buffer
-                        try:
-                            # Parse as JSON array (Gemini format)
-                            if text.strip().startswith('['):
-                                # Remove trailing incomplete parts
-                                bracket_count = 0
-                                last_complete = -1
-                                for i, c in enumerate(text):
-                                    if c == '[':
-                                        bracket_count += 1
-                                    elif c == ']':
-                                        bracket_count -= 1
-                                        if bracket_count == 0:
-                                            last_complete = i
+                        # Try to parse complete JSON objects from buffer
+                        # Gemini streams as a JSON array: [{...}, {...}, ...]
+                        text = buffer.decode('utf-8', errors='ignore')
 
-                                if last_complete > 0:
-                                    complete_json = text[:last_complete + 1]
-                                    data = json.loads(complete_json)
+                        # Find complete candidate objects
+                        # Max iterations guard to prevent infinite loop on malformed data
+                        max_parse_iterations = 100
+                        parse_iterations = 0
+                        while parse_iterations < max_parse_iterations:
+                            parse_iterations += 1
+                            # Look for text content in the buffer
+                            try:
+                                # Parse as JSON array (Gemini format)
+                                if text.strip().startswith('['):
+                                    # Remove trailing incomplete parts
+                                    bracket_count = 0
+                                    last_complete = -1
+                                    for i, c in enumerate(text):
+                                        if c == '[':
+                                            bracket_count += 1
+                                        elif c == ']':
+                                            bracket_count -= 1
+                                            if bracket_count == 0:
+                                                last_complete = i
 
-                                    # Extract text from all candidates
-                                    for item in data:
-                                        if 'candidates' in item:
-                                            for candidate in item['candidates']:
-                                                content = candidate.get('content', {})
-                                                for part in content.get('parts', []):
-                                                    if 'text' in part:
-                                                        yield part['text']
+                                    if last_complete > 0:
+                                        complete_json = text[:last_complete + 1]
+                                        data = json.loads(complete_json)
 
-                                    # Clear processed data from buffer
-                                    buffer = text[last_complete + 1:].encode('utf-8')
-                                    text = buffer.decode('utf-8', errors='ignore')
+                                        # Extract text from all candidates
+                                        for item in data:
+                                            if 'candidates' in item:
+                                                for candidate in item['candidates']:
+                                                    content = candidate.get('content', {})
+                                                    for part in content.get('parts', []):
+                                                        if 'text' in part:
+                                                            yield part['text']
+
+                                        # Clear processed data from buffer
+                                        buffer = text[last_complete + 1:].encode('utf-8')
+                                        text = buffer.decode('utf-8', errors='ignore')
+                                    else:
+                                        break
                                 else:
                                     break
-                            else:
+                            except json.JSONDecodeError:
                                 break
-                        except json.JSONDecodeError:
-                            break
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{self.name}] Streaming timeout")
+                    raise
+                except aiohttp.ClientError as e:
+                    logger.warning(f"[{self.name}] Streaming connection error: {e}")
+                    raise RuntimeError(f"Streaming connection error: {e}")
 
     async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using Gemini."""
@@ -561,7 +486,10 @@ class OllamaAgent(APIAgent):
                         sanitized = _sanitize_error_message(error_text)
                         raise RuntimeError(f"Ollama API error {response.status}: {sanitized}")
 
-                    data = await response.json()
+                    try:
+                        data = await response.json()
+                    except (json.JSONDecodeError, aiohttp.ContentTypeError) as e:
+                        raise RuntimeError(f"Ollama returned invalid JSON: {e}")
                     return data.get("response", "")
 
             except aiohttp.ClientConnectorError:
@@ -596,7 +524,21 @@ REASONING: explanation"""
 
 
 class AnthropicAPIAgent(APIAgent):
-    """Agent that uses Anthropic API directly (without CLI)."""
+    """Agent that uses Anthropic API directly (without CLI).
+
+    Supports automatic fallback to OpenRouter when Anthropic API returns
+    billing/quota errors (e.g., "credit balance is too low").
+    """
+
+    # Model mapping from Anthropic to OpenRouter format
+    OPENROUTER_MODEL_MAP = {
+        "claude-opus-4-5-20251101": "anthropic/claude-sonnet-4",
+        "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
+        "claude-3-5-sonnet-20241022": "anthropic/claude-3.5-sonnet",
+        "claude-3-opus-20240229": "anthropic/claude-3-opus",
+        "claude-3-sonnet-20240229": "anthropic/claude-3-sonnet",
+        "claude-3-haiku-20240307": "anthropic/claude-3-haiku",
+    }
 
     def __init__(
         self,
@@ -605,22 +547,63 @@ class AnthropicAPIAgent(APIAgent):
         role: str = "proposer",
         timeout: int = 120,
         api_key: str | None = None,
+        enable_fallback: bool = True,
     ):
         super().__init__(
             name=name,
             model=model,
             role=role,
             timeout=timeout,
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"),
+            api_key=api_key or get_api_key("ANTHROPIC_API_KEY"),
             base_url="https://api.anthropic.com/v1",
         )
         self.agent_type = "anthropic"
+        self.enable_fallback = enable_fallback
+        self._fallback_agent = None  # Lazy-loaded OpenRouter fallback
+
+    def _get_fallback_agent(self):
+        """Get or create the OpenRouter fallback agent for Claude models."""
+        if self._fallback_agent is None:
+            # Map the model to OpenRouter format
+            openrouter_model = self.OPENROUTER_MODEL_MAP.get(
+                self.model, "anthropic/claude-sonnet-4"
+            )
+
+            # OpenRouterAgent is defined in this module
+            self._fallback_agent = OpenRouterAgent(
+                name=f"{self.name}_fallback",
+                model=openrouter_model,
+                role=self.role,
+                system_prompt=self.system_prompt,
+                timeout=self.timeout,
+            )
+            logger.info(f"Created OpenRouter fallback agent with model {openrouter_model}")
+        return self._fallback_agent
+
+    def _is_anthropic_quota_error(self, status_code: int, error_text: str) -> bool:
+        """Check if the error is a billing/quota/rate limit error from Anthropic."""
+        # 429 is rate limit
+        if status_code == 429:
+            return True
+        # Check for billing/credit-related messages in any error code
+        quota_keywords = [
+            "credit balance",
+            "insufficient",
+            "quota",
+            "rate_limit",
+            "billing",
+            "exceeded",
+            "purchase credits",
+        ]
+        error_lower = error_text.lower()
+        return any(kw in error_lower for kw in quota_keywords)
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
-        """Generate a response using Anthropic API."""
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable required")
+        """Generate a response using Anthropic API.
 
+        Falls back to OpenRouter if billing/quota errors are encountered
+        and OPENROUTER_API_KEY is set.
+        """
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -652,6 +635,24 @@ class AnthropicAPIAgent(APIAgent):
                 if response.status != 200:
                     error_text = await response.text()
                     sanitized = _sanitize_error_message(error_text)
+
+                    # Check if this is a quota/billing error and fallback is enabled
+                    if self.enable_fallback and self._is_anthropic_quota_error(
+                        response.status, error_text
+                    ):
+                        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+                        if openrouter_key:
+                            logger.warning(
+                                f"Anthropic API billing/quota error (status {response.status}), "
+                                f"falling back to OpenRouter for {self.name}"
+                            )
+                            fallback = self._get_fallback_agent()
+                            return await fallback.generate(prompt, context)
+                        else:
+                            logger.warning(
+                                "Anthropic quota exceeded but OPENROUTER_API_KEY not set - cannot fallback"
+                            )
+
                     raise RuntimeError(f"Anthropic API error {response.status}: {sanitized}")
 
                 data = await response.json()
@@ -666,9 +667,6 @@ class AnthropicAPIAgent(APIAgent):
 
         Yields chunks of text as they arrive from the API using SSE.
         """
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable required")
-
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -701,40 +699,70 @@ class AnthropicAPIAgent(APIAgent):
                 if response.status != 200:
                     error_text = await response.text()
                     sanitized = _sanitize_error_message(error_text)
+
+                    # Check for quota/billing errors and fallback to OpenRouter
+                    if self.enable_fallback and self._is_anthropic_quota_error(
+                        response.status, error_text
+                    ):
+                        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+                        if openrouter_key:
+                            logger.warning(
+                                f"Anthropic API billing/quota error (status {response.status}), "
+                                f"falling back to OpenRouter streaming for {self.name}"
+                            )
+                            fallback = self._get_fallback_agent()
+                            async for chunk in fallback.generate_stream(prompt, context):
+                                yield chunk
+                            return
+                        else:
+                            logger.warning(
+                                "Anthropic quota exceeded but OPENROUTER_API_KEY not set - cannot fallback"
+                            )
+
                     raise RuntimeError(f"Anthropic streaming API error {response.status}: {sanitized}")
 
                 # Anthropic uses SSE format: data: {...}\n\n
                 buffer = ""
-                async for chunk in response.content.iter_any():
-                    buffer += chunk.decode('utf-8', errors='ignore')
+                try:
+                    async for chunk in response.content.iter_any():
+                        buffer += chunk.decode('utf-8', errors='ignore')
+                        # Prevent unbounded buffer growth (DoS protection)
+                        if len(buffer) > MAX_STREAM_BUFFER_SIZE:
+                            raise RuntimeError("Streaming buffer exceeded maximum size")
 
-                    # Process complete SSE lines
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        line = line.strip()
+                        # Process complete SSE lines
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            line = line.strip()
 
-                        if not line or not line.startswith('data: '):
-                            continue
+                            if not line or not line.startswith('data: '):
+                                continue
 
-                        data_str = line[6:]  # Remove 'data: ' prefix
+                            data_str = line[6:]  # Remove 'data: ' prefix
 
-                        if data_str == '[DONE]':
-                            return
+                            if data_str == '[DONE]':
+                                return
 
-                        try:
-                            event = json.loads(data_str)
-                            event_type = event.get('type', '')
+                            try:
+                                event = json.loads(data_str)
+                                event_type = event.get('type', '')
 
-                            # Handle content_block_delta events
-                            if event_type == 'content_block_delta':
-                                delta = event.get('delta', {})
-                                if delta.get('type') == 'text_delta':
-                                    text = delta.get('text', '')
-                                    if text:
-                                        yield text
+                                # Handle content_block_delta events
+                                if event_type == 'content_block_delta':
+                                    delta = event.get('delta', {})
+                                    if delta.get('type') == 'text_delta':
+                                        text = delta.get('text', '')
+                                        if text:
+                                            yield text
 
-                        except json.JSONDecodeError:
-                            continue
+                            except json.JSONDecodeError:
+                                continue
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{self.name}] Streaming timeout")
+                    raise
+                except aiohttp.ClientError as e:
+                    logger.warning(f"[{self.name}] Streaming connection error: {e}")
+                    raise RuntimeError(f"Streaming connection error: {e}")
 
     async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using Anthropic API."""
@@ -786,7 +814,7 @@ class OpenAIAPIAgent(APIAgent):
             model=model,
             role=role,
             timeout=timeout,
-            api_key=api_key or os.environ.get("OPENAI_API_KEY"),
+            api_key=api_key or get_api_key("OPENAI_API_KEY"),
             base_url="https://api.openai.com/v1",
         )
         self.agent_type = "openai"
@@ -799,9 +827,7 @@ class OpenAIAPIAgent(APIAgent):
             # Map the model to OpenRouter format
             openrouter_model = self.OPENROUTER_MODEL_MAP.get(self.model, "openai/gpt-4o")
 
-            # Import here to avoid circular imports
-            from aragora.agents.api_agents import OpenRouterAgent
-
+            # OpenRouterAgent is defined in this module
             self._fallback_agent = OpenRouterAgent(
                 name=f"{self.name}_fallback",
                 model=openrouter_model,
@@ -822,9 +848,6 @@ class OpenAIAPIAgent(APIAgent):
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using OpenAI API."""
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable required")
-
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -886,9 +909,6 @@ class OpenAIAPIAgent(APIAgent):
 
         Yields chunks of text as they arrive from the API using SSE.
         """
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable required")
-
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -944,33 +964,43 @@ class OpenAIAPIAgent(APIAgent):
 
                 # OpenAI uses SSE format: data: {...}\n\n
                 buffer = ""
-                async for chunk in response.content.iter_any():
-                    buffer += chunk.decode('utf-8', errors='ignore')
+                try:
+                    async for chunk in response.content.iter_any():
+                        buffer += chunk.decode('utf-8', errors='ignore')
+                        # Prevent unbounded buffer growth (DoS protection)
+                        if len(buffer) > MAX_STREAM_BUFFER_SIZE:
+                            raise RuntimeError("Streaming buffer exceeded maximum size")
 
-                    # Process complete SSE lines
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        line = line.strip()
+                        # Process complete SSE lines
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            line = line.strip()
 
-                        if not line or not line.startswith('data: '):
-                            continue
+                            if not line or not line.startswith('data: '):
+                                continue
 
-                        data_str = line[6:]  # Remove 'data: ' prefix
+                            data_str = line[6:]  # Remove 'data: ' prefix
 
-                        if data_str == '[DONE]':
-                            return
+                            if data_str == '[DONE]':
+                                return
 
-                        try:
-                            event = json.loads(data_str)
-                            choices = event.get('choices', [])
-                            if choices:
-                                delta = choices[0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    yield content
+                            try:
+                                event = json.loads(data_str)
+                                choices = event.get('choices', [])
+                                if choices:
+                                    delta = choices[0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        yield content
 
-                        except json.JSONDecodeError:
-                            continue
+                            except json.JSONDecodeError:
+                                continue
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{self.name}] Streaming timeout")
+                    raise
+                except aiohttp.ClientError as e:
+                    logger.warning(f"[{self.name}] Streaming connection error: {e}")
+                    raise RuntimeError(f"Streaming connection error: {e}")
 
     async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using OpenAI API."""
@@ -1014,15 +1044,13 @@ class GrokAgent(APIAgent):
             model=model,
             role=role,
             timeout=timeout,
-            api_key=api_key or os.environ.get("XAI_API_KEY") or os.environ.get("GROK_API_KEY"),
+            api_key=api_key or get_api_key("XAI_API_KEY", "GROK_API_KEY"),
             base_url="https://api.x.ai/v1",
         )
         self.agent_type = "grok"
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using Grok API."""
-        if not self.api_key:
-            raise ValueError("XAI_API_KEY or GROK_API_KEY environment variable required")
 
         full_prompt = prompt
         if context:
@@ -1066,9 +1094,6 @@ class GrokAgent(APIAgent):
 
     async def generate_stream(self, prompt: str, context: list[Message] | None = None):
         """Stream tokens from Grok API."""
-        if not self.api_key:
-            raise ValueError("XAI_API_KEY or GROK_API_KEY environment variable required")
-
         full_prompt = prompt
         if context:
             full_prompt = self._build_context_prompt(context) + prompt
@@ -1103,33 +1128,44 @@ class GrokAgent(APIAgent):
                     sanitized = _sanitize_error_message(error_text)
                     raise RuntimeError(f"Grok streaming API error {response.status}: {sanitized}")
 
-                buffer = ""
-                async for chunk in response.content.iter_any():
-                    buffer += chunk.decode('utf-8', errors='ignore')
+                try:
+                    buffer = ""
+                    async for chunk in response.content.iter_any():
+                        buffer += chunk.decode('utf-8', errors='ignore')
 
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        line = line.strip()
+                        # Prevent unbounded buffer growth (DoS protection)
+                        if len(buffer) > MAX_STREAM_BUFFER_SIZE:
+                            raise RuntimeError("Streaming buffer exceeded maximum size")
 
-                        if not line or not line.startswith('data: '):
-                            continue
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            line = line.strip()
 
-                        data_str = line[6:]
+                            if not line or not line.startswith('data: '):
+                                continue
 
-                        if data_str == '[DONE]':
-                            return
+                            data_str = line[6:]
 
-                        try:
-                            event = json.loads(data_str)
-                            choices = event.get('choices', [])
-                            if choices:
-                                delta = choices[0].get('delta', {})
-                                content = delta.get('content', '')
-                                if content:
-                                    yield content
+                            if data_str == '[DONE]':
+                                return
 
-                        except json.JSONDecodeError:
-                            continue
+                            try:
+                                event = json.loads(data_str)
+                                choices = event.get('choices', [])
+                                if choices:
+                                    delta = choices[0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        yield content
+
+                            except json.JSONDecodeError:
+                                continue
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{self.name}] Streaming timeout")
+                    raise
+                except aiohttp.ClientError as e:
+                    logger.warning(f"[{self.name}] Streaming connection error: {e}")
+                    raise RuntimeError(f"Streaming connection error: {e}")
 
     async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
         """Critique a proposal using Grok API."""
@@ -1183,7 +1219,7 @@ class OpenRouterAgent(APIAgent):
             model=model,
             role=role,
             timeout=timeout,
-            api_key=os.environ.get("OPENROUTER_API_KEY"),
+            api_key=get_api_key("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
         )
         self.agent_type = "openrouter"
@@ -1201,12 +1237,10 @@ class OpenRouterAgent(APIAgent):
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using OpenRouter API with rate limiting."""
-        if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY environment variable required")
 
         # Acquire rate limit token
         limiter = get_openrouter_limiter()
-        if not await limiter.acquire(timeout=30.0):
+        if not await limiter.acquire(timeout=DB_TIMEOUT_SECONDS):
             raise RuntimeError("OpenRouter rate limit exceeded, request timed out")
 
         full_prompt = prompt
@@ -1264,12 +1298,9 @@ class OpenRouterAgent(APIAgent):
 
         Yields chunks of text as they arrive from the API using SSE.
         """
-        if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY environment variable required")
-
         # Acquire rate limit token
         limiter = get_openrouter_limiter()
-        if not await limiter.acquire(timeout=30.0):
+        if not await limiter.acquire(timeout=DB_TIMEOUT_SECONDS):
             raise RuntimeError("OpenRouter rate limit exceeded, request timed out")
 
         full_prompt = prompt

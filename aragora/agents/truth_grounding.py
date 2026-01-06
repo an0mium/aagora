@@ -11,10 +11,14 @@ This enables persona synthesis from verifiable data rather than self-reported tr
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -46,54 +50,62 @@ class PositionTracker:
         self.db_path = Path(db_path)
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Position history table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS position_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                debate_id TEXT NOT NULL,
-                agent_name TEXT NOT NULL,
-                position_type TEXT NOT NULL,
-                position_text TEXT NOT NULL,
-                round_num INTEGER DEFAULT 0,
-                confidence REAL DEFAULT 0.5,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                was_winning_position INTEGER DEFAULT NULL,
-                verified_correct INTEGER DEFAULT NULL,
-                UNIQUE(debate_id, agent_name, position_type, round_num)
-            )
-        """)
+            # Position history table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS position_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    debate_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    position_type TEXT NOT NULL,
+                    position_text TEXT NOT NULL,
+                    round_num INTEGER DEFAULT 0,
+                    confidence REAL DEFAULT 0.5,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    was_winning_position INTEGER DEFAULT NULL,
+                    verified_correct INTEGER DEFAULT NULL,
+                    UNIQUE(debate_id, agent_name, position_type, round_num)
+                )
+            """)
 
-        # Debate outcomes table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS debate_outcomes (
-                debate_id TEXT PRIMARY KEY,
-                winning_agent TEXT,
-                winning_position TEXT,
-                consensus_confidence REAL,
-                verified_at TEXT DEFAULT NULL,
-                verification_result INTEGER DEFAULT NULL,
-                verification_source TEXT DEFAULT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+            # Debate outcomes table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS debate_outcomes (
+                    debate_id TEXT PRIMARY KEY,
+                    winning_agent TEXT,
+                    winning_position TEXT,
+                    consensus_confidence REAL,
+                    verified_at TEXT DEFAULT NULL,
+                    verification_result INTEGER DEFAULT NULL,
+                    verification_source TEXT DEFAULT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
-        # Indexes for common queries
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_position_agent
-            ON position_history(agent_name)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_position_debate
-            ON position_history(debate_id)
-        """)
+            # Indexes for common queries
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_position_agent
+                ON position_history(agent_name)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_position_debate
+                ON position_history(debate_id)
+            """)
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def record_position(
         self,
@@ -105,20 +117,19 @@ class PositionTracker:
         confidence: float = 0.5,
     ) -> Position:
         """Record an agent's position during a debate."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO position_history
-            (debate_id, agent_name, position_type, position_text, round_num, confidence)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (debate_id, agent_name, position_type, position_text, round_num, confidence),
-        )
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO position_history
+                (debate_id, agent_name, position_type, position_text, round_num, confidence)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (debate_id, agent_name, position_type, position_text, round_num, confidence),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return Position(
             debate_id=debate_id,
@@ -137,31 +148,30 @@ class PositionTracker:
         consensus_confidence: float,
     ):
         """Mark debate complete and update was_winning_position for all agents."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Record the outcome
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO debate_outcomes
-            (debate_id, winning_agent, winning_position, consensus_confidence)
-            VALUES (?, ?, ?, ?)
-            """,
-            (debate_id, winning_agent, winning_position, consensus_confidence),
-        )
+            # Record the outcome
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO debate_outcomes
+                (debate_id, winning_agent, winning_position, consensus_confidence)
+                VALUES (?, ?, ?, ?)
+                """,
+                (debate_id, winning_agent, winning_position, consensus_confidence),
+            )
 
-        # Mark winning positions
-        cursor.execute(
-            """
-            UPDATE position_history
-            SET was_winning_position = (agent_name = ?)
-            WHERE debate_id = ?
-            """,
-            (winning_agent, debate_id),
-        )
+            # Mark winning positions
+            cursor.execute(
+                """
+                UPDATE position_history
+                SET was_winning_position = (agent_name = ?)
+                WHERE debate_id = ?
+                """,
+                (winning_agent, debate_id),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def record_verification(
         self,
@@ -170,34 +180,33 @@ class PositionTracker:
         source: str = "manual",
     ):
         """Record whether the winning position was actually correct."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Update outcome
-        cursor.execute(
-            """
-            UPDATE debate_outcomes
-            SET verified_at = ?, verification_result = ?, verification_source = ?
-            WHERE debate_id = ?
-            """,
-            (datetime.now().isoformat(), 1 if result else 0, source, debate_id),
-        )
+            # Update outcome
+            cursor.execute(
+                """
+                UPDATE debate_outcomes
+                SET verified_at = ?, verification_result = ?, verification_source = ?
+                WHERE debate_id = ?
+                """,
+                (datetime.now().isoformat(), 1 if result else 0, source, debate_id),
+            )
 
-        # Propagate to positions - winning positions get the verification result
-        cursor.execute(
-            """
-            UPDATE position_history
-            SET verified_correct = CASE
-                WHEN was_winning_position = 1 THEN ?
-                ELSE 0
-            END
-            WHERE debate_id = ?
-            """,
-            (1 if result else 0, debate_id),
-        )
+            # Propagate to positions - winning positions get the verification result
+            cursor.execute(
+                """
+                UPDATE position_history
+                SET verified_correct = CASE
+                    WHEN was_winning_position = 1 THEN ?
+                    ELSE 0
+                END
+                WHERE debate_id = ?
+                """,
+                (1 if result else 0, debate_id),
+            )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_agent_position_accuracy(
         self,
@@ -217,24 +226,23 @@ class PositionTracker:
                 'calibration': float,
             }
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN was_winning_position = 1 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN verified_correct IS NOT NULL THEN 1 ELSE 0 END) as verified,
-                SUM(CASE WHEN verified_correct = 1 THEN 1 ELSE 0 END) as correct,
-                AVG(confidence) as avg_confidence
-            FROM position_history
-            WHERE agent_name = ? AND position_type = 'vote'
-            """,
-            (agent_name,),
-        )
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN was_winning_position = 1 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN verified_correct IS NOT NULL THEN 1 ELSE 0 END) as verified,
+                    SUM(CASE WHEN verified_correct = 1 THEN 1 ELSE 0 END) as correct,
+                    AVG(confidence) as avg_confidence
+                FROM position_history
+                WHERE agent_name = ? AND position_type = 'vote'
+                """,
+                (agent_name,),
+            )
+            row = cursor.fetchone()
 
         total = row[0] or 0
         wins = row[1] or 0
@@ -265,22 +273,21 @@ class PositionTracker:
         verified_only: bool = False,
     ) -> list[Position]:
         """Get an agent's position history."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
 
-        query = """
-            SELECT debate_id, agent_name, position_type, position_text,
-                   round_num, confidence, was_winning_position, verified_correct, created_at
-            FROM position_history
-            WHERE agent_name = ?
-        """
-        if verified_only:
-            query += " AND verified_correct IS NOT NULL"
-        query += " ORDER BY created_at DESC LIMIT ?"
+            query = """
+                SELECT debate_id, agent_name, position_type, position_text,
+                       round_num, confidence, was_winning_position, verified_correct, created_at
+                FROM position_history
+                WHERE agent_name = ?
+            """
+            if verified_only:
+                query += " AND verified_correct IS NOT NULL"
+            query += " ORDER BY created_at DESC LIMIT ?"
 
-        cursor.execute(query, (agent_name, limit))
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(query, (agent_name, limit))
+            rows = cursor.fetchall()
 
         return [
             Position(
@@ -401,23 +408,22 @@ class TruthGroundedLaboratory:
         min_accuracy: float = 0.6,
     ) -> list[TruthGroundedPersona]:
         """Get agents that have demonstrated reliable accuracy."""
-        conn = sqlite3.connect(self.position_tracker.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.position_tracker.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT agent_name,
-                   COUNT(*) as total,
-                   SUM(CASE WHEN verified_correct = 1 THEN 1 ELSE 0 END) as correct
-            FROM position_history
-            WHERE verified_correct IS NOT NULL
-            GROUP BY agent_name
-            HAVING COUNT(*) >= ?
-            """,
-            (min_verified,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT agent_name,
+                       COUNT(*) as total,
+                       SUM(CASE WHEN verified_correct = 1 THEN 1 ELSE 0 END) as correct
+                FROM position_history
+                WHERE verified_correct IS NOT NULL
+                GROUP BY agent_name
+                HAVING COUNT(*) >= ?
+                """,
+                (min_verified,),
+            )
+            rows = cursor.fetchall()
 
         reliable = []
         for agent_name, total, correct in rows:
@@ -430,53 +436,51 @@ class TruthGroundedLaboratory:
 
     def get_all_personas(self, limit: int = 50) -> list[TruthGroundedPersona]:
         """Get all agents with position history."""
-        conn = sqlite3.connect(self.position_tracker.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.position_tracker.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT DISTINCT agent_name
-            FROM position_history
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT DISTINCT agent_name
+                FROM position_history
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
 
         return [self.synthesize_persona(row[0]) for row in rows]
 
     def get_debate_summary(self, debate_id: str) -> dict:
         """Get summary of positions and outcome for a debate."""
-        conn = sqlite3.connect(self.position_tracker.db_path)
-        cursor = conn.cursor()
+        with sqlite3.connect(self.position_tracker.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
 
-        # Get outcome
-        cursor.execute(
-            """
-            SELECT winning_agent, winning_position, consensus_confidence,
-                   verification_result, verification_source
-            FROM debate_outcomes
-            WHERE debate_id = ?
-            """,
-            (debate_id,),
-        )
-        outcome = cursor.fetchone()
+            # Get outcome
+            cursor.execute(
+                """
+                SELECT winning_agent, winning_position, consensus_confidence,
+                       verification_result, verification_source
+                FROM debate_outcomes
+                WHERE debate_id = ?
+                """,
+                (debate_id,),
+            )
+            outcome = cursor.fetchone()
 
-        # Get positions
-        cursor.execute(
-            """
-            SELECT agent_name, position_type, position_text, confidence,
-                   was_winning_position, verified_correct
-            FROM position_history
-            WHERE debate_id = ?
-            ORDER BY round_num, position_type
-            """,
-            (debate_id,),
-        )
-        positions = cursor.fetchall()
-        conn.close()
+            # Get positions
+            cursor.execute(
+                """
+                SELECT agent_name, position_type, position_text, confidence,
+                       was_winning_position, verified_correct
+                FROM position_history
+                WHERE debate_id = ?
+                ORDER BY round_num, position_type
+                """,
+                (debate_id,),
+            )
+            positions = cursor.fetchall()
 
         return {
             "debate_id": debate_id,

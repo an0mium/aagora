@@ -32,8 +32,8 @@ class AgentError(Exception):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
-        cause: Exception = None,
+        agent_name: str | None = None,
+        cause: Exception | None = None,
         recoverable: bool = True,
     ):
         super().__init__(message)
@@ -56,9 +56,9 @@ class AgentConnectionError(AgentError):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
-        status_code: int = None,
-        cause: Exception = None,
+        agent_name: str | None = None,
+        status_code: int | None = None,
+        cause: Exception | None = None,
     ):
         super().__init__(message, agent_name, cause, recoverable=True)
         self.status_code = status_code
@@ -70,9 +70,9 @@ class AgentTimeoutError(AgentError):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
-        timeout_seconds: float = None,
-        cause: Exception = None,
+        agent_name: str | None = None,
+        timeout_seconds: float | None = None,
+        cause: Exception | None = None,
     ):
         super().__init__(message, agent_name, cause, recoverable=True)
         self.timeout_seconds = timeout_seconds
@@ -84,9 +84,9 @@ class AgentRateLimitError(AgentError):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
-        retry_after: float = None,
-        cause: Exception = None,
+        agent_name: str | None = None,
+        retry_after: float | None = None,
+        cause: Exception | None = None,
     ):
         super().__init__(message, agent_name, cause, recoverable=True)
         self.retry_after = retry_after
@@ -98,10 +98,10 @@ class AgentAPIError(AgentError):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
-        status_code: int = None,
-        error_type: str = None,
-        cause: Exception = None,
+        agent_name: str | None = None,
+        status_code: int | None = None,
+        error_type: str | None = None,
+        cause: Exception | None = None,
     ):
         # 4xx errors are generally not recoverable (bad request, auth)
         recoverable = status_code is None or status_code >= 500
@@ -116,9 +116,9 @@ class AgentResponseError(AgentError):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
+        agent_name: str | None = None,
         response_data: Any = None,
-        cause: Exception = None,
+        cause: Exception | None = None,
     ):
         super().__init__(message, agent_name, cause, recoverable=False)
         self.response_data = response_data
@@ -130,9 +130,9 @@ class AgentStreamError(AgentError):
     def __init__(
         self,
         message: str,
-        agent_name: str = None,
-        partial_content: str = None,
-        cause: Exception = None,
+        agent_name: str | None = None,
+        partial_content: str | None = None,
+        cause: Exception | None = None,
     ):
         super().__init__(message, agent_name, cause, recoverable=True)
         self.partial_content = partial_content

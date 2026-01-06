@@ -2,7 +2,150 @@
 Base utilities for creating agents.
 """
 
+import re
 from typing import Literal, Union
+
+from aragora.core import Critique, Message
+
+
+# Context window limits (in characters, ~4 chars per token)
+# Use 60% of available window to leave room for response
+MAX_CONTEXT_CHARS = 120_000  # ~30k tokens, safe for most models
+MAX_MESSAGE_CHARS = 20_000   # Individual message truncation limit
+
+
+class CritiqueMixin:
+    """Mixin providing shared critique parsing and context building methods.
+
+    Used by both CLIAgent and APIAgent to avoid code duplication.
+    """
+
+    # Required attributes (provided by subclasses)
+    name: str
+
+    def _build_context_prompt(
+        self,
+        context: list[Message] | None = None,
+        truncate: bool = False,
+        sanitize_fn=None,
+    ) -> str:
+        """Build context from previous messages.
+
+        Args:
+            context: List of previous messages
+            truncate: Whether to truncate long messages/context (CLI agents should use True)
+            sanitize_fn: Optional function to sanitize content (for CLI safety)
+
+        Returns:
+            Formatted context string
+        """
+        if not context:
+            return ""
+
+        if not truncate:
+            # Simple mode (API agents) - no truncation
+            context_str = "\n\n".join([
+                f"[Round {m.round}] {m.role} ({m.agent}):\n{m.content}"
+                for m in context[-10:]
+            ])
+            return f"\n\nPrevious discussion:\n{context_str}\n\n"
+
+        # Truncation mode (CLI agents) - handle large contexts
+        messages = []
+        total_chars = 0
+
+        for m in context[-10:]:
+            content = m.content
+            if sanitize_fn:
+                content = sanitize_fn(content)
+
+            # Truncate individual messages that are too long
+            if len(content) > MAX_MESSAGE_CHARS:
+                half = MAX_MESSAGE_CHARS // 2 - 50
+                content = (
+                    content[:half] +
+                    f"\n\n[... {len(m.content) - MAX_MESSAGE_CHARS} chars truncated ...]\n\n" +
+                    content[-half:]
+                )
+
+            msg_str = f"[Round {m.round}] {m.role} ({m.agent}):\n{content}"
+
+            # Check if adding this message would exceed total limit
+            if total_chars + len(msg_str) > MAX_CONTEXT_CHARS:
+                remaining = MAX_CONTEXT_CHARS - total_chars - 100
+                if remaining > 500:
+                    msg_str = msg_str[:remaining] + "\n[... truncated ...]"
+                    messages.append(msg_str)
+                break
+
+            messages.append(msg_str)
+            total_chars += len(msg_str) + 4
+
+        context_str = "\n\n".join(messages)
+        return f"\n\nPrevious discussion:\n{context_str}\n\n"
+
+    def _parse_critique(self, response: str, target_agent: str, target_content: str) -> Critique:
+        """Parse a critique response into structured format.
+
+        Extracts issues, suggestions, and severity from natural language critique.
+        """
+        issues = []
+        suggestions = []
+        severity = 0.5
+        reasoning = ""
+
+        lines = response.split('\n')
+        current_section = None
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            lower = line.lower()
+            if 'issue' in lower or 'problem' in lower or 'concern' in lower:
+                current_section = 'issues'
+            elif 'suggest' in lower or 'recommend' in lower or 'improvement' in lower:
+                current_section = 'suggestions'
+            elif 'severity' in lower:
+                match = re.search(r'(\d+\.?\d*)', line)
+                if match:
+                    try:
+                        severity = min(1.0, max(0.0, float(match.group(1))))
+                        if severity > 1:
+                            severity = severity / 10  # Handle 0-10 scale
+                    except (ValueError, TypeError):
+                        pass
+            elif line.startswith(('-', '*', '•')):
+                item = line.lstrip('-*• ').strip()
+                if current_section == 'issues':
+                    issues.append(item)
+                elif current_section == 'suggestions':
+                    suggestions.append(item)
+                else:
+                    # Default to issues
+                    issues.append(item)
+
+        # If no structured extraction, use the whole response
+        if not issues and not suggestions:
+            sentences = [s.strip() for s in response.replace('\n', ' ').split('.') if s.strip()]
+            mid = len(sentences) // 2
+            issues = sentences[:mid] if sentences else ["See full response"]
+            suggestions = sentences[mid:] if len(sentences) > mid else []
+            reasoning = response[:500]
+        else:
+            reasoning = response[:500]
+
+        return Critique(
+            agent=self.name,
+            target_agent=target_agent,
+            target_content=target_content[:200],
+            issues=issues[:5],  # Limit to 5 issues
+            suggestions=suggestions[:5],  # Limit to 5 suggestions
+            severity=severity,
+            reasoning=reasoning,
+        )
+
 
 AgentType = Literal[
     # CLI-based
@@ -16,10 +159,10 @@ AgentType = Literal[
 
 def create_agent(
     model_type: AgentType,
-    name: str = None,
+    name: str | None = None,
     role: str = "proposer",
-    model: str = None,
-    api_key: str = None,
+    model: str | None = None,
+    api_key: str | None = None,
 ):
     """
     Factory function to create agents by type.

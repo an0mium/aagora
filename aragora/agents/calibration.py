@@ -11,10 +11,16 @@ Well-calibrated agents have confidence that matches their accuracy:
 """
 
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
+
+from aragora.config import DB_CALIBRATION_PATH
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -107,36 +113,44 @@ class CalibrationTracker:
     Stores data in SQLite for persistence across sessions.
     """
 
-    def __init__(self, db_path: str = "aragora_calibration.db"):
+    def __init__(self, db_path: str = DB_CALIBRATION_PATH):
         self.db_path = Path(db_path)
         self._init_db()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Initialize database tables."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                correct INTEGER NOT NULL,
-                domain TEXT DEFAULT 'general',
-                debate_id TEXT,
-                position_id TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    correct INTEGER NOT NULL,
+                    domain TEXT DEFAULT 'general',
+                    debate_id TEXT,
+                    position_id TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pred_agent ON predictions(agent)"
             )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pred_agent ON predictions(agent)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pred_domain ON predictions(domain)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_pred_confidence ON predictions(confidence)"
-        )
-        conn.commit()
-        conn.close()
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pred_domain ON predictions(domain)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pred_confidence ON predictions(confidence)"
+            )
+            conn.commit()
 
     def record_prediction(
         self,
@@ -163,25 +177,24 @@ class CalibrationTracker:
         """
         confidence = max(0.0, min(1.0, confidence))
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute(
-            """
-            INSERT INTO predictions (agent, confidence, correct, domain, debate_id, position_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                agent,
-                confidence,
-                1 if correct else 0,
-                domain,
-                debate_id,
-                position_id,
-                datetime.now().isoformat(),
-            ),
-        )
-        pred_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO predictions (agent, confidence, correct, domain, debate_id, position_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent,
+                    confidence,
+                    1 if correct else 0,
+                    domain,
+                    debate_id,
+                    position_id,
+                    datetime.now().isoformat(),
+                ),
+            )
+            pred_id = cursor.lastrowid
+            conn.commit()
 
         return pred_id or 0
 
@@ -205,68 +218,66 @@ class CalibrationTracker:
         bucket_size = 1.0 / num_buckets
         buckets = []
 
-        conn = sqlite3.connect(self.db_path)
+        with self._get_connection() as conn:
+            for i in range(num_buckets):
+                range_start = i * bucket_size
+                range_end = (i + 1) * bucket_size
 
-        for i in range(num_buckets):
-            range_start = i * bucket_size
-            range_end = (i + 1) * bucket_size
+                # Last bucket uses <= to include 1.0 exactly
+                if i == num_buckets - 1:
+                    query = """
+                        SELECT COUNT(*), SUM(correct)
+                        FROM predictions
+                        WHERE agent = ? AND confidence >= ? AND confidence <= ?
+                    """
+                else:
+                    query = """
+                        SELECT COUNT(*), SUM(correct)
+                        FROM predictions
+                        WHERE agent = ? AND confidence >= ? AND confidence < ?
+                    """
+                params: list = [agent, range_start, range_end]
 
-            # Last bucket uses <= to include 1.0 exactly
-            if i == num_buckets - 1:
-                query = """
-                    SELECT COUNT(*), SUM(correct)
-                    FROM predictions
-                    WHERE agent = ? AND confidence >= ? AND confidence <= ?
-                """
-            else:
-                query = """
-                    SELECT COUNT(*), SUM(correct)
-                    FROM predictions
-                    WHERE agent = ? AND confidence >= ? AND confidence < ?
-                """
-            params: list = [agent, range_start, range_end]
+                if domain:
+                    query += " AND domain = ?"
+                    params.append(domain)
 
-            if domain:
-                query += " AND domain = ?"
-                params.append(domain)
+                cursor = conn.execute(query, params)
+                row = cursor.fetchone()
 
-            cursor = conn.execute(query, params)
-            row = cursor.fetchone()
+                total = row[0] or 0
+                correct = row[1] or 0
 
-            total = row[0] or 0
-            correct = row[1] or 0
+                # Compute Brier sum for this bucket (last bucket uses <= to include 1.0)
+                if i == num_buckets - 1:
+                    brier_query = """
+                        SELECT SUM((confidence - correct) * (confidence - correct))
+                        FROM predictions
+                        WHERE agent = ? AND confidence >= ? AND confidence <= ?
+                    """
+                else:
+                    brier_query = """
+                        SELECT SUM((confidence - correct) * (confidence - correct))
+                        FROM predictions
+                        WHERE agent = ? AND confidence >= ? AND confidence < ?
+                    """
+                if domain:
+                    brier_query += " AND domain = ?"
 
-            # Compute Brier sum for this bucket (last bucket uses <= to include 1.0)
-            if i == num_buckets - 1:
-                brier_query = """
-                    SELECT SUM((confidence - correct) * (confidence - correct))
-                    FROM predictions
-                    WHERE agent = ? AND confidence >= ? AND confidence <= ?
-                """
-            else:
-                brier_query = """
-                    SELECT SUM((confidence - correct) * (confidence - correct))
-                    FROM predictions
-                    WHERE agent = ? AND confidence >= ? AND confidence < ?
-                """
-            if domain:
-                brier_query += " AND domain = ?"
+                cursor = conn.execute(brier_query, params)
+                brier_row = cursor.fetchone()
+                brier_sum = brier_row[0] or 0.0
 
-            cursor = conn.execute(brier_query, params)
-            brier_row = cursor.fetchone()
-            brier_sum = brier_row[0] or 0.0
-
-            buckets.append(
-                CalibrationBucket(
-                    range_start=range_start,
-                    range_end=range_end,
-                    total_predictions=total,
-                    correct_predictions=correct,
-                    brier_sum=brier_sum,
+                buckets.append(
+                    CalibrationBucket(
+                        range_start=range_start,
+                        range_end=range_end,
+                        total_predictions=total,
+                        correct_predictions=correct,
+                        brier_sum=brier_sum,
+                    )
                 )
-            )
 
-        conn.close()
         return buckets
 
     def get_brier_score(self, agent: str, domain: Optional[str] = None) -> float:
@@ -283,22 +294,20 @@ class CalibrationTracker:
         Returns:
             Brier score (0.0 to 1.0)
         """
-        conn = sqlite3.connect(self.db_path)
+        with self._get_connection() as conn:
+            query = """
+                SELECT AVG((confidence - correct) * (confidence - correct))
+                FROM predictions
+                WHERE agent = ?
+            """
+            params: list = [agent]
 
-        query = """
-            SELECT AVG((confidence - correct) * (confidence - correct))
-            FROM predictions
-            WHERE agent = ?
-        """
-        params: list = [agent]
+            if domain:
+                query += " AND domain = ?"
+                params.append(domain)
 
-        if domain:
-            query += " AND domain = ?"
-            params.append(domain)
-
-        cursor = conn.execute(query, params)
-        row = cursor.fetchone()
-        conn.close()
+            cursor = conn.execute(query, params)
+            row = cursor.fetchone()
 
         return row[0] if row[0] is not None else 0.0
 
@@ -374,22 +383,20 @@ class CalibrationTracker:
         Returns:
             Dict mapping domain name to CalibrationSummary
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute(
-            "SELECT DISTINCT domain FROM predictions WHERE agent = ?",
-            (agent,),
-        )
-        domains = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT DISTINCT domain FROM predictions WHERE agent = ?",
+                (agent,),
+            )
+            domains = [row[0] for row in cursor.fetchall()]
 
         return {domain: self.get_calibration_summary(agent, domain) for domain in domains}
 
     def get_all_agents(self) -> list[str]:
         """Get list of all agents with recorded predictions."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute("SELECT DISTINCT agent FROM predictions ORDER BY agent")
-        agents = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT DISTINCT agent FROM predictions ORDER BY agent")
+            agents = [row[0] for row in cursor.fetchall()]
         return agents
 
     def get_leaderboard(
@@ -438,11 +445,10 @@ class CalibrationTracker:
         Returns:
             Number of records deleted
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute("DELETE FROM predictions WHERE agent = ?", (agent,))
-        deleted = cursor.rowcount
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM predictions WHERE agent = ?", (agent,))
+            deleted = cursor.rowcount
+            conn.commit()
         return deleted
 
 

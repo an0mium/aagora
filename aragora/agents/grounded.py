@@ -15,14 +15,19 @@ import json
 import logging
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Generator, Literal, Optional, Union
 
+from aragora.config import DB_ELO_PATH, DB_PERSONAS_PATH
 from .personas import Persona, PersonaManager, EXPERTISE_DOMAINS
 
 logger = logging.getLogger(__name__)
+
+# Database connection timeout in seconds
+DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -236,40 +241,48 @@ class PositionLedger:
     Integrates with PersonaManager's database for unified agent data.
     """
 
-    def __init__(self, db_path: str = "aragora_personas.db"):
+    def __init__(self, db_path: str = DB_PERSONAS_PATH):
         self.db_path = Path(db_path)
         self._init_tables()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_tables(self) -> None:
         """Add positions table if not exists."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS positions (
-                id TEXT PRIMARY KEY,
-                agent_name TEXT NOT NULL,
-                claim TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                debate_id TEXT NOT NULL,
-                round_num INTEGER NOT NULL,
-                outcome TEXT DEFAULT 'pending',
-                reversed INTEGER DEFAULT 0,
-                reversal_debate_id TEXT,
-                domain TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                resolved_at TEXT
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS positions (
+                    id TEXT PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    claim TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    debate_id TEXT NOT NULL,
+                    round_num INTEGER NOT NULL,
+                    outcome TEXT DEFAULT 'pending',
+                    reversed INTEGER DEFAULT 0,
+                    reversal_debate_id TEXT,
+                    domain TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TEXT
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_positions_agent ON positions(agent_name)"
             )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_positions_agent ON positions(agent_name)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_positions_debate ON positions(debate_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_positions_outcome ON positions(outcome)"
-        )
-        conn.commit()
-        conn.close()
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_positions_debate ON positions(debate_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_positions_outcome ON positions(outcome)"
+            )
+            conn.commit()
 
     def record_position(
         self,
@@ -290,26 +303,25 @@ class PositionLedger:
             domain=domain,
         )
 
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
-            INSERT INTO positions
-            (id, agent_name, claim, confidence, debate_id, round_num, domain, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                position.id,
-                position.agent_name,
-                position.claim,
-                position.confidence,
-                position.debate_id,
-                position.round_num,
-                position.domain,
-                position.created_at,
-            ),
-        )
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO positions
+                (id, agent_name, claim, confidence, debate_id, round_num, domain, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    position.id,
+                    position.agent_name,
+                    position.claim,
+                    position.confidence,
+                    position.debate_id,
+                    position.round_num,
+                    position.domain,
+                    position.created_at,
+                ),
+            )
+            conn.commit()
 
         return position.id
 
@@ -319,17 +331,16 @@ class PositionLedger:
         outcome: Literal["correct", "incorrect", "unresolved"],
     ) -> None:
         """Mark a position's outcome after debate conclusion."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
-            UPDATE positions
-            SET outcome = ?, resolved_at = ?
-            WHERE id = ?
-            """,
-            (outcome, datetime.now().isoformat(), position_id),
-        )
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE positions
+                SET outcome = ?, resolved_at = ?
+                WHERE id = ?
+                """,
+                (outcome, datetime.now().isoformat(), position_id),
+            )
+            conn.commit()
 
     def record_reversal(
         self,
@@ -338,17 +349,16 @@ class PositionLedger:
         new_debate_id: str,
     ) -> None:
         """Record when agent reverses a previous position."""
-        conn = sqlite3.connect(self.db_path)
-        conn.execute(
-            """
-            UPDATE positions
-            SET reversed = 1, reversal_debate_id = ?
-            WHERE id = ? AND agent_name = ?
-            """,
-            (new_debate_id, original_position_id, agent_name),
-        )
-        conn.commit()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE positions
+                SET reversed = 1, reversal_debate_id = ?
+                WHERE id = ? AND agent_name = ?
+                """,
+                (new_debate_id, original_position_id, agent_name),
+            )
+            conn.commit()
 
     def get_agent_positions(
         self,
@@ -357,22 +367,21 @@ class PositionLedger:
         outcome_filter: Optional[str] = None,
     ) -> list[Position]:
         """Get positions for an agent."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
 
-        query = "SELECT * FROM positions WHERE agent_name = ?"
-        params: list = [agent_name]
+            query = "SELECT * FROM positions WHERE agent_name = ?"
+            params: list = [agent_name]
 
-        if outcome_filter:
-            query += " AND outcome = ?"
-            params.append(outcome_filter)
+            if outcome_filter:
+                query += " AND outcome = ?"
+                params.append(outcome_filter)
 
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
 
-        cursor = conn.execute(query, params)
-        rows = cursor.fetchall()
-        conn.close()
+            cursor = conn.execute(query, params)
+            rows = cursor.fetchall()
 
         return [
             Position(
@@ -394,46 +403,43 @@ class PositionLedger:
 
     def get_position_stats(self, agent_name: str) -> dict:
         """Get aggregate position statistics."""
-        conn = sqlite3.connect(self.db_path)
+        with self._get_connection() as conn:
+            # Total positions
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM positions WHERE agent_name = ?", (agent_name,)
+            )
+            total = cursor.fetchone()[0]
 
-        # Total positions
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM positions WHERE agent_name = ?", (agent_name,)
-        )
-        total = cursor.fetchone()[0]
+            # By outcome
+            cursor = conn.execute(
+                """
+                SELECT outcome, COUNT(*)
+                FROM positions
+                WHERE agent_name = ?
+                GROUP BY outcome
+                """,
+                (agent_name,),
+            )
+            outcomes = dict(cursor.fetchall())
 
-        # By outcome
-        cursor = conn.execute(
-            """
-            SELECT outcome, COUNT(*)
-            FROM positions
-            WHERE agent_name = ?
-            GROUP BY outcome
-            """,
-            (agent_name,),
-        )
-        outcomes = dict(cursor.fetchall())
+            # Reversals
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM positions WHERE agent_name = ? AND reversed = 1",
+                (agent_name,),
+            )
+            reversals = cursor.fetchone()[0]
 
-        # Reversals
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM positions WHERE agent_name = ? AND reversed = 1",
-            (agent_name,),
-        )
-        reversals = cursor.fetchone()[0]
-
-        # Average confidence by outcome
-        cursor = conn.execute(
-            """
-            SELECT outcome, AVG(confidence)
-            FROM positions
-            WHERE agent_name = ? AND outcome != 'pending'
-            GROUP BY outcome
-            """,
-            (agent_name,),
-        )
-        avg_confidence = dict(cursor.fetchall())
-
-        conn.close()
+            # Average confidence by outcome
+            cursor = conn.execute(
+                """
+                SELECT outcome, AVG(confidence)
+                FROM positions
+                WHERE agent_name = ? AND outcome != 'pending'
+                GROUP BY outcome
+                """,
+                (agent_name,),
+            )
+            avg_confidence = dict(cursor.fetchall())
 
         return {
             "total": total,
@@ -448,15 +454,14 @@ class PositionLedger:
 
     def get_positions_for_debate(self, debate_id: str) -> list[Position]:
         """Get all positions from a specific debate."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
 
-        cursor = conn.execute(
-            "SELECT * FROM positions WHERE debate_id = ? ORDER BY round_num, agent_name",
-            (debate_id,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+            cursor = conn.execute(
+                "SELECT * FROM positions WHERE debate_id = ? ORDER BY round_num, agent_name",
+                (debate_id,),
+            )
+            rows = cursor.fetchall()
 
         return [
             Position(
@@ -509,41 +514,49 @@ class RelationshipTracker:
 
     def __init__(
         self,
-        elo_db_path: str = "aragora_elo.db",
+        elo_db_path: str = DB_ELO_PATH,
     ):
         self.elo_db_path = Path(elo_db_path)
         self._init_tables()
 
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Get a database connection with guaranteed cleanup."""
+        conn = sqlite3.connect(self.elo_db_path, timeout=DB_TIMEOUT_SECONDS)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_tables(self) -> None:
         """Add agent_relationships table if not exists."""
-        conn = sqlite3.connect(self.elo_db_path)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS agent_relationships (
-                agent_a TEXT NOT NULL,
-                agent_b TEXT NOT NULL,
-                debate_count INTEGER DEFAULT 0,
-                agreement_count INTEGER DEFAULT 0,
-                critique_count_a_to_b INTEGER DEFAULT 0,
-                critique_count_b_to_a INTEGER DEFAULT 0,
-                critique_accepted_a_to_b INTEGER DEFAULT 0,
-                critique_accepted_b_to_a INTEGER DEFAULT 0,
-                position_changes_a_after_b INTEGER DEFAULT 0,
-                position_changes_b_after_a INTEGER DEFAULT 0,
-                a_wins_over_b INTEGER DEFAULT 0,
-                b_wins_over_a INTEGER DEFAULT 0,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (agent_a, agent_b),
-                CHECK (agent_a < agent_b)
+        with self._get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS agent_relationships (
+                    agent_a TEXT NOT NULL,
+                    agent_b TEXT NOT NULL,
+                    debate_count INTEGER DEFAULT 0,
+                    agreement_count INTEGER DEFAULT 0,
+                    critique_count_a_to_b INTEGER DEFAULT 0,
+                    critique_count_b_to_a INTEGER DEFAULT 0,
+                    critique_accepted_a_to_b INTEGER DEFAULT 0,
+                    critique_accepted_b_to_a INTEGER DEFAULT 0,
+                    position_changes_a_after_b INTEGER DEFAULT 0,
+                    position_changes_b_after_a INTEGER DEFAULT 0,
+                    a_wins_over_b INTEGER DEFAULT 0,
+                    b_wins_over_a INTEGER DEFAULT 0,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (agent_a, agent_b),
+                    CHECK (agent_a < agent_b)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_relationships_a ON agent_relationships(agent_a)"
             )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_relationships_a ON agent_relationships(agent_a)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_relationships_b ON agent_relationships(agent_b)"
-        )
-        conn.commit()
-        conn.close()
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_relationships_b ON agent_relationships(agent_b)"
+            )
+            conn.commit()
 
     def _canonical_pair(self, agent_a: str, agent_b: str) -> tuple[str, str]:
         """Return agents in canonical order (alphabetical)."""
@@ -561,105 +574,102 @@ class RelationshipTracker:
         position_changes: Optional[dict[str, list[str]]] = None,
     ) -> None:
         """Update all relationship metrics from a completed debate."""
-        conn = sqlite3.connect(self.elo_db_path)
+        with self._get_connection() as conn:
+            # Update relationships for each pair
+            for i, agent_a in enumerate(participants):
+                for agent_b in participants[i + 1 :]:
+                    canonical_a, canonical_b = self._canonical_pair(agent_a, agent_b)
+                    is_swapped = canonical_a != agent_a
 
-        # Update relationships for each pair
-        for i, agent_a in enumerate(participants):
-            for agent_b in participants[i + 1 :]:
-                canonical_a, canonical_b = self._canonical_pair(agent_a, agent_b)
-                is_swapped = canonical_a != agent_a
-
-                # Get or create relationship
-                cursor = conn.execute(
-                    "SELECT * FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
-                    (canonical_a, canonical_b),
-                )
-                row = cursor.fetchone()
-
-                if row is None:
-                    conn.execute(
-                        "INSERT INTO agent_relationships (agent_a, agent_b) VALUES (?, ?)",
+                    # Get or create relationship
+                    cursor = conn.execute(
+                        "SELECT * FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
                         (canonical_a, canonical_b),
                     )
+                    row = cursor.fetchone()
 
-                # Increment debate count
-                conn.execute(
-                    """
-                    UPDATE agent_relationships
-                    SET debate_count = debate_count + 1, updated_at = ?
-                    WHERE agent_a = ? AND agent_b = ?
-                    """,
-                    (datetime.now().isoformat(), canonical_a, canonical_b),
-                )
+                    if row is None:
+                        conn.execute(
+                            "INSERT INTO agent_relationships (agent_a, agent_b) VALUES (?, ?)",
+                            (canonical_a, canonical_b),
+                        )
 
-                # Check agreement (same vote)
-                if votes.get(agent_a) == votes.get(agent_b):
+                    # Increment debate count
                     conn.execute(
                         """
                         UPDATE agent_relationships
-                        SET agreement_count = agreement_count + 1
+                        SET debate_count = debate_count + 1, updated_at = ?
                         WHERE agent_a = ? AND agent_b = ?
                         """,
-                        (canonical_a, canonical_b),
+                        (datetime.now().isoformat(), canonical_a, canonical_b),
                     )
 
-                # Track winner
-                if winner == agent_a:
-                    col = "a_wins_over_b" if not is_swapped else "b_wins_over_a"
-                    conn.execute(
-                        f"""
-                        UPDATE agent_relationships
-                        SET {col} = {col} + 1
-                        WHERE agent_a = ? AND agent_b = ?
-                        """,
-                        (canonical_a, canonical_b),
-                    )
-                elif winner == agent_b:
-                    col = "b_wins_over_a" if not is_swapped else "a_wins_over_b"
-                    conn.execute(
-                        f"""
-                        UPDATE agent_relationships
-                        SET {col} = {col} + 1
-                        WHERE agent_a = ? AND agent_b = ?
-                        """,
-                        (canonical_a, canonical_b),
-                    )
+                    # Check agreement (same vote)
+                    if votes.get(agent_a) == votes.get(agent_b):
+                        conn.execute(
+                            """
+                            UPDATE agent_relationships
+                            SET agreement_count = agreement_count + 1
+                            WHERE agent_a = ? AND agent_b = ?
+                            """,
+                            (canonical_a, canonical_b),
+                        )
 
-        # Track critiques
-        for critique in critiques:
-            critic = critique.get("agent") or critique.get("critic")
-            target = critique.get("target") or critique.get("target_agent")
-            if not critic or not target or critic == target:
-                continue
+                    # Track winner
+                    if winner == agent_a:
+                        col = "a_wins_over_b" if not is_swapped else "b_wins_over_a"
+                        conn.execute(
+                            f"""
+                            UPDATE agent_relationships
+                            SET {col} = {col} + 1
+                            WHERE agent_a = ? AND agent_b = ?
+                            """,
+                            (canonical_a, canonical_b),
+                        )
+                    elif winner == agent_b:
+                        col = "b_wins_over_a" if not is_swapped else "a_wins_over_b"
+                        conn.execute(
+                            f"""
+                            UPDATE agent_relationships
+                            SET {col} = {col} + 1
+                            WHERE agent_a = ? AND agent_b = ?
+                            """,
+                            (canonical_a, canonical_b),
+                        )
 
-            canonical_a, canonical_b = self._canonical_pair(critic, target)
-            is_critic_a = canonical_a == critic
+            # Track critiques
+            for critique in critiques:
+                critic = critique.get("agent") or critique.get("critic")
+                target = critique.get("target") or critique.get("target_agent")
+                if not critic or not target or critic == target:
+                    continue
 
-            col = "critique_count_a_to_b" if is_critic_a else "critique_count_b_to_a"
-            conn.execute(
-                f"""
-                UPDATE agent_relationships
-                SET {col} = {col} + 1
-                WHERE agent_a = ? AND agent_b = ?
-                """,
-                (canonical_a, canonical_b),
-            )
+                canonical_a, canonical_b = self._canonical_pair(critic, target)
+                is_critic_a = canonical_a == critic
 
-        conn.commit()
-        conn.close()
+                col = "critique_count_a_to_b" if is_critic_a else "critique_count_b_to_a"
+                conn.execute(
+                    f"""
+                    UPDATE agent_relationships
+                    SET {col} = {col} + 1
+                    WHERE agent_a = ? AND agent_b = ?
+                    """,
+                    (canonical_a, canonical_b),
+                )
+
+            conn.commit()
 
     def get_relationship(self, agent_a: str, agent_b: str) -> AgentRelationship:
         """Get relationship between two agents."""
         canonical_a, canonical_b = self._canonical_pair(agent_a, agent_b)
 
-        conn = sqlite3.connect(self.elo_db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            "SELECT * FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
-            (canonical_a, canonical_b),
-        )
-        row = cursor.fetchone()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
+                (canonical_a, canonical_b),
+            )
+            row = cursor.fetchone()
 
         if row is None:
             return AgentRelationship(agent_a=canonical_a, agent_b=canonical_b)
@@ -682,18 +692,17 @@ class RelationshipTracker:
 
     def get_all_relationships(self, agent_name: str) -> list[AgentRelationship]:
         """Get all relationships for an agent."""
-        conn = sqlite3.connect(self.elo_db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            """
-            SELECT * FROM agent_relationships
-            WHERE agent_a = ? OR agent_b = ?
-            ORDER BY debate_count DESC
-            """,
-            (agent_name, agent_name),
-        )
-        rows = cursor.fetchall()
-        conn.close()
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT * FROM agent_relationships
+                WHERE agent_a = ? OR agent_b = ?
+                ORDER BY debate_count DESC
+                """,
+                (agent_name, agent_name),
+            )
+            rows = cursor.fetchall()
 
         return [
             AgentRelationship(
@@ -1067,11 +1076,13 @@ class MomentDetector:
         elo_system=None,
         position_ledger: Optional[PositionLedger] = None,
         relationship_tracker: Optional[RelationshipTracker] = None,
+        max_moments_per_agent: int = 100,
     ):
         self.elo_system = elo_system
         self.position_ledger = position_ledger
         self.relationship_tracker = relationship_tracker
         self._moment_cache: dict[str, list[SignificantMoment]] = {}
+        self._max_moments_per_agent = max_moments_per_agent
 
     def detect_upset_victory(
         self,
@@ -1290,18 +1301,28 @@ class MomentDetector:
 
         return moments[:limit]
 
+    def _trim_moments(self, agent_name: str) -> None:
+        """Trim moments list to max size, keeping most significant."""
+        moments = self._moment_cache.get(agent_name, [])
+        if len(moments) > self._max_moments_per_agent:
+            # Sort by significance (desc), then by recency (desc)
+            moments.sort(key=lambda m: (m.significance_score, m.created_at), reverse=True)
+            self._moment_cache[agent_name] = moments[:self._max_moments_per_agent]
+
     def record_moment(self, moment: SignificantMoment):
         """Record a detected moment."""
         if moment.agent_name not in self._moment_cache:
             self._moment_cache[moment.agent_name] = []
 
         self._moment_cache[moment.agent_name].append(moment)
+        self._trim_moments(moment.agent_name)
 
         # Also record for other involved agents
         for other in moment.other_agents:
             if other not in self._moment_cache:
                 self._moment_cache[other] = []
             self._moment_cache[other].append(moment)
+            self._trim_moments(other)
 
     def format_moment_narrative(self, moment: SignificantMoment) -> str:
         """Format a moment as a narrative string for prompts."""
