@@ -482,7 +482,7 @@ class SubsystemRegistry:
         Returns:
             Self for chaining
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Use a thread pool for I/O-bound initialization
         with ThreadPoolExecutor(max_workers=8) as executor:
