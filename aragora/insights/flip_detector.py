@@ -299,15 +299,27 @@ class FlipDetector:
             )
             flips.append(flip)
 
-            # Store detected flip
-            self._store_flip(flip)
+        # Batch store all detected flips in a single transaction
+        if flips:
+            self._store_flips_batch(flips)
 
         return flips
 
     def _store_flip(self, flip: FlipEvent) -> None:
         """Store a detected flip in the database."""
+        self._store_flips_batch([flip])
+
+    def _store_flips_batch(self, flips: list[FlipEvent]) -> None:
+        """Store multiple detected flips in a single transaction.
+
+        This is more efficient than calling _store_flip() in a loop,
+        as it uses a single connection and executemany() for batch inserts.
+        """
+        if not flips:
+            return
+
         with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
-            conn.execute(
+            conn.executemany(
                 """
                 INSERT OR REPLACE INTO detected_flips
                 (id, agent_name, original_claim, new_claim, original_confidence,
@@ -316,22 +328,25 @@ class FlipDetector:
                  flip_type, domain, detected_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    flip.id,
-                    flip.agent_name,
-                    flip.original_claim,
-                    flip.new_claim,
-                    flip.original_confidence,
-                    flip.new_confidence,
-                    flip.original_debate_id,
-                    flip.new_debate_id,
-                    flip.original_position_id,
-                    flip.new_position_id,
-                    flip.similarity_score,
-                    flip.flip_type,
-                    flip.domain,
-                    flip.detected_at,
-                ),
+                [
+                    (
+                        flip.id,
+                        flip.agent_name,
+                        flip.original_claim,
+                        flip.new_claim,
+                        flip.original_confidence,
+                        flip.new_confidence,
+                        flip.original_debate_id,
+                        flip.new_debate_id,
+                        flip.original_position_id,
+                        flip.new_position_id,
+                        flip.similarity_score,
+                        flip.flip_type,
+                        flip.domain,
+                        flip.detected_at,
+                    )
+                    for flip in flips
+                ],
             )
             conn.commit()
 

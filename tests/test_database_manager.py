@@ -539,8 +539,8 @@ class TestDatabaseManagerFreshConnection:
         """Clean up after each test."""
         DatabaseManager.clear_instances()
 
-    def test_fresh_connection_closes_after_use(self, tmp_path):
-        """fresh_connection closes connection after exiting context."""
+    def test_fresh_connection_returns_to_pool(self, tmp_path):
+        """fresh_connection returns connection to pool after exiting context."""
         db_path = tmp_path / "test.db"
         manager = DatabaseManager.get_instance(db_path)
 
@@ -549,10 +549,21 @@ class TestDatabaseManagerFreshConnection:
             conn.execute("SELECT 1")
             conn_ref = conn
 
-        # Connection should be closed after context exits
-        # Attempting to use it should raise an error
-        with pytest.raises(sqlite3.ProgrammingError):
-            conn_ref.execute("SELECT 1")
+        # Connection should be in the pool, not closed
+        # Pool should have 1 idle connection
+        stats = manager.pool_stats()
+        assert stats["pool_size"] == 1
+        assert stats["returns"] == 1
+
+        # Connection should still be usable if retrieved from pool
+        with manager.fresh_connection() as conn2:
+            conn2.execute("SELECT 1")
+            # Should reuse the pooled connection
+            assert conn2 is conn_ref
+
+        # Stats should show a pool hit
+        stats = manager.pool_stats()
+        assert stats["hits"] == 1
 
     def test_fresh_connection_commits_on_success(self, tmp_path):
         """fresh_connection commits on successful completion."""
@@ -620,3 +631,164 @@ class TestDatabaseManagerFreshConnection:
         with manager.fresh_connection() as conn:
             result = conn.execute("SELECT count FROM test WHERE id = 1").fetchone()
             assert result[0] > 0
+
+
+class TestDatabaseManagerConnectionPool:
+    """Tests for DatabaseManager connection pooling."""
+
+    def setup_method(self):
+        """Clear singleton instances before each test."""
+        DatabaseManager.clear_instances()
+
+    def teardown_method(self):
+        """Clean up after each test."""
+        DatabaseManager.clear_instances()
+
+    def test_pool_stats_initial(self, tmp_path):
+        """pool_stats returns initial zero counts."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager.get_instance(db_path)
+
+        stats = manager.pool_stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+        assert stats["returns"] == 0
+        assert stats["pool_size"] == 0
+        assert stats["max_pool_size"] == 5  # Default
+
+    def test_pool_reuses_connections(self, tmp_path):
+        """Pool reuses connections instead of creating new ones."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager.get_instance(db_path)
+
+        # First fresh_connection creates new connection (miss)
+        with manager.fresh_connection() as conn1:
+            conn1.execute("SELECT 1")
+            first_conn = conn1
+
+        stats = manager.pool_stats()
+        assert stats["misses"] == 1
+        assert stats["returns"] == 1
+        assert stats["created"] == 1
+
+        # Second fresh_connection reuses pooled connection (hit)
+        with manager.fresh_connection() as conn2:
+            conn2.execute("SELECT 1")
+            assert conn2 is first_conn  # Same connection object
+
+        stats = manager.pool_stats()
+        assert stats["hits"] == 1
+        assert stats["returns"] == 2
+
+    def test_pool_respects_max_size(self, tmp_path):
+        """Pool closes connections when at max capacity."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager(db_path, pool_size=2)
+
+        # Create 3 connections by getting them, then returning one by one
+        conn1 = manager._get_pooled_connection()
+        conn2 = manager._get_pooled_connection()
+        conn3 = manager._get_pooled_connection()
+
+        # Return all 3 to pool
+        manager._return_to_pool(conn1)
+        manager._return_to_pool(conn2)
+        manager._return_to_pool(conn3)
+
+        # Only 2 should be in pool (max_pool_size=2)
+        stats = manager.pool_stats()
+        assert stats["pool_size"] == 2
+        assert stats["closed"] == 1  # One was closed due to full pool
+
+    def test_pool_validates_connections(self, tmp_path):
+        """Pool validates connections before returning them."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager.get_instance(db_path)
+
+        # Create a connection and return to pool
+        with manager.fresh_connection() as conn:
+            conn.execute("SELECT 1")
+            pooled_conn = conn
+
+        # Corrupt the pooled connection (close it directly)
+        pooled_conn.close()
+
+        # Next fresh_connection should detect broken connection and create new
+        with manager.fresh_connection() as conn2:
+            conn2.execute("SELECT 1")
+            # Should be a different connection since the pooled one was broken
+            assert conn2 is not pooled_conn
+
+        stats = manager.pool_stats()
+        assert stats["closed"] >= 1  # Broken connection was discarded
+
+    def test_close_clears_pool(self, tmp_path):
+        """close() clears all pooled connections."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager(db_path)
+
+        # Create some pooled connections
+        for _ in range(3):
+            with manager.fresh_connection() as conn:
+                conn.execute("SELECT 1")
+
+        stats = manager.pool_stats()
+        assert stats["pool_size"] >= 1
+
+        # Close manager
+        manager.close()
+
+        # Pool should be empty
+        stats = manager.pool_stats()
+        assert stats["pool_size"] == 0
+
+    def test_custom_pool_size(self, tmp_path):
+        """Custom pool_size is respected."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager(db_path, pool_size=10)
+
+        stats = manager.pool_stats()
+        assert stats["max_pool_size"] == 10
+
+    def test_pool_thread_safety(self, tmp_path):
+        """Pool is thread-safe under concurrent access."""
+        db_path = tmp_path / "test.db"
+        manager = DatabaseManager(db_path, pool_size=3)
+
+        lock_errors = []
+        other_errors = []
+        iterations = 20
+        success_count = [0]  # Use list to allow mutation in nested function
+
+        def worker():
+            for _ in range(iterations):
+                try:
+                    with manager.fresh_connection() as conn:
+                        # Read-only operations to avoid DB lock contention
+                        conn.execute("SELECT 1")
+                        success_count[0] += 1
+                except sqlite3.OperationalError as e:
+                    if "locked" in str(e):
+                        lock_errors.append(e)
+                    else:
+                        other_errors.append(e)
+                except Exception as e:
+                    other_errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # No unexpected errors (locks are acceptable in highly concurrent scenarios)
+        assert len(other_errors) == 0
+
+        # Most operations should succeed
+        total_attempts = 3 * iterations
+        assert success_count[0] >= total_attempts * 0.8  # At least 80% success
+
+        stats = manager.pool_stats()
+        # Should have some pool activity
+        assert stats["hits"] + stats["misses"] > 0
+        assert stats["returns"] > 0

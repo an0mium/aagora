@@ -563,8 +563,8 @@ class EloSystem:
         else:
             winner = sorted_agents[0][0] if sorted_agents[0][1] > sorted_agents[1][1] else None
 
-        # Get current ratings
-        ratings = {name: self.get_rating(name) for name in participants}
+        # Get current ratings (batch query to avoid N+1)
+        ratings = self.get_ratings_batch(participants)
         elo_changes = {}
 
         # Calculate pairwise ELO updates
@@ -1030,7 +1030,7 @@ class EloSystem:
 
         # Batch load all predictor ratings upfront (avoids N+1 query)
         predictor_names = [p[0] for p in predictions]
-        ratings = {name: self.get_rating(name) for name in predictor_names}
+        ratings = self.get_ratings_batch(predictor_names)
 
         now = datetime.now().isoformat()
         for predictor, predicted, confidence in predictions:

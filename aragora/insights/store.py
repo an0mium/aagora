@@ -163,37 +163,41 @@ class InsightStore:
                 )
             )
 
-            # Store each insight
+            # Store all insights in batch
+            all_insights = list(insights.all_insights())
             stored_count = 0
-            for insight in insights.all_insights():
+            if all_insights:
                 try:
-                    cursor.execute(
+                    cursor.executemany(
                         """
                         INSERT OR REPLACE INTO insights
                         (id, type, title, description, confidence, debate_id,
                          agents_involved, evidence, created_at, metadata)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (
-                            insight.id,
-                            insight.type.value,
-                            insight.title,
-                            insight.description,
-                            insight.confidence,
-                            insight.debate_id,
-                            json.dumps(insight.agents_involved),
-                            json.dumps(insight.evidence),
-                            insight.created_at,
-                            json.dumps(insight.metadata),
-                        )
+                        [
+                            (
+                                insight.id,
+                                insight.type.value,
+                                insight.title,
+                                insight.description,
+                                insight.confidence,
+                                insight.debate_id,
+                                json.dumps(insight.agents_involved),
+                                json.dumps(insight.evidence),
+                                insight.created_at,
+                                json.dumps(insight.metadata),
+                            )
+                            for insight in all_insights
+                        ]
                     )
-                    stored_count += 1
+                    stored_count = len(all_insights)
                 except Exception as e:
-                    logger.error(f"Error storing insight {insight.id}: {e}")
+                    logger.error(f"Error batch storing insights: {e}")
 
-            # Store agent performances
-            for perf in insights.agent_performances:
-                cursor.execute(
+            # Store agent performances in batch
+            if insights.agent_performances:
+                cursor.executemany(
                     """
                     INSERT INTO agent_performance_history
                     (agent_name, debate_id, proposals_made, critiques_given,
@@ -201,25 +205,25 @@ class InsightStore:
                      avg_critique_severity, contribution_score)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        perf.agent_name,
-                        insights.debate_id,
-                        perf.proposals_made,
-                        perf.critiques_given,
-                        perf.critiques_received,
-                        1 if perf.proposal_accepted else 0,
-                        1 if perf.vote_aligned_with_consensus else 0,
-                        perf.average_critique_severity,
-                        perf.contribution_score,
-                    )
+                    [
+                        (
+                            perf.agent_name,
+                            insights.debate_id,
+                            perf.proposals_made,
+                            perf.critiques_given,
+                            perf.critiques_received,
+                            1 if perf.proposal_accepted else 0,
+                            1 if perf.vote_aligned_with_consensus else 0,
+                            perf.average_critique_severity,
+                            perf.contribution_score,
+                        )
+                        for perf in insights.agent_performances
+                    ]
                 )
 
-            # Update pattern clusters
-            for insight in insights.pattern_insights:
-                category = insight.metadata.get('category', 'general')
-                pattern_text = insight.title
-
-                cursor.execute(
+            # Update pattern clusters in batch
+            if insights.pattern_insights:
+                cursor.executemany(
                     """
                     INSERT INTO pattern_clusters (category, pattern_text, occurrence_count,
                         avg_severity, debate_ids, first_seen, last_seen)
@@ -230,17 +234,20 @@ class InsightStore:
                         debate_ids = json_insert(debate_ids, '$[#]', ?),
                         last_seen = ?
                     """,
-                    (
-                        category,
-                        pattern_text,
-                        insight.metadata.get('avg_severity', 0.5),
-                        json.dumps([insights.debate_id]),
-                        insight.created_at,
-                        insight.created_at,
-                        insight.metadata.get('avg_severity', 0.5),
-                        insights.debate_id,
-                        insight.created_at,
-                    )
+                    [
+                        (
+                            insight.metadata.get('category', 'general'),
+                            insight.title,
+                            insight.metadata.get('avg_severity', 0.5),
+                            json.dumps([insights.debate_id]),
+                            insight.created_at,
+                            insight.created_at,
+                            insight.metadata.get('avg_severity', 0.5),
+                            insights.debate_id,
+                            insight.created_at,
+                        )
+                        for insight in insights.pattern_insights
+                    ]
                 )
 
             conn.commit()

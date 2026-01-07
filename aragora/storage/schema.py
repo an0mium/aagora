@@ -414,7 +414,15 @@ class DatabaseManager:
     _instances: dict[str, "DatabaseManager"] = {}
     _instances_lock = threading.Lock()
 
-    def __init__(self, db_path: Union[str, Path], timeout: float = DB_TIMEOUT):
+    # Default pool size for connection pooling
+    DEFAULT_POOL_SIZE = 5
+
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        timeout: float = DB_TIMEOUT,
+        pool_size: int = DEFAULT_POOL_SIZE,
+    ):
         """Initialize the DatabaseManager.
 
         Note: Use get_instance() instead of direct instantiation to ensure
@@ -423,12 +431,92 @@ class DatabaseManager:
         Args:
             db_path: Path to the SQLite database file
             timeout: Connection timeout in seconds
+            pool_size: Maximum number of pooled connections (default 5)
         """
         self.db_path = str(Path(db_path).resolve())
         self.timeout = timeout
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.Lock()
         self._thread_local = threading.local()
+
+        # Connection pool for fresh_connection()
+        self._pool: list[sqlite3.Connection] = []
+        self._pool_size = pool_size
+        self._pool_lock = threading.Lock()
+        self._pool_stats = {"hits": 0, "misses": 0, "returns": 0, "created": 0, "closed": 0}
+
+    def _get_pooled_connection(self) -> sqlite3.Connection:
+        """Get a connection from the pool or create a new one.
+
+        Thread-safe. If the pool has idle connections, returns one.
+        Otherwise creates a new WAL-mode connection.
+
+        Returns:
+            sqlite3.Connection configured for WAL mode
+        """
+        with self._pool_lock:
+            while self._pool:
+                conn = self._pool.pop()
+                # Validate connection is still usable
+                try:
+                    conn.execute("SELECT 1")
+                    self._pool_stats["hits"] += 1
+                    return conn
+                except sqlite3.Error:
+                    # Connection is broken, discard and try next
+                    self._pool_stats["closed"] += 1
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+            # No valid pooled connections, create new one
+            self._pool_stats["misses"] += 1
+            self._pool_stats["created"] += 1
+
+        # Create outside lock to avoid holding it during I/O
+        return get_wal_connection(self.db_path, self.timeout, check_same_thread=False)
+
+    def _return_to_pool(self, conn: sqlite3.Connection) -> None:
+        """Return a connection to the pool if space available.
+
+        Thread-safe. If the pool is full, the connection is closed instead.
+
+        Args:
+            conn: Connection to return to the pool
+        """
+        with self._pool_lock:
+            if len(self._pool) < self._pool_size:
+                self._pool.append(conn)
+                self._pool_stats["returns"] += 1
+                return
+
+        # Pool is full, close the connection
+        self._pool_stats["closed"] += 1
+        try:
+            conn.close()
+        except Exception as e:
+            logger.debug(f"Error closing connection: {e}")
+
+    def pool_stats(self) -> dict[str, int]:
+        """Get connection pool statistics.
+
+        Returns:
+            Dict with pool stats:
+            - hits: Connections retrieved from pool
+            - misses: Times pool was empty (new connection created)
+            - returns: Connections returned to pool
+            - created: Total connections created
+            - closed: Connections closed (broken or pool full)
+            - pool_size: Current number of idle connections
+            - max_pool_size: Maximum pool capacity
+        """
+        with self._pool_lock:
+            return {
+                **self._pool_stats.copy(),
+                "pool_size": len(self._pool),
+                "max_pool_size": self._pool_size,
+            }
 
     @classmethod
     def get_instance(cls, db_path: Union[str, Path], timeout: float = DB_TIMEOUT) -> "DatabaseManager":
@@ -532,16 +620,16 @@ class DatabaseManager:
     def fresh_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Context manager for a fresh per-operation connection.
 
-        Creates a new connection that is closed after use. This is thread-safe
-        and suitable for multi-threaded access patterns where connections
-        cannot be shared across threads.
+        Uses connection pooling to avoid repeated open/close overhead.
+        Thread-safe and suitable for multi-threaded access patterns.
 
+        Connections are automatically returned to the pool after use.
         For single-threaded use with connection reuse, use connection() instead.
 
         Yields:
-            sqlite3.Connection for database operations (closed on exit)
+            sqlite3.Connection for database operations (returned to pool on exit)
         """
-        conn = get_wal_connection(self.db_path, self.timeout)
+        conn = self._get_pooled_connection()
         try:
             yield conn
             conn.commit()
@@ -554,7 +642,7 @@ class DatabaseManager:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            self._return_to_pool(conn)
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a SQL statement.
@@ -633,7 +721,7 @@ class DatabaseManager:
             return cursor.fetchmany(size)
 
     def close(self) -> None:
-        """Close the database connection.
+        """Close all database connections including pooled ones.
 
         This is called automatically when the manager is garbage collected,
         but can be called manually if needed.
@@ -647,6 +735,18 @@ class DatabaseManager:
                     logger.warning(f"Error closing connection to {self.db_path}: {e}")
                 finally:
                     self._conn = None
+
+        # Close all pooled connections
+        with self._pool_lock:
+            pool_size = len(self._pool)
+            for conn in self._pool:
+                try:
+                    conn.close()
+                except Exception as e:
+                    logger.debug(f"Error closing pooled connection: {e}")
+            self._pool.clear()
+            if pool_size > 0:
+                logger.debug(f"Closed {pool_size} pooled connections to {self.db_path}")
 
     def __del__(self):
         """Ensure connection is closed on garbage collection."""
