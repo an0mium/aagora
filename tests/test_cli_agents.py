@@ -913,25 +913,25 @@ class TestCreateAgentFactory:
         """Should create GeminiCLIAgent."""
         agent = create_agent("gemini-cli")
         assert isinstance(agent, GeminiCLIAgent)
-        assert agent.name == "gemini"
+        assert agent.name == "gemini-cli"
 
     def test_creates_grok_cli_agent(self):
         """Should create GrokCLIAgent."""
         agent = create_agent("grok-cli")
         assert isinstance(agent, GrokCLIAgent)
-        assert agent.name == "grok"
+        assert agent.name == "grok-cli"
 
     def test_creates_qwen_cli_agent(self):
         """Should create QwenCLIAgent."""
         agent = create_agent("qwen-cli")
         assert isinstance(agent, QwenCLIAgent)
-        assert agent.name == "qwen"
+        assert agent.name == "qwen-cli"
 
     def test_creates_deepseek_cli_agent(self):
         """Should create DeepseekCLIAgent."""
         agent = create_agent("deepseek-cli")
         assert isinstance(agent, DeepseekCLIAgent)
-        assert agent.name == "deepseek"
+        assert agent.name == "deepseek-cli"
 
     def test_creates_kilocode_agent(self):
         """Should create KiloCodeAgent."""
@@ -956,7 +956,7 @@ class TestCreateAgentFactory:
 
     def test_unknown_type_raises_value_error(self):
         """Unknown agent type should raise ValueError."""
-        with pytest.raises(ValueError, match="Unknown model type"):
+        with pytest.raises(ValueError, match="Unknown agent type"):
             create_agent("nonexistent-agent")
 
 

@@ -241,7 +241,7 @@ class TestAnthropicFallback:
         """Test that Anthropic 429 error triggers OpenRouter fallback."""
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_openrouter_key"}):
             # Mock the fallback agent's generate
-            with patch.object(anthropic_agent, "_get_fallback_agent") as mock_get_fallback:
+            with patch.object(anthropic_agent, "_get_cached_fallback_agent") as mock_get_fallback:
                 mock_fallback = MagicMock()
                 mock_fallback.generate = AsyncMock(return_value="Fallback response")
                 mock_get_fallback.return_value = mock_fallback
@@ -279,7 +279,7 @@ class TestAnthropicFallback:
         anthropic_agent.set_system_prompt("You are a helpful assistant.")
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
-            fallback = anthropic_agent._get_fallback_agent()
+            fallback = anthropic_agent._get_cached_fallback_agent()
 
         assert fallback.system_prompt == "You are a helpful assistant."
 
@@ -317,15 +317,15 @@ class TestAnthropicFallback:
     def test_billing_quota_keywords_trigger_fallback(self, anthropic_agent):
         """Test that billing/quota error keywords trigger fallback."""
         # Test various quota-related error messages
-        assert anthropic_agent._is_anthropic_quota_error(429, "") is True
-        assert anthropic_agent._is_anthropic_quota_error(400, "credit balance is too low") is True
-        assert anthropic_agent._is_anthropic_quota_error(403, "insufficient quota") is True
-        assert anthropic_agent._is_anthropic_quota_error(400, "billing issue") is True
-        assert anthropic_agent._is_anthropic_quota_error(400, "rate_limit exceeded") is True
+        assert anthropic_agent.is_quota_error(429, "") is True
+        assert anthropic_agent.is_quota_error(400, "credit balance is too low") is True
+        assert anthropic_agent.is_quota_error(403, "insufficient quota") is True
+        assert anthropic_agent.is_quota_error(400, "billing issue") is True
+        assert anthropic_agent.is_quota_error(400, "rate_limit exceeded") is True
 
         # Regular errors should not trigger fallback
-        assert anthropic_agent._is_anthropic_quota_error(400, "invalid request") is False
-        assert anthropic_agent._is_anthropic_quota_error(500, "internal server error") is False
+        assert anthropic_agent.is_quota_error(400, "invalid request") is False
+        assert anthropic_agent.is_quota_error(500, "internal server error") is False
 
     @pytest.mark.asyncio
     async def test_enable_fallback_false_prevents_fallback(self):
@@ -358,13 +358,13 @@ class TestAnthropicFallback:
         assert anthropic_agent._fallback_agent is None
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
-            fallback = anthropic_agent._get_fallback_agent()
+            fallback = anthropic_agent._get_cached_fallback_agent()
 
         assert fallback is not None
         assert anthropic_agent._fallback_agent is fallback
 
         # Second call should return same instance
-        fallback2 = anthropic_agent._get_fallback_agent()
+        fallback2 = anthropic_agent._get_cached_fallback_agent()
         assert fallback is fallback2
 
 
@@ -375,7 +375,7 @@ class TestOpenAIFallback:
     async def test_openai_429_triggers_fallback(self, openai_agent):
         """Test that OpenAI 429 error triggers OpenRouter fallback."""
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_openrouter_key"}):
-            with patch.object(openai_agent, "_get_fallback_agent") as mock_get_fallback:
+            with patch.object(openai_agent, "_get_cached_fallback_agent") as mock_get_fallback:
                 mock_fallback = MagicMock()
                 mock_fallback.generate = AsyncMock(return_value="Fallback response")
                 mock_get_fallback.return_value = mock_fallback
@@ -405,10 +405,10 @@ class TestOpenAIFallback:
 
     def test_openai_quota_keyword_detection(self, openai_agent):
         """Test OpenAI quota error detection."""
-        assert openai_agent._is_quota_error(429, "") is True
-        assert openai_agent._is_quota_error(400, "insufficient_quota") is True
-        assert openai_agent._is_quota_error(403, "quota exceeded") is True
-        assert openai_agent._is_quota_error(400, "invalid request") is False
+        assert openai_agent.is_quota_error(429, "") is True
+        assert openai_agent.is_quota_error(400, "insufficient_quota") is True
+        assert openai_agent.is_quota_error(403, "quota exceeded") is True
+        assert openai_agent.is_quota_error(400, "invalid request") is False
 
 
 class TestGeminiFallback:
@@ -418,7 +418,7 @@ class TestGeminiFallback:
     async def test_gemini_429_triggers_fallback(self, gemini_agent):
         """Test that Gemini 429 error triggers OpenRouter fallback."""
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_openrouter_key"}):
-            with patch.object(gemini_agent, "_get_fallback_agent") as mock_get_fallback:
+            with patch.object(gemini_agent, "_get_cached_fallback_agent") as mock_get_fallback:
                 mock_fallback = MagicMock()
                 mock_fallback.generate = AsyncMock(return_value="Fallback response")
                 mock_get_fallback.return_value = mock_fallback
@@ -444,7 +444,7 @@ class TestGeminiFallback:
     async def test_gemini_403_quota_triggers_fallback(self, gemini_agent):
         """Test that Gemini 403 quota error triggers OpenRouter fallback."""
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_openrouter_key"}):
-            with patch.object(gemini_agent, "_get_fallback_agent") as mock_get_fallback:
+            with patch.object(gemini_agent, "_get_cached_fallback_agent") as mock_get_fallback:
                 mock_fallback = MagicMock()
                 mock_fallback.generate = AsyncMock(return_value="Fallback response")
                 mock_get_fallback.return_value = mock_fallback
@@ -477,18 +477,20 @@ class TestGeminiFallback:
     def test_gemini_quota_keyword_detection(self, gemini_agent):
         """Test Gemini quota error detection."""
         # Rate limit status codes
-        assert gemini_agent._is_gemini_quota_error(429, "") is True
-        assert gemini_agent._is_gemini_quota_error(403, "") is True
+        assert gemini_agent.is_quota_error(429, "") is True
+        # 403 requires quota keywords in error text (unified behavior)
+        assert gemini_agent.is_quota_error(403, "quota exceeded") is True
+        assert gemini_agent.is_quota_error(403, "") is False  # No keyword, not detected
 
         # Quota keywords in error message
-        assert gemini_agent._is_gemini_quota_error(400, "resource exhausted") is True
-        assert gemini_agent._is_gemini_quota_error(400, "quota exceeded") is True
-        assert gemini_agent._is_gemini_quota_error(400, "rate limit reached") is True
-        assert gemini_agent._is_gemini_quota_error(400, "too many requests") is True
+        assert gemini_agent.is_quota_error(400, "resource exhausted") is True
+        assert gemini_agent.is_quota_error(400, "quota exceeded") is True
+        assert gemini_agent.is_quota_error(400, "rate limit reached") is True
+        assert gemini_agent.is_quota_error(400, "too many requests") is True
 
         # Regular errors should not trigger fallback
-        assert gemini_agent._is_gemini_quota_error(400, "invalid request") is False
-        assert gemini_agent._is_gemini_quota_error(500, "internal server error") is False
+        assert gemini_agent.is_quota_error(400, "invalid request") is False
+        assert gemini_agent.is_quota_error(500, "internal server error") is False
 
     @pytest.mark.asyncio
     async def test_gemini_enable_fallback_false_prevents_fallback(self):
@@ -521,13 +523,13 @@ class TestGeminiFallback:
         assert gemini_agent._fallback_agent is None
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
-            fallback = gemini_agent._get_fallback_agent()
+            fallback = gemini_agent._get_cached_fallback_agent()
 
         assert fallback is not None
         assert gemini_agent._fallback_agent is fallback
 
         # Second call should return same instance
-        fallback2 = gemini_agent._get_fallback_agent()
+        fallback2 = gemini_agent._get_cached_fallback_agent()
         assert fallback is fallback2
 
     def test_gemini_fallback_preserves_system_prompt(self, gemini_agent):
@@ -535,7 +537,7 @@ class TestGeminiFallback:
         gemini_agent.set_system_prompt("You are a helpful assistant.")
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key"}):
-            fallback = gemini_agent._get_fallback_agent()
+            fallback = gemini_agent._get_cached_fallback_agent()
 
         assert fallback.system_prompt == "You are a helpful assistant."
 
@@ -773,7 +775,7 @@ class TestConcurrency:
             anthropic_agent._fallback_agent = None
 
             async def get_fallback():
-                return anthropic_agent._get_fallback_agent()
+                return anthropic_agent._get_cached_fallback_agent()
 
             # Concurrent calls should return the same instance
             tasks = [get_fallback() for _ in range(5)]
@@ -862,7 +864,7 @@ class TestUnknownModelMapping:
             agent = AnthropicAPIAgent(model="claude-unknown-future-model")
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
-            fallback = agent._get_fallback_agent()
+            fallback = agent._get_cached_fallback_agent()
 
         # Should default to claude-sonnet-4
         assert "claude-sonnet" in fallback.model or "anthropic" in fallback.model
@@ -873,7 +875,7 @@ class TestUnknownModelMapping:
             agent = OpenAIAPIAgent(model="gpt-future-model")
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test"}):
-            fallback = agent._get_fallback_agent()
+            fallback = agent._get_cached_fallback_agent()
 
         # Should default to gpt-4o
         assert "gpt-4o" in fallback.model or "openai" in fallback.model
@@ -895,7 +897,7 @@ class TestStreamingFallback:
                 yield "Fallback "
                 yield "streaming"
 
-            with patch.object(anthropic_agent, "_get_fallback_agent") as mock_get_fallback:
+            with patch.object(anthropic_agent, "_get_cached_fallback_agent") as mock_get_fallback:
                 mock_fallback = MagicMock()
                 mock_fallback.generate_stream = mock_stream
                 mock_get_fallback.return_value = mock_fallback
@@ -927,7 +929,7 @@ class TestStreamingFallback:
                 yield "OpenAI "
                 yield "fallback"
 
-            with patch.object(openai_agent, "_get_fallback_agent") as mock_get_fallback:
+            with patch.object(openai_agent, "_get_cached_fallback_agent") as mock_get_fallback:
                 mock_fallback = MagicMock()
                 mock_fallback.generate_stream = mock_stream
                 mock_get_fallback.return_value = mock_fallback

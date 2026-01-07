@@ -375,8 +375,8 @@ class TestOpenRouterFallbackChain:
 
         with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test_key", "GEMINI_API_KEY": "test"}):
             agent = GeminiAgent(name="test", model="gemini-3-pro")
-            # Fallback agent should be creatable
-            fallback = agent._get_fallback_agent()
+            # Fallback agent should be creatable (API agents use mixin method)
+            fallback = agent._get_cached_fallback_agent()
             assert fallback is not None
             assert fallback.name == "test_fallback"
 
@@ -399,10 +399,10 @@ class TestOpenRouterFallbackChain:
             agent = GeminiAgent(name="test", model="gemini-3-pro")
 
             # Test various quota error scenarios
-            assert agent._is_gemini_quota_error(429, "rate limit exceeded")
-            assert agent._is_gemini_quota_error(429, "quota exceeded")
-            assert agent._is_gemini_quota_error(503, "resource exhausted")
-            assert not agent._is_gemini_quota_error(400, "bad request")
+            assert agent.is_quota_error(429, "rate limit exceeded")
+            assert agent.is_quota_error(429, "quota exceeded")
+            assert agent.is_quota_error(503, "resource exhausted")
+            assert not agent.is_quota_error(400, "bad request")
 
 
 class TestRateLimiterEdgeCases:

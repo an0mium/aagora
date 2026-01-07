@@ -186,6 +186,16 @@ class TestTierPromotion:
         """Test promoting from slow to medium tier."""
         cms.add(id="promo_test", content="Promotable pattern", tier=MemoryTier.SLOW)
 
+        # TierManager requires surprise_score > 0.6 for SLOW tier promotion
+        # Directly set high surprise score for testing (real scenario builds up via update_outcome)
+        from aragora.storage.schema import get_wal_connection
+        with get_wal_connection(cms.db_path) as conn:
+            conn.execute(
+                "UPDATE continuum_memory SET surprise_score = 0.7 WHERE id = ?",
+                ("promo_test",),
+            )
+            conn.commit()
+
         new_tier = cms.promote("promo_test")
         assert new_tier == MemoryTier.MEDIUM
 
@@ -195,6 +205,16 @@ class TestTierPromotion:
     def test_promote_medium_to_fast(self, cms):
         """Test promoting from medium to fast tier."""
         cms.add(id="promo_fast", content="Pattern", tier=MemoryTier.MEDIUM)
+
+        # TierManager requires surprise_score > 0.7 for MEDIUM tier promotion
+        # Directly set high surprise score for testing
+        from aragora.storage.schema import get_wal_connection
+        with get_wal_connection(cms.db_path) as conn:
+            conn.execute(
+                "UPDATE continuum_memory SET surprise_score = 0.8 WHERE id = ?",
+                ("promo_fast",),
+            )
+            conn.commit()
 
         new_tier = cms.promote("promo_fast")
         assert new_tier == MemoryTier.FAST

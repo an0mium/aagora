@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 from aragora.config import DB_MEMORY_PATH
 from aragora.storage.schema import SchemaManager, get_wal_connection
 from aragora.utils.json_helpers import safe_json_loads
+from aragora.memory.tier_manager import (
+    TierManager,
+    TierConfig,
+    MemoryTier as TierManagerMemoryTier,
+    DEFAULT_TIER_CONFIGS,
+    get_tier_manager,
+)
 
 # Schema version for ContinuumMemory
 CONTINUUM_SCHEMA_VERSION = 2
@@ -165,9 +172,17 @@ class ContinuumMemory:
         cms.consolidate()
     """
 
-    def __init__(self, db_path: str = DB_MEMORY_PATH):
+    def __init__(
+        self,
+        db_path: str = DB_MEMORY_PATH,
+        tier_manager: Optional[TierManager] = None,
+    ):
         self.db_path = Path(db_path)
         self._init_db()
+
+        # Use provided TierManager or get the shared instance
+        self._tier_manager = tier_manager or get_tier_manager()
+
         # Hyperparameters (can be modified by MetaLearner)
         self.hyperparams = {
             "surprise_weight_success": 0.3,  # Weight for success rate surprise
@@ -185,6 +200,18 @@ class ContinuumMemory:
             },
             "retention_multiplier": DEFAULT_RETENTION_MULTIPLIER,  # multiplier * half_life for cleanup
         }
+
+        # Sync tier manager settings with hyperparams
+        self._tier_manager.promotion_cooldown_hours = self.hyperparams["promotion_cooldown_hours"]
+
+    @property
+    def tier_manager(self) -> TierManager:
+        """Get the tier manager instance."""
+        return self._tier_manager
+
+    def get_tier_metrics(self) -> Dict[str, Any]:
+        """Get tier transition metrics from the tier manager."""
+        return self._tier_manager.get_metrics_dict()
 
     def _init_db(self):
         """Initialize the continuum memory tables using SchemaManager."""
@@ -403,11 +430,26 @@ class ContinuumMemory:
         tier_values = [t.value for t in tiers]
         placeholders = ",".join("?" * len(tier_values))
 
+        # Build keyword filter clause for SQL (more efficient than Python filtering)
+        keyword_clause = ""
+        keyword_params: list = []
+        if query:
+            # Split query into words and require at least one match
+            keywords = [kw.strip().lower() for kw in query.split() if kw.strip()]
+            if keywords:
+                # Use INSTR for case-insensitive containment check (faster than LIKE)
+                keyword_conditions = [
+                    "INSTR(LOWER(content), ?) > 0" for _ in keywords
+                ]
+                keyword_clause = f" AND ({' OR '.join(keyword_conditions)})"
+                keyword_params = keywords
+
         with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
             # Retrieval query with time-decay scoring
             # Score = importance * (1 + surprise) * decay_factor
+            # Keyword filtering now done in SQL for efficiency
             cursor.execute(
                 f"""
                 SELECT id, tier, content, importance, surprise_score, consolidation_score,
@@ -423,10 +465,11 @@ class ContinuumMemory:
                 FROM continuum_memory
                 WHERE tier IN ({placeholders})
                   AND importance >= ?
+                  {keyword_clause}
                 ORDER BY score DESC
                 LIMIT ?
                 """,
-                (*tier_values, min_importance, limit * 2),  # Fetch extra for filtering
+                (*tier_values, min_importance, *keyword_params, limit),
             )
 
             rows = cursor.fetchall()
@@ -447,17 +490,7 @@ class ContinuumMemory:
                 updated_at=row[10],
                 metadata=safe_json_loads(row[11], {}),
             )
-
-            # Simple keyword relevance filter if query provided
-            if query:
-                query_lower = query.lower()
-                content_lower = entry.content.lower()
-                if not any(word in content_lower for word in query_lower.split()):
-                    continue
-
             entries.append(entry)
-            if len(entries) >= limit:
-                break
 
         return entries
 
@@ -592,6 +625,8 @@ class ContinuumMemory:
         """
         Promote a memory to a faster tier.
 
+        Uses TierManager for decision logic and records metrics.
+
         Returns the new tier if promoted, None otherwise.
         """
         with get_wal_connection(self.db_path) as conn:
@@ -609,20 +644,17 @@ class ContinuumMemory:
             surprise_score = row[1]
             last_promotion = row[2]
 
-            # Check cooldown
-            if last_promotion:
-                last_dt = datetime.fromisoformat(last_promotion)
-                hours_since = (datetime.now() - last_dt).total_seconds() / 3600
-                if hours_since < self.hyperparams["promotion_cooldown_hours"]:
-                    return None
+            # Use TierManager for decision (converts local MemoryTier to tier_manager's)
+            tm_current = TierManagerMemoryTier(current_tier.value)
+            if not self._tier_manager.should_promote(tm_current, surprise_score, last_promotion):
+                return None
 
-            # Determine new tier
-            tier_order = [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM, MemoryTier.FAST]
-            current_idx = tier_order.index(current_tier)
-            if current_idx >= len(tier_order) - 1:
-                return None  # Already at fastest
+            # Get next tier using TierManager
+            tm_new = self._tier_manager.get_next_tier(tm_current, "faster")
+            if tm_new is None:
+                return None
 
-            new_tier = tier_order[current_idx + 1]
+            new_tier = MemoryTier(tm_new.value)
             now = datetime.now().isoformat()
 
             # Update tier
@@ -635,7 +667,7 @@ class ContinuumMemory:
                 (new_tier.value, now, now, id),
             )
 
-            # Record transition
+            # Record transition in database
             cursor.execute(
                 """
                 INSERT INTO tier_transitions (memory_id, from_tier, to_tier, reason, surprise_score)
@@ -646,11 +678,16 @@ class ContinuumMemory:
 
             conn.commit()
 
+        # Record metrics in TierManager
+        self._tier_manager.record_promotion(tm_current, tm_new)
+
         return new_tier
 
     def demote(self, id: str) -> Optional[MemoryTier]:
         """
         Demote a memory to a slower tier.
+
+        Uses TierManager for decision logic and records metrics.
 
         Returns the new tier if demoted, None otherwise.
         """
@@ -669,16 +706,17 @@ class ContinuumMemory:
             surprise_score = row[1]
             update_count = row[2]
 
-            # Need enough updates to be confident about stability
-            if update_count < 10:
+            # Use TierManager for decision
+            tm_current = TierManagerMemoryTier(current_tier.value)
+            if not self._tier_manager.should_demote(tm_current, surprise_score, update_count):
                 return None
 
-            tier_order = [MemoryTier.GLACIAL, MemoryTier.SLOW, MemoryTier.MEDIUM, MemoryTier.FAST]
-            current_idx = tier_order.index(current_tier)
-            if current_idx <= 0:
-                return None  # Already at slowest
+            # Get next tier using TierManager
+            tm_new = self._tier_manager.get_next_tier(tm_current, "slower")
+            if tm_new is None:
+                return None
 
-            new_tier = tier_order[current_idx - 1]
+            new_tier = MemoryTier(tm_new.value)
             now = datetime.now().isoformat()
 
             # Update tier
@@ -691,7 +729,7 @@ class ContinuumMemory:
                 (new_tier.value, now, id),
             )
 
-            # Record transition
+            # Record transition in database
             cursor.execute(
                 """
                 INSERT INTO tier_transitions (memory_id, from_tier, to_tier, reason, surprise_score)
@@ -701,6 +739,9 @@ class ContinuumMemory:
             )
 
             conn.commit()
+
+        # Record metrics in TierManager
+        self._tier_manager.record_demotion(tm_current, tm_new)
 
         return new_tier
 
