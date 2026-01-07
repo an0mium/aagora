@@ -78,52 +78,40 @@ class EarlyStopError(DebateError):
 
 
 # ============================================================================
-# Agent Errors
+# Agent Errors (re-exported from aragora.agents.errors for unified imports)
 # ============================================================================
+# The canonical agent error hierarchy is in aragora.agents.errors, which provides
+# richer functionality (recoverable flag, cause chaining, circuit breaker support).
+# Re-exports are provided here for convenience and unified imports.
 
-class AgentError(AragoraError):
-    """Base exception for agent-related errors."""
-    pass
+# Import will be done at module level after all base classes are defined
+# to avoid circular imports. See end of file for re-exports.
+
+# Legacy aliases for backwards compatibility (these were never used but kept
+# for any future code that might expect them from exceptions.py)
 
 
-class AgentNotFoundError(AgentError):
-    """Raised when a requested agent cannot be found."""
+class AgentNotFoundError(AragoraError):
+    """Raised when a requested agent cannot be found.
+
+    Note: This is a simple lookup error, distinct from AgentError hierarchy
+    which handles runtime agent failures.
+    """
 
     def __init__(self, agent_name: str):
         super().__init__(f"Agent not found: {agent_name}", {"agent_name": agent_name})
         self.agent_name = agent_name
 
 
-class AgentConfigurationError(AgentError):
-    """Raised when agent configuration is invalid."""
+class AgentConfigurationError(AragoraError):
+    """Raised when agent configuration is invalid.
+
+    Note: Configuration errors are distinct from runtime AgentErrors.
+    """
     pass
 
 
-class AgentResponseError(AgentError):
-    """Raised when an agent fails to generate a response."""
-
-    def __init__(self, agent_name: str, reason: str):
-        super().__init__(
-            f"Agent '{agent_name}' failed to respond: {reason}",
-            {"agent_name": agent_name, "reason": reason}
-        )
-        self.agent_name = agent_name
-        self.reason = reason
-
-
-class AgentTimeoutError(AgentError):
-    """Raised when an agent takes too long to respond."""
-
-    def __init__(self, agent_name: str, timeout_seconds: float):
-        super().__init__(
-            f"Agent '{agent_name}' timed out after {timeout_seconds}s",
-            {"agent_name": agent_name, "timeout": timeout_seconds}
-        )
-        self.agent_name = agent_name
-        self.timeout_seconds = timeout_seconds
-
-
-class APIKeyError(AgentError):
+class APIKeyError(AragoraError):
     """Raised when an API key is missing or invalid."""
 
     def __init__(self, provider: str):
@@ -132,18 +120,6 @@ class APIKeyError(AgentError):
             {"provider": provider}
         )
         self.provider = provider
-
-
-class RateLimitError(AgentError):
-    """Raised when an API rate limit is hit."""
-
-    def __init__(self, provider: str, retry_after: Optional[float] = None):
-        super().__init__(
-            f"Rate limit exceeded for {provider}",
-            {"provider": provider, "retry_after": retry_after}
-        )
-        self.provider = provider
-        self.retry_after = retry_after
 
 
 # ============================================================================
@@ -388,3 +364,22 @@ class VerificationTimeoutError(VerificationError):
             {"timeout_ms": timeout_ms}
         )
         self.timeout_ms = timeout_ms
+
+
+# ============================================================================
+# Agent Errors - Usage Guide
+# ============================================================================
+# For runtime agent failures (timeouts, rate limits, connection issues), import
+# from aragora.agents.errors which provides the full exception hierarchy with:
+#   - recoverable flag for retry decisions
+#   - cause chaining for debugging
+#   - circuit breaker integration
+#
+# Example:
+#   from aragora.agents.errors import (
+#       AgentError, AgentTimeoutError, AgentRateLimitError,
+#       CLIAgentError, ErrorClassifier,
+#   )
+#
+# The exceptions in this file (AgentNotFoundError, AgentConfigurationError,
+# APIKeyError) are for configuration-time errors, not runtime failures.

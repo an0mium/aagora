@@ -2,7 +2,7 @@
 Standardized error handling for agent operations.
 
 Provides:
-- Custom exception hierarchy for agent errors
+- Custom exception hierarchy for agent errors (inheriting from AragoraError)
 - Centralized error classification for fallback decisions
 - Async error handling decorators with retry logic
 - Structured error logging with sanitization
@@ -17,6 +17,8 @@ import subprocess
 from typing import Any, Callable, Optional, Type, TypeVar
 
 import aiohttp
+
+from aragora.exceptions import AragoraError
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +88,17 @@ T = TypeVar("T")
 # =============================================================================
 
 
-class AgentError(Exception):
-    """Base exception for all agent errors."""
+class AgentError(AragoraError):
+    """Base exception for all agent errors.
+
+    Inherits from AragoraError to provide unified exception hierarchy
+    while adding agent-specific attributes for retry/circuit-breaker logic.
+
+    Attributes:
+        agent_name: Name of the agent that raised the error
+        cause: Original exception that caused this error
+        recoverable: Whether the operation can be retried
+    """
 
     def __init__(
         self,
@@ -96,13 +107,21 @@ class AgentError(Exception):
         cause: Exception | None = None,
         recoverable: bool = True,
     ) -> None:
-        super().__init__(message)
+        # Build details dict for AragoraError
+        details = {}
+        if agent_name:
+            details["agent_name"] = agent_name
+        if cause:
+            details["cause_type"] = type(cause).__name__
+        details["recoverable"] = recoverable
+
+        super().__init__(message, details)
         self.agent_name = agent_name
         self.cause = cause
         self.recoverable = recoverable
 
     def __str__(self) -> str:
-        parts = [super().__str__()]
+        parts = [self.message]
         if self.agent_name:
             parts.insert(0, f"[{self.agent_name}]")
         if self.cause:

@@ -27,33 +27,39 @@ logger = logging.getLogger(__name__)
 class TwitterError(Exception):
     """Base exception for Twitter connector errors."""
 
-    pass
+    def __init__(self, message: str = "Twitter API operation failed"):
+        super().__init__(message)
 
 
 class TwitterAuthError(TwitterError):
     """Authentication/authorization failed."""
 
-    pass
+    def __init__(self, message: str = "Twitter authentication failed. Check API credentials."):
+        super().__init__(message)
 
 
 class TwitterRateLimitError(TwitterError):
     """Rate limit exceeded."""
 
-    pass
+    def __init__(self, message: str = "Twitter rate limit exceeded", retry_after: int = 900):
+        super().__init__(f"{message}. Retry after {retry_after}s")
+        self.retry_after = retry_after
 
 
 class TwitterAPIError(TwitterError):
     """General API error."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None):
-        super().__init__(message)
+    def __init__(self, message: str = "Twitter API request failed", status_code: Optional[int] = None):
+        full_message = f"{message} (HTTP {status_code})" if status_code else message
+        super().__init__(full_message)
         self.status_code = status_code
 
 
 class TwitterMediaError(TwitterError):
     """Media upload failed."""
 
-    pass
+    def __init__(self, message: str = "Twitter media upload failed"):
+        super().__init__(message)
 
 
 # Twitter API limits

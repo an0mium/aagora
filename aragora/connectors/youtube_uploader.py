@@ -24,32 +24,41 @@ logger = logging.getLogger(__name__)
 class YouTubeError(Exception):
     """Base exception for YouTube connector errors."""
 
-    pass
+    def __init__(self, message: str = "YouTube API operation failed"):
+        super().__init__(message)
 
 
 class YouTubeAuthError(YouTubeError):
     """Authentication/authorization failed."""
 
-    pass
+    def __init__(self, message: str = "YouTube authentication failed. Check OAuth credentials."):
+        super().__init__(message)
 
 
 class YouTubeQuotaError(YouTubeError):
     """API quota exceeded."""
 
-    pass
+    def __init__(self, message: str = "YouTube API quota exceeded", remaining: int = 0, reset_hours: int = 24):
+        super().__init__(f"{message}. Remaining: {remaining} units. Resets in ~{reset_hours}h")
+        self.remaining = remaining
+        self.reset_hours = reset_hours
 
 
 class YouTubeUploadError(YouTubeError):
     """Video upload failed."""
 
-    pass
+    def __init__(self, message: str = "YouTube video upload failed", video_path: str = ""):
+        full_message = f"{message}: {video_path}" if video_path else message
+        super().__init__(full_message)
+        self.video_path = video_path
 
 
 class YouTubeAPIError(YouTubeError):
     """General API error."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None):
-        super().__init__(message)
+    def __init__(self, message: str = "YouTube API request failed", status_code: Optional[int] = None):
+        full_message = f"{message} (HTTP {status_code})" if status_code else message
+        super().__init__(full_message)
         self.status_code = status_code
 
 

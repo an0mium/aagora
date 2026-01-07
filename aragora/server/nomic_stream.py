@@ -3,11 +3,76 @@ Nomic loop streaming via WebSocket.
 
 Provides hook functions for emitting nomic loop events to connected clients
 in real-time. Works with the existing DebateStreamServer infrastructure.
+
+Refactored to use HookFactory for reduced boilerplate while maintaining
+clear, type-safe hook definitions.
 """
 
 from typing import Callable, Optional
 
 from .stream import StreamEventType, StreamEvent, SyncEventEmitter
+
+
+class HookFactory:
+    """
+    Factory for creating event emission hooks with reduced boilerplate.
+
+    Each hook is a thin wrapper around emitter.emit() with a specific
+    StreamEventType. This class reduces the repetitive code pattern:
+
+        def on_something(arg1, arg2):
+            emitter.emit(StreamEvent(
+                type=StreamEventType.SOMETHING,
+                data={"arg1": arg1, "arg2": arg2},
+            ))
+
+    Usage:
+        factory = HookFactory(emitter)
+
+        @factory.hook(StreamEventType.CYCLE_START)
+        def on_cycle_start(cycle: int, max_cycles: int) -> dict:
+            return {"cycle": cycle, "max_cycles": max_cycles}
+    """
+
+    def __init__(self, emitter: SyncEventEmitter):
+        self.emitter = emitter
+        self.hooks: dict[str, Callable] = {}
+
+    def hook(
+        self,
+        event_type: StreamEventType,
+        *,
+        round_key: Optional[str] = None,
+        agent_key: Optional[str] = None,
+    ) -> Callable:
+        """
+        Decorator that registers a function as an event hook.
+
+        The decorated function should return a dict of event data.
+        Optional round_key and agent_key specify which data keys
+        should be extracted for the event's round and agent fields.
+
+        Args:
+            event_type: The StreamEventType to emit
+            round_key: Optional data key to use for event.round
+            agent_key: Optional data key to use for event.agent
+        """
+        def decorator(func: Callable[..., dict]) -> Callable[..., None]:
+            def wrapper(*args, **kwargs) -> None:
+                data = func(*args, **kwargs)
+                event = StreamEvent(
+                    type=event_type,
+                    data=data,
+                    round=data.get(round_key, 0) if round_key else 0,
+                    agent=data.get(agent_key, "") if agent_key else "",
+                )
+                self.emitter.emit(event)
+
+            # Store hook with canonical name (on_xxx from function name)
+            self.hooks[func.__name__] = wrapper
+            return wrapper
+
+        return decorator
 
 
 def create_nomic_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:

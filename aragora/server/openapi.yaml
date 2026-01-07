@@ -51,6 +51,14 @@ tags:
     description: Significant debate moments
   - name: Dashboard
     description: Dashboard aggregated data
+  - name: Probes
+    description: Capability probing and vulnerability detection
+  - name: Laboratory
+    description: Persona laboratory and emergent traits
+  - name: Insights
+    description: Insight extraction and analysis
+  - name: Routing
+    description: Agent routing and team selection
 
 paths:
   # =============================================================================
@@ -1098,6 +1106,306 @@ paths:
                     items:
                       $ref: '#/components/schemas/TrendingTopic'
 
+  # =============================================================================
+  # PROBES (Capability Testing)
+  # =============================================================================
+  /api/probes/capability:
+    post:
+      tags: [Probes]
+      summary: Run capability probes on an agent
+      description: |
+        Execute capability probes to detect vulnerabilities and weaknesses.
+        Probes test for contradiction handling, hallucination, sycophancy, and more.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_name]
+              properties:
+                agent_name:
+                  type: string
+                  description: Name of the agent to probe
+                probe_types:
+                  type: array
+                  items:
+                    type: string
+                    enum: [contradiction, hallucination, sycophancy, persistence, confidence_calibration, reasoning_depth, edge_case]
+                  description: Types of probes to run (default all)
+                probes_per_type:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 3
+                  description: Number of probes per type
+                model_type:
+                  type: string
+                  default: anthropic-api
+                  description: Agent model type
+      responses:
+        '200':
+          description: Probe results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Prober not available
+
+  # =============================================================================
+  # LABORATORY (Emergent Traits)
+  # =============================================================================
+  /api/laboratory/emergent-traits:
+    get:
+      tags: [Laboratory]
+      summary: Get emergent traits from agent performance
+      description: Detect emergent behavioral traits from agent debate patterns
+      parameters:
+        - name: min_confidence
+          in: query
+          schema:
+            type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+            default: 0.5
+          description: Minimum confidence threshold
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Emergent traits list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  emergent_traits:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EmergentTrait'
+                  count:
+                    type: integer
+                  min_confidence:
+                    type: number
+        '503':
+          description: Laboratory not available
+
+  /api/laboratory/cross-pollinations/suggest:
+    post:
+      tags: [Laboratory]
+      summary: Suggest beneficial trait transfers
+      description: Analyze agents and suggest which traits could be transferred between them
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_agents:
+                  type: array
+                  items:
+                    type: string
+                target_agents:
+                  type: array
+                  items:
+                    type: string
+                min_benefit_score:
+                  type: number
+                  format: float
+                  default: 0.5
+      responses:
+        '200':
+          description: Cross-pollination suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CrossPollinationSuggestion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # =============================================================================
+  # INSIGHTS
+  # =============================================================================
+  /api/insights/recent:
+    get:
+      tags: [Insights]
+      summary: Get recent insights
+      description: Retrieve recently extracted insights from debates
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Recent insights
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  insights:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Insight'
+
+  /api/insights/extract-detailed:
+    post:
+      tags: [Insights]
+      summary: Extract detailed insights from content
+      description: Analyze content and extract structured insights
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: Content to analyze
+                context:
+                  type: string
+                  description: Optional context for analysis
+      responses:
+        '200':
+          description: Extracted insights
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  insights:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Insight'
+                  metadata:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  # =============================================================================
+  # ROUTING (Agent Selection)
+  # =============================================================================
+  /api/routing/best-teams:
+    get:
+      tags: [Routing]
+      summary: Get best-performing team combinations
+      description: Retrieve historical best-performing agent team combinations
+      parameters:
+        - name: min_debates
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 3
+          description: Minimum debates for a team to be considered
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Best team combinations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  min_debates:
+                    type: integer
+                  combinations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeamCombination'
+                  count:
+                    type: integer
+        '503':
+          description: Agent selector not available
+
+  /api/routing/recommendations:
+    post:
+      tags: [Routing]
+      summary: Get agent recommendations for a task
+      description: Get ranked agent recommendations based on task requirements
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                primary_domain:
+                  type: string
+                  default: general
+                  description: Primary domain for the task
+                secondary_domains:
+                  type: array
+                  items:
+                    type: string
+                required_traits:
+                  type: array
+                  items:
+                    type: string
+                task_id:
+                  type: string
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 5
+      responses:
+        '200':
+          description: Agent recommendations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recommendations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentRecommendation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Agent selector not available
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1125,6 +1433,29 @@ components:
               error:
                 type: string
                 example: "Resource not found"
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per minute
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when limit resets
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/APIError'
 
   schemas:
     DebateSummary:
@@ -1776,3 +2107,184 @@ components:
           type: string
         score:
           type: integer
+
+    # =============================================================================
+    # Structured Error Response
+    # =============================================================================
+    APIError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              enum: [VALIDATION_ERROR, INVALID_REQUEST, NOT_FOUND, UNAUTHORIZED, FORBIDDEN, RATE_LIMITED, INTERNAL_ERROR, SERVICE_UNAVAILABLE, TIMEOUT]
+            message:
+              type: string
+              description: Human-readable error message
+            status:
+              type: integer
+              description: HTTP status code
+            trace_id:
+              type: string
+              description: Trace ID for debugging
+            details:
+              type: object
+              description: Additional error details
+            suggestion:
+              type: string
+              description: Suggested action to resolve the error
+
+    # =============================================================================
+    # Probes Schemas
+    # =============================================================================
+    ProbeReport:
+      type: object
+      properties:
+        report_id:
+          type: string
+        target_agent:
+          type: string
+        probes_run:
+          type: integer
+        vulnerabilities_found:
+          type: integer
+        vulnerability_rate:
+          type: number
+          format: float
+        elo_penalty:
+          type: number
+          format: float
+        by_type:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              passed:
+                type: integer
+              failed:
+                type: integer
+              severity:
+                type: string
+        summary:
+          type: object
+          properties:
+            critical:
+              type: integer
+            high:
+              type: integer
+            medium:
+              type: integer
+            low:
+              type: integer
+
+    # =============================================================================
+    # Laboratory Schemas
+    # =============================================================================
+    EmergentTrait:
+      type: object
+      properties:
+        agent:
+          type: string
+        trait:
+          type: string
+        domain:
+          type: string
+        confidence:
+          type: number
+          format: float
+        evidence:
+          type: array
+          items:
+            type: string
+        detected_at:
+          type: string
+          format: date-time
+
+    CrossPollinationSuggestion:
+      type: object
+      properties:
+        source_agent:
+          type: string
+        target_agent:
+          type: string
+        trait:
+          type: string
+        benefit_score:
+          type: number
+          format: float
+        rationale:
+          type: string
+
+    # =============================================================================
+    # Insights Schemas
+    # =============================================================================
+    Insight:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [pattern, consensus, disagreement, breakthrough, risk]
+        title:
+          type: string
+        description:
+          type: string
+        confidence:
+          type: number
+          format: float
+        agents_involved:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # =============================================================================
+    # Routing Schemas
+    # =============================================================================
+    TeamCombination:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            type: string
+        debates:
+          type: integer
+        consensus_rate:
+          type: number
+          format: float
+        avg_rounds:
+          type: number
+          format: float
+        win_rate:
+          type: number
+          format: float
+
+    AgentRecommendation:
+      type: object
+      properties:
+        agent:
+          type: string
+        score:
+          type: number
+          format: float
+        reasons:
+          type: array
+          items:
+            type: string
+        domain_fit:
+          type: number
+          format: float
+        trait_match:
+          type: number
+          format: float

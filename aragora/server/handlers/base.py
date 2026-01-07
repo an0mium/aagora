@@ -26,7 +26,7 @@ from aragora.server.validation import SAFE_ID_PATTERN, SAFE_AGENT_PATTERN, SAFE_
 __all__ = [
     "DB_TIMEOUT_SECONDS", "require_auth", "error_response", "json_response",
     "handle_errors", "log_request", "ttl_cache", "clear_cache", "get_cache_stats",
-    "invalidate_cache", "CACHE_INVALIDATION_MAP",
+    "invalidate_cache", "CACHE_INVALIDATION_MAP", "rate_limit", "RateLimiter",
 ]
 
 logger = logging.getLogger(__name__)
@@ -237,6 +237,224 @@ def invalidate_cache(data_source: str) -> int:
     if total > 0:
         logger.debug(f"Cache invalidated for '{data_source}': {total} entries cleared")
     return total
+
+
+# =============================================================================
+# Rate Limiting
+# =============================================================================
+
+
+class RateLimiter:
+    """
+    Token bucket rate limiter for API endpoints.
+
+    Provides per-client rate limiting with configurable requests per minute
+    and burst capacity. Uses sliding window for accurate rate tracking.
+
+    Example:
+        limiter = RateLimiter(requests_per_minute=30, burst=5)
+        if not limiter.allow(client_ip):
+            return error_response("Rate limit exceeded", 429)
+    """
+
+    def __init__(
+        self,
+        requests_per_minute: int = 60,
+        burst: int = 10,
+        key_prefix: str = "",
+    ):
+        """
+        Initialize rate limiter.
+
+        Args:
+            requests_per_minute: Maximum requests per minute per client
+            burst: Additional burst capacity above the base rate
+            key_prefix: Prefix for client keys (to namespace different endpoints)
+        """
+        self.requests_per_minute = requests_per_minute
+        self.burst = burst
+        self.key_prefix = key_prefix
+        self._tokens: dict[str, tuple[float, float]] = {}  # key -> (tokens, last_update)
+        self._refill_rate = requests_per_minute / 60.0  # tokens per second
+
+    def allow(self, client_key: str) -> tuple[bool, dict]:
+        """
+        Check if request is allowed for a client.
+
+        Args:
+            client_key: Unique client identifier (e.g., IP address, API key)
+
+        Returns:
+            Tuple of (allowed, info) where info contains rate limit headers
+        """
+        now = time.time()
+        full_key = f"{self.key_prefix}:{client_key}" if self.key_prefix else client_key
+
+        # Get or create token bucket for this client
+        if full_key in self._tokens:
+            tokens, last_update = self._tokens[full_key]
+            # Refill tokens based on time elapsed
+            elapsed = now - last_update
+            tokens = min(
+                self.requests_per_minute + self.burst,
+                tokens + elapsed * self._refill_rate
+            )
+        else:
+            tokens = self.requests_per_minute + self.burst
+
+        # Rate limit info for headers
+        info = {
+            "X-RateLimit-Limit": str(self.requests_per_minute),
+            "X-RateLimit-Remaining": str(max(0, int(tokens) - 1)),
+            "X-RateLimit-Reset": str(int(now + 60)),
+        }
+
+        # Check if request is allowed
+        if tokens >= 1:
+            self._tokens[full_key] = (tokens - 1, now)
+            return True, info
+        else:
+            # Calculate retry-after
+            tokens_needed = 1 - tokens
+            retry_after = int(tokens_needed / self._refill_rate) + 1
+            info["Retry-After"] = str(retry_after)
+            self._tokens[full_key] = (tokens, now)
+            return False, info
+
+    def get_client_key(self, handler) -> str:
+        """Extract client key from request handler.
+
+        Uses X-Forwarded-For if behind proxy, otherwise REMOTE_ADDR.
+        Falls back to 'anonymous' if neither available.
+        """
+        if handler is None:
+            return "anonymous"
+
+        # Check for forwarded IP (behind proxy)
+        if hasattr(handler, 'headers'):
+            forwarded = handler.headers.get('X-Forwarded-For', '')
+            if forwarded:
+                # Take first IP in chain (original client)
+                return forwarded.split(',')[0].strip()
+
+        # Check for direct connection
+        if hasattr(handler, 'client_address'):
+            addr = handler.client_address
+            if isinstance(addr, tuple) and len(addr) >= 1:
+                return str(addr[0])
+
+        return "anonymous"
+
+    def cleanup(self, max_age_seconds: int = 300) -> int:
+        """Remove stale entries older than max_age_seconds.
+
+        Returns number of entries removed.
+        """
+        now = time.time()
+        stale_keys = [
+            key for key, (_, last_update) in self._tokens.items()
+            if now - last_update > max_age_seconds
+        ]
+        for key in stale_keys:
+            del self._tokens[key]
+        return len(stale_keys)
+
+
+# Global rate limiters for different endpoint categories
+_rate_limiters: dict[str, RateLimiter] = {}
+
+
+def get_rate_limiter(
+    name: str,
+    requests_per_minute: int = 60,
+    burst: int = 10,
+) -> RateLimiter:
+    """Get or create a named rate limiter.
+
+    Args:
+        name: Unique name for this limiter (e.g., "debate_create", "probe_run")
+        requests_per_minute: Max requests per minute
+        burst: Burst capacity
+
+    Returns:
+        RateLimiter instance
+    """
+    if name not in _rate_limiters:
+        _rate_limiters[name] = RateLimiter(
+            requests_per_minute=requests_per_minute,
+            burst=burst,
+            key_prefix=name,
+        )
+    return _rate_limiters[name]
+
+
+def rate_limit(
+    requests_per_minute: int = 30,
+    burst: int = 5,
+    limiter_name: Optional[str] = None,
+):
+    """
+    Decorator for rate limiting handler methods.
+
+    Applies token bucket rate limiting per client. Returns 429 Too Many Requests
+    when limit exceeded.
+
+    Args:
+        requests_per_minute: Maximum requests per minute per client
+        burst: Additional burst capacity
+        limiter_name: Optional name to share limiter across handlers
+
+    Usage:
+        @rate_limit(requests_per_minute=30, burst=5)
+        def _run_capability_probe(self, handler):
+            ...
+
+        @rate_limit(requests_per_minute=10, burst=2, limiter_name="expensive")
+        def _run_deep_analysis(self, path, query_params, handler):
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        # Get or create limiter
+        name = limiter_name or func.__name__
+        limiter = get_rate_limiter(name, requests_per_minute, burst)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Extract handler from args/kwargs
+            handler = kwargs.get('handler')
+            if handler is None:
+                for arg in args:
+                    if hasattr(arg, 'headers'):
+                        handler = arg
+                        break
+
+            # Get client key and check rate limit
+            client_key = limiter.get_client_key(handler)
+            allowed, info = limiter.allow(client_key)
+
+            if not allowed:
+                logger.warning(
+                    f"Rate limit exceeded for {client_key} on {func.__name__}"
+                )
+                return error_response(
+                    "Rate limit exceeded. Please try again later.",
+                    status=429,
+                    headers=info,
+                )
+
+            # Call handler and add rate limit headers to response
+            result = func(*args, **kwargs)
+
+            # Add headers to response if possible
+            if hasattr(result, 'headers') and isinstance(result.headers, dict):
+                result.headers.update({
+                    k: v for k, v in info.items()
+                    if k.startswith('X-RateLimit')
+                })
+
+            return result
+        return wrapper
+    return decorator
 
 
 @dataclass
