@@ -152,7 +152,7 @@ class TestStoreEvidence:
 
         mock_continuum.add.assert_called_once()
         call_kwargs = mock_continuum.add.call_args.kwargs
-        assert call_kwargs["tier"] == "medium"
+        assert call_kwargs["tier"] == MemoryTier.MEDIUM
         assert "Evidence" in call_kwargs["content"]
 
     def test_limits_snippets_to_ten(self):

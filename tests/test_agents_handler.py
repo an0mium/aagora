@@ -124,7 +124,7 @@ class TestValidation:
         """Test path traversal in agent name."""
         is_valid, err = validate_agent_name("../etc/passwd")
         assert is_valid is False
-        assert "path traversal" in err.lower()
+        assert "must match pattern" in err.lower()
 
     def test_validate_agent_name_slash(self):
         """Test slash in agent name."""

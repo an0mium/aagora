@@ -109,9 +109,13 @@ class TestIntrospectionRouting:
         assert introspection_handler.can_handle("/api/introspection/agents/claude") is True
         assert introspection_handler.can_handle("/api/introspection/agents/gpt-4") is True
 
+    def test_can_handle_list_agents(self, introspection_handler):
+        """Test that /api/introspection/agents endpoint is handled."""
+        assert introspection_handler.can_handle("/api/introspection/agents") is True
+
     def test_cannot_handle_unrelated_routes(self, introspection_handler):
         assert introspection_handler.can_handle("/api/introspection") is False
-        assert introspection_handler.can_handle("/api/introspection/agents") is False
+        # /api/introspection/agents is now a valid endpoint (list agents)
         assert introspection_handler.can_handle("/api/agents") is False
         assert introspection_handler.can_handle("/api/personas") is False
 
@@ -197,6 +201,44 @@ class TestGetIntrospectionLeaderboard:
 
             assert result is not None
             assert result.status_code == 200
+
+
+# ============================================================================
+# GET /api/introspection/agents Tests (List Agents)
+# ============================================================================
+
+class TestListAgents:
+    """Tests for GET /api/introspection/agents endpoint."""
+
+    def test_list_agents_returns_list(self, introspection_handler):
+        """Test that list agents returns agent list."""
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()  # Clear cache for fresh response
+
+        result = introspection_handler.handle("/api/introspection/agents", {}, None)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert "agents" in data
+        assert "count" in data
+        assert isinstance(data["agents"], list)
+
+    def test_list_agents_default_agents(self, introspection_handler):
+        """Test that default agents are returned when no store available."""
+        from aragora.server.handlers.base import clear_cache
+        clear_cache()
+
+        result = introspection_handler.handle("/api/introspection/agents", {}, None)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        # Should have at least the default agents
+        assert data["count"] >= 1
+        # Each agent should have a name
+        for agent in data["agents"]:
+            assert "name" in agent
 
 
 # ============================================================================

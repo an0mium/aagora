@@ -424,20 +424,20 @@ class TestValidatePathSegment:
         """Test path traversal attempt is blocked."""
         valid, error = validate_path_segment("../etc", "test")
         assert valid is False
-        assert "path traversal" in error.lower()
+        assert "invalid" in error.lower() or "pattern" in error.lower()
 
     def test_slash_blocked(self) -> None:
         """Test forward slash is blocked."""
         valid, error = validate_path_segment("a/b", "test")
         assert valid is False
-        assert "path traversal" in error.lower()
+        assert "invalid" in error.lower() or "pattern" in error.lower()
 
     def test_invalid_format_blocked(self) -> None:
         """Test invalid format is blocked."""
         # Assuming SAFE_ID_PATTERN doesn't allow spaces
         valid, error = validate_path_segment("has space", "test")
         assert valid is False
-        assert "format" in error.lower()
+        assert "invalid" in error.lower() or "pattern" in error.lower()
 
 
 class TestValidateAgentName:

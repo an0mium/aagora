@@ -1462,8 +1462,12 @@ class Arena:
         """
         return self.prompt_builder.get_stance_guidance(agent)
 
-    async def run(self) -> DebateResult:
+    async def run(self, correlation_id: str = "") -> DebateResult:
         """Run the full debate and return results.
+
+        Args:
+            correlation_id: Optional request correlation ID for distributed tracing.
+                           If not provided, one will be generated.
 
         If timeout_seconds is set in protocol, the debate will be terminated
         after the specified time with partial results.
@@ -1472,7 +1476,7 @@ class Arena:
             try:
                 # Use wait_for for Python 3.10 compatibility (asyncio.timeout is 3.11+)
                 return await asyncio.wait_for(
-                    self._run_inner(),
+                    self._run_inner(correlation_id=correlation_id),
                     timeout=self.protocol.timeout_seconds
                 )
             except asyncio.TimeoutError:
@@ -1486,10 +1490,13 @@ class Arena:
                     dissenting_views=[],
                     rounds_used=getattr(self, '_partial_rounds', 0),
                 )
-        return await self._run_inner()
+        return await self._run_inner(correlation_id=correlation_id)
 
-    async def _run_inner(self) -> DebateResult:
+    async def _run_inner(self, correlation_id: str = "") -> DebateResult:
         """Internal debate execution orchestrator.
+
+        Args:
+            correlation_id: Request correlation ID for distributed tracing.
 
         This method coordinates the debate phases:
         0. Context Initialization - inject history, patterns, research
@@ -1501,12 +1508,18 @@ class Arena:
         """
         import uuid
 
+        debate_id = str(uuid.uuid4())
+        # Generate correlation_id if not provided (prefix with 'corr-' to distinguish)
+        if not correlation_id:
+            correlation_id = f"corr-{debate_id[:8]}"
+
         # Create shared context for all phases
         ctx = DebateContext(
             env=self.env,
             agents=self.agents,
             start_time=time.time(),
-            debate_id=str(uuid.uuid4()),
+            debate_id=debate_id,
+            correlation_id=correlation_id,
             domain=self._extract_debate_domain(),
         )
 

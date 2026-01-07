@@ -38,6 +38,8 @@ from .probes import (
     ConfidenceCalibrationProbe,
     ReasoningDepthProbe,
     EdgeCaseProbe,
+    InstructionInjectionProbe,
+    CapabilityExaggerationProbe,
     STRATEGIES,
 )
 
@@ -57,6 +59,8 @@ __all__ = [
     "ConfidenceCalibrationProbe",
     "ReasoningDepthProbe",
     "EdgeCaseProbe",
+    "InstructionInjectionProbe",
+    "CapabilityExaggerationProbe",
     # Main classes
     "CapabilityProber",
     "ProbeBeforePromote",

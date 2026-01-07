@@ -833,7 +833,7 @@ class PersonaSynthesizer:
                 base = self.persona_manager.get_persona(agent_name)
                 if base:
                     persona.base_persona = base
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError, ValueError) as e:
                 logger.debug(f"Failed to load base persona for {agent_name}: {e}")
 
         # ELO stats
@@ -851,7 +851,7 @@ class PersonaSynthesizer:
                     # Calibration
                     if hasattr(rating, "calibration_score"):
                         persona.overall_calibration = rating.calibration_score
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError, ValueError, ZeroDivisionError) as e:
                 logger.debug(f"Failed to load ELO stats for {agent_name}: {e}")
 
         # Position stats
@@ -862,7 +862,7 @@ class PersonaSynthesizer:
                 persona.positions_correct = stats.get("correct", 0)
                 persona.positions_incorrect = stats.get("incorrect", 0)
                 persona.reversals = stats.get("reversals", 0)
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError, ValueError) as e:
                 logger.debug(f"Failed to load position stats for {agent_name}: {e}")
 
         # Relationships
@@ -873,7 +873,7 @@ class PersonaSynthesizer:
                 influence = self.relationship_tracker.get_influence_network(agent_name)
                 persona.influences = influence.get("influences", [])
                 persona.influenced_by = influence.get("influenced_by", [])
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError, ValueError) as e:
                 logger.debug(f"Failed to load relationships for {agent_name}: {e}")
 
         return persona
@@ -1138,7 +1138,7 @@ class MomentDetector:
                         "elo_difference": elo_diff,
                     },
                 )
-        except Exception as e:
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
             logger.debug(f"Failed to detect upset victory for {winner} vs {loser}: {e}")
 
         return None
@@ -1277,7 +1277,7 @@ class MomentDetector:
             try:
                 rel = self.relationship_tracker.get_relationship(agents[0], agents[1])
                 rivalry_score = rel.rivalry_score
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError, ValueError, IndexError) as e:
                 logger.debug(f"Failed to get rivalry score for {agents[0]}, {agents[1]}: {e}")
 
         # Consensus between rivals is more significant

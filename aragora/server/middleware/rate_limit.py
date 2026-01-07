@@ -422,9 +422,71 @@ class RateLimiter:
         return "anonymous"
 
 
-# Global rate limiter instances
-_rate_limiters: Dict[str, RateLimiter] = {}
-_default_limiter: Optional[RateLimiter] = None
+# Use ServiceRegistry for rate limiter management
+from aragora.services import ServiceRegistry
+
+
+class RateLimiterRegistry:
+    """Container for named rate limiters, managed via ServiceRegistry."""
+
+    def __init__(self):
+        self._limiters: Dict[str, RateLimiter] = {}
+        self._default_limiter: Optional[RateLimiter] = None
+
+    def get_default(self) -> RateLimiter:
+        """Get the default rate limiter with configured endpoints."""
+        if self._default_limiter is None:
+            self._default_limiter = RateLimiter()
+            # Configure default endpoint limits
+            self._default_limiter.configure_endpoint("/api/debates", 30, key_type="ip")
+            self._default_limiter.configure_endpoint("/api/debates/*", 60, key_type="ip")
+            self._default_limiter.configure_endpoint(
+                "/api/debates/*/fork", 5, key_type="ip"
+            )
+            self._default_limiter.configure_endpoint("/api/agent/*", 120, key_type="ip")
+            self._default_limiter.configure_endpoint("/api/leaderboard*", 60, key_type="ip")
+            self._default_limiter.configure_endpoint("/api/pulse/*", 30, key_type="ip")
+            self._default_limiter.configure_endpoint(
+                "/api/memory/continuum/cleanup", 2, key_type="ip"
+            )
+            self._default_limiter.configure_endpoint("/api/memory/*", 60, key_type="ip")
+        return self._default_limiter
+
+    def get(
+        self,
+        name: str,
+        requests_per_minute: int = DEFAULT_RATE_LIMIT,
+        burst: int | None = None,
+    ) -> RateLimiter:
+        """Get or create a named rate limiter."""
+        if name not in self._limiters:
+            self._limiters[name] = RateLimiter(
+                default_limit=requests_per_minute,
+                ip_limit=requests_per_minute,
+            )
+        return self._limiters[name]
+
+    def cleanup(self, max_age_seconds: int = 300) -> int:
+        """Cleanup all rate limiters."""
+        removed = 0
+        if self._default_limiter is not None:
+            removed += self._default_limiter.cleanup(max_age_seconds)
+        for limiter in self._limiters.values():
+            removed += limiter.cleanup(max_age_seconds)
+        return removed
+
+    def reset(self) -> None:
+        """Reset all rate limiters."""
+        self._default_limiter = None
+        self._limiters.clear()
+
+
+def _get_limiter_registry() -> RateLimiterRegistry:
+    """Get the RateLimiterRegistry from ServiceRegistry."""
+    registry = ServiceRegistry.get()
+    if not registry.has(RateLimiterRegistry):
+        registry.register_factory(RateLimiterRegistry, RateLimiterRegistry)
+    return registry.resolve(RateLimiterRegistry)
 
 
 def get_rate_limiter(
@@ -443,33 +505,12 @@ def get_rate_limiter(
     Returns:
         RateLimiter instance.
     """
-    global _default_limiter
+    limiter_registry = _get_limiter_registry()
 
     if name == "_default":
-        if _default_limiter is None:
-            _default_limiter = RateLimiter()
-            # Configure default endpoint limits
-            _default_limiter.configure_endpoint("/api/debates", 30, key_type="ip")
-            _default_limiter.configure_endpoint("/api/debates/*", 60, key_type="ip")
-            _default_limiter.configure_endpoint(
-                "/api/debates/*/fork", 5, key_type="ip"
-            )
-            _default_limiter.configure_endpoint("/api/agent/*", 120, key_type="ip")
-            _default_limiter.configure_endpoint("/api/leaderboard*", 60, key_type="ip")
-            _default_limiter.configure_endpoint("/api/pulse/*", 30, key_type="ip")
-            _default_limiter.configure_endpoint(
-                "/api/memory/continuum/cleanup", 2, key_type="ip"
-            )
-            _default_limiter.configure_endpoint("/api/memory/*", 60, key_type="ip")
-        return _default_limiter
+        return limiter_registry.get_default()
 
-    if name not in _rate_limiters:
-        burst_size = burst or int(requests_per_minute * BURST_MULTIPLIER)
-        _rate_limiters[name] = RateLimiter(
-            default_limit=requests_per_minute,
-            ip_limit=requests_per_minute,
-        )
-    return _rate_limiters[name]
+    return limiter_registry.get(name, requests_per_minute, burst)
 
 
 def cleanup_rate_limiters(max_age_seconds: int = 300) -> int:
@@ -482,22 +523,15 @@ def cleanup_rate_limiters(max_age_seconds: int = 300) -> int:
     Returns:
         Total number of entries removed across all limiters.
     """
-    removed = 0
-
-    if _default_limiter is not None:
-        removed += _default_limiter.cleanup(max_age_seconds)
-
-    for limiter in _rate_limiters.values():
-        removed += limiter.cleanup(max_age_seconds)
-
-    return removed
+    return _get_limiter_registry().cleanup(max_age_seconds)
 
 
 def reset_rate_limiters() -> None:
     """Reset all rate limiters. Primarily for testing."""
-    global _default_limiter, _rate_limiters
-    _default_limiter = None
-    _rate_limiters.clear()
+    registry = ServiceRegistry.get()
+    if registry.has(RateLimiterRegistry):
+        registry.resolve(RateLimiterRegistry).reset()
+        registry.unregister(RateLimiterRegistry)
 
 
 def rate_limit_headers(result: RateLimitResult) -> Dict[str, str]:

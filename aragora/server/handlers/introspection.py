@@ -6,6 +6,7 @@ Provides agent self-awareness and introspection capabilities.
 Endpoints:
 - GET /api/introspection/all - Get introspection for all agents
 - GET /api/introspection/leaderboard - Get agents ranked by reputation
+- GET /api/introspection/agents - List available agents
 - GET /api/introspection/agents/{name} - Get introspection for specific agent
 """
 
@@ -19,6 +20,7 @@ from .base import (
     error_response,
     get_int_param,
     validate_agent_name,
+    ttl_cache,
 )
 from aragora.config import DB_PERSONAS_PATH
 from aragora.utils.optional_imports import try_import_class
@@ -43,6 +45,7 @@ class IntrospectionHandler(BaseHandler):
     ROUTES = [
         "/api/introspection/all",
         "/api/introspection/leaderboard",
+        "/api/introspection/agents",
         "/api/introspection/agents/*",
     ]
 
@@ -50,7 +53,7 @@ class IntrospectionHandler(BaseHandler):
 
     def can_handle(self, path: str) -> bool:
         """Check if this handler can process the given path."""
-        if path in ("/api/introspection/all", "/api/introspection/leaderboard"):
+        if path in ("/api/introspection/all", "/api/introspection/leaderboard", "/api/introspection/agents"):
             return True
         if path.startswith("/api/introspection/agents/"):
             return True
@@ -63,6 +66,8 @@ class IntrospectionHandler(BaseHandler):
         elif path == "/api/introspection/leaderboard":
             limit = get_int_param(query_params, 'limit', 10)
             return self._get_introspection_leaderboard(min(limit, 50))
+        elif path == "/api/introspection/agents":
+            return self._list_agents()
         elif path.startswith("/api/introspection/agents/"):
             agent = path.split("/")[-1]
             is_valid, err = validate_agent_name(agent)
@@ -107,6 +112,43 @@ class IntrospectionHandler(BaseHandler):
                 logger.debug(f"Could not fetch agent reputations: {e}")
         return self.DEFAULT_AGENTS
 
+    @ttl_cache(ttl_seconds=60, key_prefix="lb_introspection_agents")
+    def _list_agents(self) -> HandlerResult:
+        """List available agents for introspection.
+
+        Returns a lightweight list of agent names with basic metadata.
+        """
+        try:
+            memory = self._get_critique_store()
+            agents = self._get_known_agents(memory)
+
+            agent_list = []
+            for agent in agents:
+                agent_info = {"name": agent}
+
+                # Add reputation if available
+                if memory:
+                    try:
+                        reputation = memory.get_agent_reputation(agent)
+                        if reputation:
+                            agent_info["reputation_score"] = getattr(reputation, "score", 0.5)
+                            agent_info["total_critiques"] = getattr(reputation, "total_critiques", 0)
+                    except Exception:
+                        pass
+
+                agent_list.append(agent_info)
+
+            # Sort by reputation score descending
+            agent_list.sort(key=lambda x: x.get("reputation_score", 0), reverse=True)
+
+            return json_response({
+                "agents": agent_list,
+                "count": len(agent_list),
+            })
+        except Exception as e:
+            logger.error(f"Error listing agents: {e}", exc_info=True)
+            return error_response("Failed to list agents", 500)
+
     def _get_agent_introspection(self, agent: str) -> HandlerResult:
         """Get introspection data for a specific agent."""
         if not INTROSPECTION_AVAILABLE or not get_agent_introspection:
@@ -123,8 +165,12 @@ class IntrospectionHandler(BaseHandler):
             logger.error(f"Error getting introspection for {agent}: {e}", exc_info=True)
             return error_response("Failed to get introspection", 500)
 
+    @ttl_cache(ttl_seconds=120, key_prefix="lb_introspection_all")
     def _get_all_introspection(self) -> HandlerResult:
-        """Get introspection data for all known agents."""
+        """Get introspection data for all known agents.
+
+        Cached for 2 minutes since this is an expensive operation.
+        """
         if not INTROSPECTION_AVAILABLE or not get_agent_introspection:
             return error_response("Introspection module not available", 503)
 
@@ -152,8 +198,12 @@ class IntrospectionHandler(BaseHandler):
             logger.error(f"Error getting all introspection: {e}", exc_info=True)
             return error_response("Failed to get introspection data", 500)
 
+    @ttl_cache(ttl_seconds=120, key_prefix="lb_introspection_lb")
     def _get_introspection_leaderboard(self, limit: int) -> HandlerResult:
-        """Get agents ranked by reputation score."""
+        """Get agents ranked by reputation score.
+
+        Cached for 2 minutes since this is an expensive operation.
+        """
         if not INTROSPECTION_AVAILABLE or not get_agent_introspection:
             return error_response("Introspection module not available", 503)
 

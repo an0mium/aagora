@@ -9,6 +9,8 @@ This package provides tools for probing agent capabilities to find:
 - Calibration issues
 - Reasoning depth gaps
 - Edge case failures
+- Prompt injection vulnerabilities
+- Capability exaggeration
 """
 
 from .models import (
@@ -26,6 +28,8 @@ from .strategies import (
     ConfidenceCalibrationProbe,
     ReasoningDepthProbe,
     EdgeCaseProbe,
+    InstructionInjectionProbe,
+    CapabilityExaggerationProbe,
     STRATEGIES,
 )
 
@@ -45,6 +49,8 @@ __all__ = [
     "ConfidenceCalibrationProbe",
     "ReasoningDepthProbe",
     "EdgeCaseProbe",
+    "InstructionInjectionProbe",
+    "CapabilityExaggerationProbe",
     # Registry
     "STRATEGIES",
 ]

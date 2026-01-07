@@ -121,6 +121,33 @@ _method_cache = TTLCache[Any](maxsize=1000, ttl_seconds=CACHE_TTL_METHOD)
 _query_cache = TTLCache[Any](maxsize=500, ttl_seconds=CACHE_TTL_QUERY)
 
 
+def _register_caches_with_service_registry() -> None:
+    """Register caches with ServiceRegistry for observability.
+
+    Called lazily on first access to avoid circular imports.
+    """
+    try:
+        from aragora.services import ServiceRegistry
+        registry = ServiceRegistry.get()
+
+        # Use string keys to avoid needing separate types
+        # Register as named services for observability
+        class MethodCache:
+            """Marker type for method cache registration."""
+            pass
+
+        class QueryCache:
+            """Marker type for query cache registration."""
+            pass
+
+        if not registry.has(MethodCache):
+            registry.register(MethodCache, _method_cache)
+        if not registry.has(QueryCache):
+            registry.register(QueryCache, _query_cache)
+    except ImportError:
+        pass  # Services module not available
+
+
 def lru_cache_with_ttl(
     ttl_seconds: float = 300.0,
     maxsize: int = 128,
@@ -231,6 +258,9 @@ def invalidate_method_cache(prefix: str) -> int:
 
 def get_cache_stats() -> dict[str, Any]:
     """Get statistics for global caches."""
+    # Register with service registry on first stats call
+    _register_caches_with_service_registry()
+
     return {
         "method_cache": _method_cache.stats,
         "query_cache": _query_cache.stats,

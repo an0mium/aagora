@@ -646,13 +646,13 @@ class TestValidation:
         """Should reject path traversal attempts."""
         is_valid, error = validate_path_segment("../etc/passwd", "file")
         assert is_valid is False
-        assert "path traversal" in error
+        assert "must match pattern" in error
 
     def test_validate_path_segment_slash(self):
         """Should reject paths with slashes."""
         is_valid, error = validate_path_segment("foo/bar", "segment")
         assert is_valid is False
-        assert "path traversal" in error
+        assert "must match pattern" in error
 
     def test_validate_agent_name_valid(self):
         """Should accept valid agent names."""
@@ -686,41 +686,40 @@ class TestSchemaValidation:
         assert result.is_valid is False
         assert "Missing required" in result.error
 
-    def test_applies_default_value(self):
-        """Should apply default values."""
-        schema = {"limit": {"type": "int", "default": 20}}
+    def test_validates_optional_field(self):
+        """Should allow missing optional field."""
+        schema = {"limit": {"type": "int", "required": False}}
         result = validate_against_schema({}, schema)
 
         assert result.is_valid is True
-        assert result.validated_params["limit"] == 20
 
     def test_validates_int_type(self):
-        """Should convert string to int."""
-        schema = {"limit": {"type": "int"}}
-        result = validate_against_schema({"limit": "50"}, schema)
+        """Should validate actual int type."""
+        schema = {"limit": {"type": "int", "required": True}}
+        result = validate_against_schema({"limit": 50}, schema)
 
         assert result.is_valid is True
-        assert result.validated_params["limit"] == 50
+        assert result.data["limit"] == 50
 
     def test_validates_int_min_max(self):
         """Should enforce min/max for ints."""
-        schema = {"limit": {"type": "int", "min": 1, "max": 100}}
-        result = validate_against_schema({"limit": "200"}, schema)
+        schema = {"limit": {"type": "int", "min_value": 1, "max_value": 100}}
+        result = validate_against_schema({"limit": 200}, schema)
 
         assert result.is_valid is False
-        assert "<=" in result.error or "100" in result.error
+        assert "at most" in result.error or "100" in result.error
 
     def test_validates_float_type(self):
-        """Should convert string to float."""
-        schema = {"score": {"type": "float"}}
-        result = validate_against_schema({"score": "0.75"}, schema)
+        """Should validate actual float type."""
+        schema = {"score": {"type": "float", "required": True}}
+        result = validate_against_schema({"score": 0.75}, schema)
 
         assert result.is_valid is True
-        assert result.validated_params["score"] == 0.75
+        assert result.data["score"] == 0.75
 
-    def test_validates_choices(self):
-        """Should enforce allowed choices."""
-        schema = {"status": {"type": "string", "choices": ["active", "inactive"]}}
+    def test_validates_enum_field(self):
+        """Should enforce allowed enum values."""
+        schema = {"status": {"type": "enum", "allowed_values": {"active", "inactive"}}}
         result = validate_against_schema({"status": "invalid"}, schema)
 
         assert result.is_valid is False

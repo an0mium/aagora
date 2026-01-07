@@ -413,16 +413,23 @@ class PluginRegistry:
         return await runner.run(context)
 
 
-# Global registry instance
-_registry: Optional[PluginRegistry] = None
+# Use ServiceRegistry for plugin registry management
+from aragora.services import ServiceRegistry
 
 
 def get_registry() -> PluginRegistry:
-    """Get the global plugin registry."""
-    global _registry
-    if _registry is None:
-        _registry = PluginRegistry()
-    return _registry
+    """Get the global plugin registry via ServiceRegistry."""
+    registry = ServiceRegistry.get()
+    if not registry.has(PluginRegistry):
+        registry.register_factory(PluginRegistry, PluginRegistry)
+    return registry.resolve(PluginRegistry)
+
+
+def reset_registry() -> None:
+    """Reset the plugin registry (for testing)."""
+    registry = ServiceRegistry.get()
+    if registry.has(PluginRegistry):
+        registry.unregister(PluginRegistry)
 
 
 async def run_plugin(

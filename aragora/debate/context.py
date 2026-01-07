@@ -44,6 +44,9 @@ class DebateContext:
     debate_id: str = ""
     """Unique identifier for this debate."""
 
+    correlation_id: str = ""
+    """Request correlation ID for distributed tracing across services."""
+
     domain: str = "general"
     """Extracted domain for metrics and specialization."""
 
@@ -198,6 +201,7 @@ class DebateContext:
         """Return a summary dict for logging/debugging."""
         return {
             "debate_id": self.debate_id,
+            "correlation_id": self.correlation_id,
             "domain": self.domain,
             "agents": [a.name for a in self.agents],
             "proposers": [a.name for a in self.proposers],

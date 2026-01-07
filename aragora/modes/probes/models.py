@@ -20,6 +20,8 @@ class ProbeType(Enum):
     CONFIDENCE_CALIBRATION = "confidence_calibration"  # Check confidence accuracy
     REASONING_DEPTH = "reasoning_depth"  # Probe logical reasoning
     EDGE_CASE = "edge_case"  # Find boundary failures
+    INSTRUCTION_INJECTION = "instruction_injection"  # Test for prompt injection
+    CAPABILITY_EXAGGERATION = "capability_exaggeration"  # Test for overclaiming
 
 
 class VulnerabilitySeverity(Enum):

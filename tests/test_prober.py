@@ -423,7 +423,7 @@ class TestCapabilityProber:
         """Test basic prober creation."""
         prober = CapabilityProber()
         assert prober.elo_system is None
-        assert len(prober.STRATEGIES) == 7
+        assert len(prober.STRATEGIES) == 9
 
     def test_prober_with_elo_system(self):
         """Test prober with ELO system."""
@@ -471,8 +471,8 @@ class TestCapabilityProber:
             probes_per_type=1,
         )
 
-        assert report.probes_run == 7  # One per type
-        assert len(report.by_type) == 7
+        assert report.probes_run == 9  # One per type
+        assert len(report.by_type) == 9
 
     @pytest.mark.asyncio
     async def test_probe_agent_elo_penalty(self):
@@ -639,9 +639,9 @@ class TestProberIntegration:
             probes_per_type=2,
         )
 
-        assert report.probes_run == 14  # 7 types * 2 probes
+        assert report.probes_run == 18  # 9 types * 2 probes
         assert report.target_agent == "integration_test_agent"
-        assert response_count == 14
+        assert response_count == 18
 
     def test_severity_enum_values(self):
         """Test that severity enum has expected values."""
@@ -659,3 +659,5 @@ class TestProberIntegration:
         assert ProbeType.CONFIDENCE_CALIBRATION.value == "confidence_calibration"
         assert ProbeType.REASONING_DEPTH.value == "reasoning_depth"
         assert ProbeType.EDGE_CASE.value == "edge_case"
+        assert ProbeType.INSTRUCTION_INJECTION.value == "instruction_injection"
+        assert ProbeType.CAPABILITY_EXAGGERATION.value == "capability_exaggeration"

@@ -382,7 +382,7 @@ class AgentsHandler(BaseHandler):
             return error_response(f"Failed to get recent matches: {e}", 500)
 
     def _compare_agents(self, agents: List[str]) -> HandlerResult:
-        """Compare multiple agents."""
+        """Compare multiple agents using batch rating lookups."""
         if len(agents) < 2:
             return error_response("Need at least 2 agents to compare", 400)
 
@@ -391,9 +391,13 @@ class AgentsHandler(BaseHandler):
             return error_response("ELO system not available", 503)
 
         try:
+            # Limit to 5 agents and batch fetch ratings in single query
+            limited_agents = agents[:5]
+            ratings_map = elo.get_ratings_batch(limited_agents)
+
             profiles = []
-            for agent in agents[:5]:  # Limit to 5 agents
-                rating = elo.get_rating(agent)
+            for agent in limited_agents:
+                rating = ratings_map.get(agent)
                 stats = elo.get_agent_stats(agent) if hasattr(elo, 'get_agent_stats') else {}
                 profiles.append({
                     "name": agent,
