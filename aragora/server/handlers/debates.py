@@ -9,6 +9,7 @@ Endpoints:
 - GET /api/debates/{id}/impasse - Detect debate impasse
 - GET /api/debates/{id}/convergence - Get convergence status
 - GET /api/debates/{id}/citations - Get evidence citations for debate
+- GET /api/debates/{id}/evidence - Get comprehensive evidence trail
 - GET /api/debate/{id}/meta-critique - Get meta-level debate analysis
 - GET /api/debate/{id}/graph/stats - Get argument graph statistics
 - POST /api/debates/{id}/fork - Fork debate at a branch point
@@ -63,6 +64,7 @@ class DebatesHandler(BaseHandler):
         ("/impasse", "_get_impasse", True, None),
         ("/convergence", "_get_convergence", True, None),
         ("/citations", "_get_citations", True, None),
+        ("/evidence", "_get_evidence", True, None),
         ("/messages", "_get_debate_messages", True, lambda p, q: {
             "limit": get_int_param(q, 'limit', 50),
             "offset": get_int_param(q, 'offset', 0),
@@ -633,6 +635,100 @@ class DebatesHandler(BaseHandler):
 
         except Exception as e:
             return error_response(f"Failed to get citations: {e}", 500)
+
+    @require_storage
+    def _get_evidence(self, handler, debate_id: str) -> HandlerResult:
+        """Get comprehensive evidence trail for a debate.
+
+        Combines grounded verdict with related evidence from ContinuumMemory.
+
+        Returns:
+            - grounded_verdict: Claim analysis with citations
+            - related_evidence: Evidence snippets from memory
+            - metadata: Search context and quality metrics
+        """
+        import json as json_module
+
+        storage = self.get_storage()
+
+        try:
+            debate = storage.get_debate(debate_id)
+            if not debate:
+                return error_response(f"Debate not found: {debate_id}", 404)
+
+            # Get grounded verdict from debate
+            grounded_verdict_raw = debate.get("grounded_verdict")
+            grounded_verdict = None
+
+            if grounded_verdict_raw:
+                if isinstance(grounded_verdict_raw, str):
+                    try:
+                        grounded_verdict = json_module.loads(grounded_verdict_raw)
+                    except json_module.JSONDecodeError:
+                        pass
+                else:
+                    grounded_verdict = grounded_verdict_raw
+
+            # Try to get related evidence from ContinuumMemory
+            related_evidence = []
+            task = debate.get("task", "")
+
+            try:
+                from aragora.memory.continuum import ContinuumMemory
+
+                continuum = self.ctx.get("continuum_memory")
+                if continuum and task:
+                    # Query for evidence-type memories related to this task
+                    memories = continuum.search(
+                        query=task[:200],
+                        limit=10,
+                        min_importance=0.3,
+                    )
+
+                    # Filter to evidence type
+                    for memory in memories:
+                        metadata = getattr(memory, "metadata", {}) or {}
+                        if metadata.get("type") == "evidence":
+                            related_evidence.append({
+                                "id": getattr(memory, "id", ""),
+                                "content": getattr(memory, "content", ""),
+                                "source": metadata.get("source", "unknown"),
+                                "importance": getattr(memory, "importance", 0.5),
+                                "tier": str(getattr(memory, "tier", "medium")),
+                            })
+            except Exception as e:
+                logger.debug(f"Could not fetch ContinuumMemory evidence: {e}")
+
+            # Build response
+            response = {
+                "debate_id": debate_id,
+                "task": task,
+                "has_evidence": bool(grounded_verdict or related_evidence),
+            }
+
+            if grounded_verdict:
+                response["grounded_verdict"] = {
+                    "grounding_score": grounded_verdict.get("grounding_score", 0),
+                    "confidence": grounded_verdict.get("confidence", 0),
+                    "claims_count": len(grounded_verdict.get("claims", [])),
+                    "citations_count": len(grounded_verdict.get("all_citations", [])),
+                    "verdict": grounded_verdict.get("verdict", ""),
+                }
+                response["claims"] = grounded_verdict.get("claims", [])
+                response["citations"] = grounded_verdict.get("all_citations", [])
+            else:
+                response["grounded_verdict"] = None
+                response["claims"] = []
+                response["citations"] = []
+
+            response["related_evidence"] = related_evidence
+            response["evidence_count"] = len(related_evidence)
+
+            return json_response(response)
+
+        except Exception as e:
+            logger.exception(f"Failed to get evidence for {debate_id}")
+            return error_response(f"Failed to get evidence: {e}", 500)
 
     @require_storage
     def _get_debate_messages(self, debate_id: str, limit: int = 50, offset: int = 0) -> HandlerResult:

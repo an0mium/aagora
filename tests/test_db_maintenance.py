@@ -143,9 +143,10 @@ class TestDatabaseMaintenance:
         db_path = temp_db_dir / "test_cleanup.db"
 
         # Create database with old and new records
+        # Use 'memories' table name which is in ALLOWED_CLEANUP_TABLES whitelist
         with sqlite3.connect(str(db_path)) as conn:
             conn.execute("""
-                CREATE TABLE records (
+                CREATE TABLE memories (
                     id INTEGER PRIMARY KEY,
                     data TEXT,
                     created_at TEXT
@@ -154,37 +155,38 @@ class TestDatabaseMaintenance:
             # Old record (100 days ago)
             old_date = (datetime.now() - timedelta(days=100)).isoformat()
             conn.execute(
-                "INSERT INTO records (data, created_at) VALUES (?, ?)",
+                "INSERT INTO memories (data, created_at) VALUES (?, ?)",
                 ("old_data", old_date)
             )
             # New record (today)
             new_date = datetime.now().isoformat()
             conn.execute(
-                "INSERT INTO records (data, created_at) VALUES (?, ?)",
+                "INSERT INTO memories (data, created_at) VALUES (?, ?)",
                 ("new_data", new_date)
             )
 
         maintenance = DatabaseMaintenance(temp_db_dir)
         results = maintenance.cleanup_old_data(
             days=90,
-            tables={"test_cleanup.db": "records"}
+            tables={"test_cleanup.db": "memories"}
         )
 
         # Should have cleaned 1 record
-        assert "test_cleanup.db:records" in results
-        assert results["test_cleanup.db:records"] == 1
+        assert "test_cleanup.db:memories" in results
+        assert results["test_cleanup.db:memories"] == 1
 
         # Verify new record still exists
         with sqlite3.connect(str(db_path)) as conn:
-            cursor = conn.execute("SELECT COUNT(*) FROM records")
+            cursor = conn.execute("SELECT COUNT(*) FROM memories")
             assert cursor.fetchone()[0] == 1
 
     def test_cleanup_old_data_nonexistent_table(self, temp_db_dir):
         """Test cleanup handles nonexistent tables gracefully."""
+        # Use 'suggestions' which is in ALLOWED_CLEANUP_TABLES but doesn't exist in elo.db
         maintenance = DatabaseMaintenance(temp_db_dir)
         results = maintenance.cleanup_old_data(
             days=90,
-            tables={"elo.db": "nonexistent_table"}
+            tables={"elo.db": "suggestions"}
         )
         assert results == {}
 

@@ -125,15 +125,26 @@ class TestDashboardWithMockedDependencies:
     def test_agent_performance_with_elo(self):
         """Agent performance method processes ELO data."""
         mock_elo = MagicMock()
-        mock_elo.list_agents.return_value = ["agent1", "agent2"]
-        mock_rating = MagicMock()
-        mock_rating.elo = 1600
-        mock_rating.wins = 10
-        mock_rating.losses = 2
-        mock_rating.draws = 1
-        mock_rating.win_rate = 0.83
-        mock_rating.debates_count = 13
-        mock_elo.get_rating.return_value = mock_rating
+        # Mock get_all_ratings which returns a list of rating objects
+        mock_rating1 = MagicMock()
+        mock_rating1.agent_name = "agent1"
+        mock_rating1.elo = 1600
+        mock_rating1.wins = 10
+        mock_rating1.losses = 2
+        mock_rating1.draws = 1
+        mock_rating1.win_rate = 0.83
+        mock_rating1.debates_count = 13
+
+        mock_rating2 = MagicMock()
+        mock_rating2.agent_name = "agent2"
+        mock_rating2.elo = 1550
+        mock_rating2.wins = 8
+        mock_rating2.losses = 4
+        mock_rating2.draws = 2
+        mock_rating2.win_rate = 0.67
+        mock_rating2.debates_count = 14
+
+        mock_elo.get_all_ratings.return_value = [mock_rating1, mock_rating2]
 
         handler = DashboardHandler({"elo_system": mock_elo})
         performance = handler._get_agent_performance(10)
