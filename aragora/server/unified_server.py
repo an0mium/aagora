@@ -2614,6 +2614,8 @@ class UnifiedServer:
         nomic_dir: Optional[Path] = None,
         storage: Optional[DebateStorage] = None,
         enable_persistence: bool = True,
+        ssl_cert: Optional[str] = None,
+        ssl_key: Optional[str] = None,
     ):
         self.http_port = http_port
         self.ws_port = ws_port
@@ -2622,6 +2624,9 @@ class UnifiedServer:
         self.static_dir = static_dir
         self.nomic_dir = nomic_dir
         self.storage = storage
+        self.ssl_cert = ssl_cert
+        self.ssl_key = ssl_key
+        self.ssl_enabled = bool(ssl_cert and ssl_key)
 
         # Create WebSocket server
         self.stream_server = DebateStreamServer(host=ws_host, port=ws_port)
@@ -2741,16 +2746,40 @@ class UnifiedServer:
         return self.stream_server.emitter
 
     def _run_http_server(self) -> None:
-        """Run HTTP server in a thread."""
+        """Run HTTP server in a thread, optionally with SSL/TLS."""
+        import ssl
+
         max_retries = 3
         retry_delay = 1.0
 
         for attempt in range(max_retries):
             try:
                 server = HTTPServer((self.http_host, self.http_port), UnifiedHandler)
-                logger.info(f"HTTP server listening on {self.http_host}:{self.http_port}")
+
+                # Configure SSL if cert and key are provided
+                if self.ssl_enabled:
+                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    ssl_context.load_cert_chain(
+                        certfile=self.ssl_cert,
+                        keyfile=self.ssl_key,
+                    )
+                    # Use secure defaults
+                    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+                    ssl_context.set_ciphers('ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:DHE+CHACHA20')
+                    server.socket = ssl_context.wrap_socket(
+                        server.socket,
+                        server_side=True,
+                    )
+                    protocol = "HTTPS"
+                else:
+                    protocol = "HTTP"
+
+                logger.info(f"{protocol} server listening on {self.http_host}:{self.http_port}")
                 server.serve_forever()
                 break  # Normal exit
+            except ssl.SSLError as e:
+                logger.error(f"SSL configuration error: {e}")
+                break
             except OSError as e:
                 if e.errno == 98 or "Address already in use" in str(e):  # EADDRINUSE
                     if attempt < max_retries - 1:
@@ -2775,8 +2804,11 @@ class UnifiedServer:
     async def start(self) -> None:
         """Start both HTTP and WebSocket servers."""
         logger.info("Starting unified server...")
-        logger.info(f"  HTTP API:   http://localhost:{self.http_port}")
+        protocol = "https" if self.ssl_enabled else "http"
+        logger.info(f"  HTTP API:   {protocol}://localhost:{self.http_port}")
         logger.info(f"  WebSocket:  ws://localhost:{self.ws_port}")
+        if self.ssl_enabled:
+            logger.info(f"  SSL:        enabled (cert: {self.ssl_cert})")
         if self.static_dir:
             logger.info(f"  Static dir: {self.static_dir}")
         if self.nomic_dir:
@@ -2795,6 +2827,8 @@ async def run_unified_server(
     ws_port: int = 8765,
     static_dir: Optional[Path] = None,
     nomic_dir: Optional[Path] = None,
+    ssl_cert: Optional[str] = None,
+    ssl_key: Optional[str] = None,
 ) -> None:
     """
     Convenience function to run the unified server.
@@ -2804,11 +2838,37 @@ async def run_unified_server(
         ws_port: Port for WebSocket streaming (default 8765)
         static_dir: Directory containing static files (dashboard build)
         nomic_dir: Path to .nomic directory for state access
+        ssl_cert: Path to SSL certificate file (optional)
+        ssl_key: Path to SSL private key file (optional)
+
+    Environment variables:
+        ARAGORA_SSL_ENABLED: Set to 'true' to enable SSL
+        ARAGORA_SSL_CERT: Path to SSL certificate
+        ARAGORA_SSL_KEY: Path to SSL private key
+
+    Example:
+        # Without SSL
+        await run_unified_server()
+
+        # With SSL
+        await run_unified_server(
+            ssl_cert="/path/to/cert.pem",
+            ssl_key="/path/to/key.pem",
+        )
     """
+    # Check environment variables for SSL config
+    from aragora.config import SSL_ENABLED, SSL_CERT_PATH, SSL_KEY_PATH
+
+    if ssl_cert is None and SSL_ENABLED:
+        ssl_cert = SSL_CERT_PATH
+        ssl_key = SSL_KEY_PATH
+
     server = UnifiedServer(
         http_port=http_port,
         ws_port=ws_port,
         static_dir=static_dir,
         nomic_dir=nomic_dir,
+        ssl_cert=ssl_cert,
+        ssl_key=ssl_key,
     )
     await server.start()

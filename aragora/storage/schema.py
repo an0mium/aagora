@@ -567,6 +567,121 @@ class DatabaseManager:
         return f"DatabaseManager({self.db_path!r})"
 
 
+# ============================================================================
+# Performance Indexes
+# ============================================================================
+
+# Index definitions for commonly queried columns
+# Format: (table_name, index_name, column_expression)
+PERFORMANCE_INDEXES = [
+    # Memory store indexes for agent/debate lookups
+    ("memory_store", "idx_memory_agent_debate", "agent_name, debate_id"),
+    ("memory_store", "idx_memory_timestamp", "timestamp"),
+
+    # Continuum memory indexes for time-based queries
+    ("continuum_memory", "idx_continuum_timestamp", "timestamp"),
+    ("continuum_memory", "idx_continuum_tier", "tier"),
+
+    # Votes table indexes
+    ("votes", "idx_votes_agent_debate", "agent_name, debate_id"),
+    ("votes", "idx_votes_debate_round", "debate_id, round_num"),
+
+    # ELO matches for history lookups
+    ("matches", "idx_matches_agent", "agent_name"),
+    ("matches", "idx_matches_timestamp", "timestamp"),
+
+    # Debates table for listing
+    ("debates", "idx_debates_created", "created_at"),
+    ("debates", "idx_debates_status", "status"),
+
+    # Consensus memory for debate lookups
+    ("consensus_memory", "idx_consensus_debate", "debate_id"),
+]
+
+
+def create_performance_indexes(conn: sqlite3.Connection, tables_to_index: list[str] | None = None) -> dict:
+    """
+    Create performance indexes on frequently-queried columns.
+
+    This function is idempotent - it uses CREATE INDEX IF NOT EXISTS
+    so it's safe to call multiple times.
+
+    Args:
+        conn: SQLite connection
+        tables_to_index: Optional list of table names to index. If None, indexes all.
+
+    Returns:
+        Dict with results:
+        {
+            "created": [...],  # Indexes created
+            "skipped": [...],  # Indexes that already existed
+            "errors": [...],   # Tables that don't exist or had errors
+        }
+    """
+    created = []
+    skipped = []
+    errors = []
+
+    # Get list of existing tables
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    existing_tables = {row[0] for row in cursor.fetchall()}
+
+    # Get list of existing indexes
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+    existing_indexes = {row[0] for row in cursor.fetchall()}
+
+    for table, index_name, columns in PERFORMANCE_INDEXES:
+        # Filter by tables_to_index if specified
+        if tables_to_index and table not in tables_to_index:
+            continue
+
+        # Skip if table doesn't exist
+        if table not in existing_tables:
+            errors.append(f"{index_name}: table '{table}' does not exist")
+            continue
+
+        # Skip if index already exists
+        if index_name in existing_indexes:
+            skipped.append(index_name)
+            continue
+
+        # Validate column names before creating index
+        for col in columns.split(","):
+            col = col.strip()
+            if not _validate_sql_identifier(col):
+                errors.append(f"{index_name}: invalid column name '{col}'")
+                continue
+
+        # Create the index
+        try:
+            sql = f"CREATE INDEX IF NOT EXISTS {index_name} ON {table}({columns})"
+            conn.execute(sql)
+            created.append(index_name)
+            logger.info(f"Created index {index_name} on {table}({columns})")
+        except sqlite3.Error as e:
+            errors.append(f"{index_name}: {e}")
+
+    conn.commit()
+
+    return {
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+def analyze_tables(conn: sqlite3.Connection) -> None:
+    """
+    Run ANALYZE on all tables to update query planner statistics.
+
+    Should be called after bulk inserts or after creating indexes
+    to help SQLite choose optimal query plans.
+    """
+    conn.execute("ANALYZE")
+    conn.commit()
+    logger.info("Ran ANALYZE on database")
+
+
 class ConnectionPool:
     """
     Thread-safe SQLite connection pool.

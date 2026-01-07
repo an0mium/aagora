@@ -130,35 +130,35 @@ class TestHealthEndpoint:
         assert data["status"] == "healthy"
 
     def test_returns_component_status(self, system_handler):
-        """Should return component status."""
+        """Should return component status in checks dict."""
         result = system_handler.handle("/api/health", {}, None)
 
         data = json.loads(result.body)
-        assert "components" in data
-        assert "storage" in data["components"]
-        assert "elo_system" in data["components"]
-        assert "nomic_dir" in data["components"]
+        assert "checks" in data
+        assert "database" in data["checks"]
+        assert "elo_system" in data["checks"]
+        assert "nomic_dir" in data["checks"]
 
     def test_storage_available(self, system_handler):
-        """Should show storage as available."""
+        """Should show database as available."""
         result = system_handler.handle("/api/health", {}, None)
 
         data = json.loads(result.body)
-        assert data["components"]["storage"] is True
+        assert data["checks"]["database"]["healthy"] is True
 
     def test_elo_system_available(self, system_handler):
         """Should show ELO system as available."""
         result = system_handler.handle("/api/health", {}, None)
 
         data = json.loads(result.body)
-        assert data["components"]["elo_system"] is True
+        assert data["checks"]["elo_system"]["healthy"] is True
 
     def test_nomic_dir_available(self, system_handler, tmp_path):
         """Should show nomic_dir as available."""
         result = system_handler.handle("/api/health", {}, None)
 
         data = json.loads(result.body)
-        assert data["components"]["nomic_dir"] is True
+        assert data["checks"]["nomic_dir"]["healthy"] is True
 
     def test_returns_version(self, system_handler):
         """Should return version."""
@@ -173,8 +173,8 @@ class TestHealthEndpoint:
         result = handler.handle("/api/health", {}, None)
 
         data = json.loads(result.body)
-        assert data["components"]["storage"] is False
-        assert data["components"]["elo_system"] is False
+        assert data["checks"]["database"]["healthy"] is False
+        assert data["checks"]["elo_system"]["healthy"] is False
 
 
 # ============================================================================
@@ -638,11 +638,13 @@ class TestSystemEdgeCases:
         assert data["cycles"] == []
 
     def test_nomic_dir_exists_check(self, system_handler, tmp_path):
-        """Should check if nomic_dir actually exists."""
+        """Should add warning when nomic_dir doesn't exist."""
         # Point to non-existent directory
         system_handler.ctx["nomic_dir"] = tmp_path / "nonexistent"
 
         result = system_handler.handle("/api/health", {}, None)
 
         data = json.loads(result.body)
-        assert data["components"]["nomic_dir"] is False
+        # Non-existent nomic_dir is a warning, not a failure
+        assert data["checks"]["nomic_dir"]["healthy"] is True
+        assert "warning" in data["checks"]["nomic_dir"]

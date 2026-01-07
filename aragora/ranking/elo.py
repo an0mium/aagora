@@ -25,6 +25,7 @@ from aragora.config import (
     ELO_K_FACTOR,
     ELO_CALIBRATION_MIN_COUNT,
 )
+from aragora.ranking.database import EloDatabase
 from aragora.utils.json_helpers import safe_json_loads
 
 logger = logging.getLogger(__name__)
@@ -128,11 +129,12 @@ class EloSystem:
 
     def __init__(self, db_path: str = DB_ELO_PATH):
         self.db_path = Path(db_path)
+        self._db = EloDatabase(db_path)
         self._init_db()
 
     def _init_db(self) -> None:
         """Initialize database schema using SchemaManager."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             manager = SchemaManager(conn, "elo", current_version=ELO_SCHEMA_VERSION)
 
             # Register migration from v1 to v2: add calibration columns
@@ -257,7 +259,7 @@ class EloSystem:
 
     def get_rating(self, agent_name: str) -> AgentRating:
         """Get or create rating for an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -304,7 +306,7 @@ class EloSystem:
             return {}
 
         result = {}
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             # Use parameterized IN clause
@@ -349,7 +351,7 @@ class EloSystem:
 
     def _save_rating(self, rating: AgentRating) -> None:
         """Save rating to database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -399,7 +401,7 @@ class EloSystem:
         if not ratings:
             return
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             for rating in ratings:
                 cursor.execute(
@@ -452,7 +454,7 @@ class EloSystem:
         if not entries:
             return
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany(
                 "INSERT INTO elo_history (agent_name, elo, debate_id) VALUES (?, ?, ?)",
@@ -588,7 +590,7 @@ class EloSystem:
         elo_changes: dict[str, float],
     ):
         """Save match to history."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -609,7 +611,7 @@ class EloSystem:
 
     def _record_elo_history(self, agent_name: str, elo: float, debate_id: str | None = None) -> None:
         """Record ELO at a point in time."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -730,7 +732,7 @@ class EloSystem:
 
     def get_leaderboard(self, limit: int = 20, domain: str | None = None) -> list[AgentRating]:
         """Get top agents by ELO."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -783,7 +785,7 @@ class EloSystem:
 
     def get_elo_history(self, agent_name: str, limit: int = 50) -> list[tuple[str, float]]:
         """Get ELO history for an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -803,7 +805,7 @@ class EloSystem:
         Returns list of dicts with: debate_id, winner, participants, domain,
         elo_changes, created_at
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -832,7 +834,7 @@ class EloSystem:
 
     def get_head_to_head(self, agent_a: str, agent_b: str) -> dict:
         """Get head-to-head statistics between two agents."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             # Escape LIKE special characters to prevent SQL injection
@@ -869,7 +871,7 @@ class EloSystem:
 
     def get_stats(self) -> dict:
         """Get overall system statistics."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*), AVG(elo), MAX(elo), MIN(elo) FROM ratings")
             ratings_row = cursor.fetchone()
@@ -910,7 +912,7 @@ class EloSystem:
             predicted_winner: Agent predicted to win
             confidence: Confidence level (0.0 to 1.0)
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -940,7 +942,7 @@ class EloSystem:
         Returns:
             Dict of predictor_agent -> brier_score for this prediction
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -984,7 +986,7 @@ class EloSystem:
 
         Only includes agents with minimum predictions.
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -1024,7 +1026,7 @@ class EloSystem:
         self, agent_name: str, limit: int = 50
     ) -> list[dict]:
         """Get recent predictions made by an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -1078,7 +1080,7 @@ class EloSystem:
         brier = (confidence - (1.0 if correct else 0.0)) ** 2
         bucket_key = self._get_bucket_key(confidence)
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
 
             # Update domain calibration
@@ -1124,7 +1126,7 @@ class EloSystem:
 
     def get_domain_calibration(self, agent_name: str, domain: Optional[str] = None) -> dict:
         """Get calibration statistics for an agent, optionally filtered by domain."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             if domain:
                 cursor.execute(
@@ -1168,7 +1170,7 @@ class EloSystem:
 
     def get_calibration_by_bucket(self, agent_name: str, domain: Optional[str] = None) -> list[dict]:
         """Get calibration broken down by confidence bucket for calibration curves."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             if domain:
                 cursor.execute(
@@ -1265,7 +1267,7 @@ class EloSystem:
             position_change_a_after_b, position_change_b_after_a = position_change_b_after_a, position_change_a_after_b
             a_win, b_win = b_win, a_win
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -1312,7 +1314,7 @@ class EloSystem:
 
         now = datetime.now().isoformat()
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             for upd in updates:
                 agent_a = upd.get("agent_a", "")
@@ -1349,7 +1351,7 @@ class EloSystem:
         """Get raw relationship data between two agents."""
         if agent_a > agent_b:
             agent_a, agent_b = agent_b, agent_a
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? AND agent_b = ?",
@@ -1368,7 +1370,7 @@ class EloSystem:
 
     def get_all_relationships_for_agent(self, agent_name: str) -> list[dict]:
         """Get all relationships involving an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self._db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT agent_a, agent_b, debate_count, agreement_count, critique_count_a_to_b, critique_count_b_to_a, critique_accepted_a_to_b, critique_accepted_b_to_a, position_changes_a_after_b, position_changes_b_after_a, a_wins_over_b, b_wins_over_a FROM agent_relationships WHERE agent_a = ? OR agent_b = ? ORDER BY debate_count DESC",

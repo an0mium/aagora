@@ -1195,34 +1195,41 @@ class Arena:
         if is_aragora_topic:
             try:
                 from pathlib import Path
-                import os
+                import asyncio
 
                 # Find project root (where CLAUDE.md and docs/ are)
                 project_root = Path(__file__).parent.parent.parent
                 docs_dir = project_root / "docs"
 
-                aragora_context_parts = []
+                aragora_context_parts: list[str] = []
+                loop = asyncio.get_running_loop()
 
-                # Read key documentation files
+                # Helper to read file in thread pool (non-blocking)
+                def _read_file_sync(path: Path, limit: int) -> str | None:
+                    try:
+                        if path.exists():
+                            return path.read_text()[:limit]
+                    except (OSError, UnicodeDecodeError):
+                        pass
+                    return None
+
+                # Read key documentation files asynchronously
                 key_docs = ["FEATURES.md", "ARCHITECTURE.md", "QUICKSTART.md", "STATUS.md"]
                 for doc_name in key_docs:
                     doc_path = docs_dir / doc_name
-                    if doc_path.exists():
-                        try:
-                            content = doc_path.read_text()[:3000]  # Limit per file
-                            aragora_context_parts.append(f"### {doc_name}\n{content}")
-                        except Exception as e:
-                            logger.debug(f"Failed to read {doc_name}: {e}")
+                    content = await loop.run_in_executor(
+                        None, lambda p=doc_path: _read_file_sync(p, 3000)
+                    )
+                    if content:
+                        aragora_context_parts.append(f"### {doc_name}\n{content}")
 
                 # Also include CLAUDE.md for project overview
                 claude_md = project_root / "CLAUDE.md"
-                if claude_md.exists():
-                    try:
-                        content = claude_md.read_text()[:2000]
-                        aragora_context_parts.insert(0, f"### Project Overview (CLAUDE.md)\n{content}")
-                    except (OSError, UnicodeDecodeError):
-                        # Skip if file can't be read (permission, encoding issues)
-                        pass
+                content = await loop.run_in_executor(
+                    None, lambda: _read_file_sync(claude_md, 2000)
+                )
+                if content:
+                    aragora_context_parts.insert(0, f"### Project Overview (CLAUDE.md)\n{content}")
 
                 if aragora_context_parts:
                     context_parts.append(

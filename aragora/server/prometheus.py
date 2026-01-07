@@ -147,6 +147,32 @@ if PROMETHEUS_AVAILABLE:
         "Aragora server information",
     )
 
+    # Database metrics
+    DB_QUERY_DURATION = Histogram(
+        "aragora_db_query_duration_seconds",
+        "Database query execution time",
+        ["operation", "table"],  # operation: select, insert, update, delete
+        buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    )
+
+    DB_QUERY_TOTAL = Counter(
+        "aragora_db_queries_total",
+        "Total database queries",
+        ["operation", "table"],
+    )
+
+    DB_ERRORS_TOTAL = Counter(
+        "aragora_db_errors_total",
+        "Total database errors",
+        ["error_type", "operation"],
+    )
+
+    DB_CONNECTION_POOL_SIZE = Gauge(
+        "aragora_db_connection_pool_size",
+        "Database connection pool size",
+        ["state"],  # active, idle
+    )
+
 
 # ============================================================================
 # Fallback Implementation (when prometheus_client not available)
@@ -409,6 +435,60 @@ def set_server_info(version: str, python_version: str, start_time: float):
         })
 
 
+def record_db_query(operation: str, table: str, duration_seconds: float):
+    """Record a database query.
+
+    Args:
+        operation: Query operation type (select, insert, update, delete)
+        table: Table name being queried
+        duration_seconds: Query execution time
+    """
+    if PROMETHEUS_AVAILABLE:
+        DB_QUERY_DURATION.labels(operation=operation, table=table).observe(duration_seconds)
+        DB_QUERY_TOTAL.labels(operation=operation, table=table).inc()
+    else:
+        _simple_metrics.observe_histogram(
+            "aragora_db_query_duration_seconds",
+            duration_seconds,
+            {"operation": operation, "table": table},
+        )
+        _simple_metrics.inc_counter(
+            "aragora_db_queries_total",
+            {"operation": operation, "table": table},
+        )
+
+
+def record_db_error(error_type: str, operation: str):
+    """Record a database error.
+
+    Args:
+        error_type: Type of error (e.g., "timeout", "connection", "constraint")
+        operation: Operation that failed
+    """
+    if PROMETHEUS_AVAILABLE:
+        DB_ERRORS_TOTAL.labels(error_type=error_type, operation=operation).inc()
+    else:
+        _simple_metrics.inc_counter(
+            "aragora_db_errors_total",
+            {"error_type": error_type, "operation": operation},
+        )
+
+
+def set_db_pool_size(active: int, idle: int):
+    """Set database connection pool sizes.
+
+    Args:
+        active: Number of active connections
+        idle: Number of idle connections
+    """
+    if PROMETHEUS_AVAILABLE:
+        DB_CONNECTION_POOL_SIZE.labels(state="active").set(active)
+        DB_CONNECTION_POOL_SIZE.labels(state="idle").set(idle)
+    else:
+        _simple_metrics.set_gauge("aragora_db_connection_pool_size", active, {"state": "active"})
+        _simple_metrics.set_gauge("aragora_db_connection_pool_size", idle, {"state": "idle"})
+
+
 # ============================================================================
 # Decorators for Easy Instrumentation
 # ============================================================================
@@ -448,5 +528,63 @@ def timed_agent_generation(agent_type: str, model: str):
             finally:
                 duration = time.perf_counter() - start
                 record_agent_generation(agent_type, model, duration)
+        return wrapper
+    return decorator
+
+
+def timed_db_query(operation: str, table: str):
+    """Decorator to time database query execution.
+
+    Args:
+        operation: Query operation type (select, insert, update, delete)
+        table: Table name being queried
+
+    Usage:
+        @timed_db_query("select", "debates")
+        def list_debates(self, limit: int):
+            ...
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                record_db_error(type(e).__name__, operation)
+                raise
+            finally:
+                duration = time.perf_counter() - start
+                record_db_query(operation, table, duration)
+        return wrapper
+    return decorator
+
+
+def timed_db_query_async(operation: str, table: str):
+    """Async decorator to time database query execution.
+
+    Args:
+        operation: Query operation type (select, insert, update, delete)
+        table: Table name being queried
+
+    Usage:
+        @timed_db_query_async("select", "debates")
+        async def list_debates(self, limit: int):
+            ...
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = await func(*args, **kwargs)
+                return result
+            except Exception as e:
+                record_db_error(type(e).__name__, operation)
+                raise
+            finally:
+                duration = time.perf_counter() - start
+                record_db_query(operation, table, duration)
         return wrapper
     return decorator

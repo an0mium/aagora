@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from aragora.resilience import CircuitBreaker
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,48 +115,6 @@ class TwitterRateLimiter:
         self.call_times.append(time.time())
 
 
-class CircuitBreaker:
-    """Circuit breaker for external API calls."""
-
-    def __init__(
-        self,
-        failure_threshold: int = 5,
-        recovery_timeout: int = 60,
-    ):
-        self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
-        self.failures = 0
-        self.last_failure_time: Optional[float] = None
-        self.is_open = False
-
-    def record_failure(self) -> None:
-        """Record a failure."""
-        self.failures += 1
-        self.last_failure_time = time.time()
-        if self.failures >= self.failure_threshold:
-            self.is_open = True
-            logger.warning("Circuit breaker opened")
-
-    def record_success(self) -> None:
-        """Record a success."""
-        self.failures = 0
-        self.is_open = False
-
-    def can_proceed(self) -> bool:
-        """Check if a call can proceed."""
-        if not self.is_open:
-            return True
-
-        # Check if recovery timeout has passed
-        if self.last_failure_time:
-            elapsed = time.time() - self.last_failure_time
-            if elapsed >= self.recovery_timeout:
-                logger.info("Circuit breaker attempting recovery")
-                return True
-
-        return False
-
-
 class TwitterPosterConnector:
     """
     Post debate content to Twitter/X.
@@ -191,7 +151,8 @@ class TwitterPosterConnector:
         self.upload_url = "https://upload.twitter.com/1.1"
 
         self.rate_limiter = TwitterRateLimiter()
-        self.circuit_breaker = CircuitBreaker()
+        # Use 1 minute cooldown with higher threshold for Twitter API (matches original)
+        self.circuit_breaker = CircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
 
         # Log warning if credentials incomplete
         if not all([self.api_key, self.api_secret, self.access_token, self.access_secret]):

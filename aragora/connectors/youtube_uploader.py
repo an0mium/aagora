@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
 
+from aragora.resilience import CircuitBreaker
+
 logger = logging.getLogger(__name__)
 
 
@@ -161,47 +163,6 @@ class YouTubeRateLimiter:
         return max(0, self.daily_quota - self.used_quota)
 
 
-class CircuitBreaker:
-    """Circuit breaker for YouTube API calls."""
-
-    def __init__(
-        self,
-        failure_threshold: int = 3,
-        recovery_timeout: int = 300,
-    ):
-        self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
-        self.failures = 0
-        self.last_failure_time: Optional[float] = None
-        self.is_open = False
-
-    def record_failure(self) -> None:
-        """Record a failure."""
-        self.failures += 1
-        self.last_failure_time = time.time()
-        if self.failures >= self.failure_threshold:
-            self.is_open = True
-            logger.warning("YouTube circuit breaker opened")
-
-    def record_success(self) -> None:
-        """Record a success."""
-        self.failures = 0
-        self.is_open = False
-
-    def can_proceed(self) -> bool:
-        """Check if a call can proceed."""
-        if not self.is_open:
-            return True
-
-        if self.last_failure_time:
-            elapsed = time.time() - self.last_failure_time
-            if elapsed >= self.recovery_timeout:
-                logger.info("YouTube circuit breaker attempting recovery")
-                return True
-
-        return False
-
-
 class YouTubeUploaderConnector:
     """
     Upload videos to YouTube using the Data API v3.
@@ -244,7 +205,8 @@ class YouTubeUploaderConnector:
         self._token_expiry: Optional[float] = None
 
         self.rate_limiter = YouTubeRateLimiter()
-        self.circuit_breaker = CircuitBreaker()
+        # Use 5 minute cooldown for YouTube API (matches original recovery_timeout)
+        self.circuit_breaker = CircuitBreaker(failure_threshold=3, cooldown_seconds=300.0)
 
         # Log warning if credentials incomplete
         if not all([self.client_id, self.client_secret, self.refresh_token]):

@@ -17,6 +17,7 @@ Endpoints:
 
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -119,22 +120,83 @@ class SystemHandler(BaseHandler):
         return None
 
     def _health_check(self) -> HandlerResult:
-        """Return health check status."""
-        nomic_dir = self.get_nomic_dir()
-        storage = self.get_storage()
-        elo = self.get_elo_system()
+        """Comprehensive health check for k8s/docker deployments.
 
+        Returns 200 when all critical services are healthy, 503 when degraded.
+        Suitable for kubernetes liveness/readiness probes.
+
+        Checks:
+        - database: Can execute a query
+        - storage: Debate storage is initialized
+        - elo_system: ELO ranking system is available
+        - nomic_dir: Nomic state directory exists
+        """
+        checks = {}
+        all_healthy = True
+        start_time = time.time()
+
+        # Check database connectivity
+        try:
+            storage = self.get_storage()
+            if storage is not None:
+                # Try to execute a simple query to verify DB is responsive
+                storage.list_debates(limit=1)
+                checks["database"] = {"healthy": True, "latency_ms": 0}
+            else:
+                checks["database"] = {"healthy": False, "error": "Storage not initialized"}
+                all_healthy = False
+        except Exception as e:
+            checks["database"] = {"healthy": False, "error": str(e)[:100]}
+            all_healthy = False
+
+        # Check ELO system
+        try:
+            elo = self.get_elo_system()
+            if elo is not None:
+                # Verify ELO system is functional
+                elo.get_leaderboard(limit=1)
+                checks["elo_system"] = {"healthy": True}
+            else:
+                checks["elo_system"] = {"healthy": False, "error": "ELO system not initialized"}
+                all_healthy = False
+        except Exception as e:
+            checks["elo_system"] = {"healthy": False, "error": str(e)[:100]}
+            all_healthy = False
+
+        # Check nomic directory
+        nomic_dir = self.get_nomic_dir()
+        if nomic_dir is not None and nomic_dir.exists():
+            checks["nomic_dir"] = {"healthy": True, "path": str(nomic_dir)}
+        else:
+            checks["nomic_dir"] = {"healthy": False, "error": "Directory not found"}
+            # Non-critical - don't fail health check for this
+            checks["nomic_dir"]["healthy"] = True  # Downgrade to warning
+            checks["nomic_dir"]["warning"] = "Nomic directory not configured"
+
+        # Check WebSocket manager (if available in context)
+        ws_manager = self.ctx.get("ws_manager")
+        if ws_manager is not None:
+            try:
+                client_count = len(getattr(ws_manager, 'clients', []))
+                checks["websocket"] = {"healthy": True, "active_clients": client_count}
+            except Exception as e:
+                checks["websocket"] = {"healthy": False, "error": str(e)[:100]}
+        else:
+            checks["websocket"] = {"healthy": True, "warning": "WebSocket manager not available"}
+
+        # Calculate response time
+        response_time_ms = round((time.time() - start_time) * 1000, 2)
+
+        status_code = 200 if all_healthy else 503
         health = {
-            "status": "healthy",
-            "components": {
-                "storage": storage is not None,
-                "elo_system": elo is not None,
-                "nomic_dir": nomic_dir is not None and nomic_dir.exists() if nomic_dir else False,
-            },
+            "status": "healthy" if all_healthy else "degraded",
+            "checks": checks,
             "version": "1.0.0",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "response_time_ms": response_time_ms,
         }
 
-        return json_response(health)
+        return json_response(health, status=status_code)
 
     def _detailed_health_check(self) -> HandlerResult:
         """Return detailed health status with system observer metrics.

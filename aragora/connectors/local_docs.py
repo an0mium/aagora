@@ -151,14 +151,31 @@ class LocalDocsConnector(BaseConnector):
         """
         # Compile pattern with ReDoS protection
         if regex:
-            # Reject patterns with nested quantifiers that could cause catastrophic backtracking
-            # Patterns like (a+)+, (.*)+, (\w+)*, etc. are dangerous
+            # Reject patterns that could cause catastrophic backtracking (ReDoS)
+            # These patterns have polynomial or exponential time complexity
             dangerous_patterns = [
-                r'\([^)]*[+*][^)]*\)[+*]',  # Nested quantifiers: (x+)+ or (x*)*
-                r'\([^)]*\|[^)]*\)[+*]',     # Alternation with quantifier: (a|b)+
+                # Nested quantifiers in groups
+                r'\([^)]*[+*][^)]*\)[+*]',      # (x+)+ or (x*)*
+                r'\([^)]*[+*][^)]*\)\{',        # (x+){n,m}
+                # Alternation with quantifiers
+                r'\([^)]*\|[^)]*\)[+*]',        # (a|b)+
+                r'\([^)]*\|[^)]*\)\{',          # (a|b){n,m}
+                # Overlapping patterns with quantifiers
+                r'\.\*[^)]*\.\*',               # .*x.*
+                r'\.\+[^)]*\.\+',               # .+x.+
+                # Quantifier after quantifier (rare but dangerous)
+                r'[+*]\s*[+*]',                 # x++, x**
+                r'[+*]\s*\{',                   # x+{n}
+                r'\}\s*[+*]',                   # {n}+
+                # Character class with quantifier followed by similar
+                r'\[[^\]]+\][+*][^)]*\[[^\]]+\][+*]',  # [abc]+[abc]+
+                # Greedy quantifiers with overlapping possibilities
+                r'\\w[+*][^)]*\\w[+*]',         # \w+\w+
+                r'\\d[+*][^)]*\\d[+*]',         # \d+\d+
+                r'\\s[+*][^)]*\\s[+*]',         # \s+\s+
             ]
             for danger in dangerous_patterns:
-                if re.search(danger, query):
+                if re.search(danger, query, re.IGNORECASE):
                     logger.warning(f"Rejecting potentially dangerous regex pattern: {query}")
                     # Fall back to literal search
                     pattern = re.compile(re.escape(query), re.IGNORECASE)

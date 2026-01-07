@@ -18,8 +18,10 @@ import re
 from typing import Optional, TYPE_CHECKING
 
 from aragora.agents.base import CritiqueMixin, MAX_CONTEXT_CHARS, MAX_MESSAGE_CHARS
+from aragora.agents.errors import AgentCircuitOpenError
 from aragora.agents.registry import AgentRegistry
 from aragora.core import Agent, Critique, Message
+from aragora.resilience import CircuitBreaker, get_circuit_breaker
 
 if TYPE_CHECKING:
     from aragora.agents.api_agents import OpenRouterAgent
@@ -118,12 +120,38 @@ class CLIAgent(CritiqueMixin, Agent):
         role: str = "proposer",
         timeout: int = 120,
         enable_fallback: bool = True,
+        circuit_breaker: CircuitBreaker | None = None,
+        enable_circuit_breaker: bool = True,
     ):
         super().__init__(name, model, role)
         self.timeout = timeout
         self.enable_fallback = enable_fallback
         self._fallback_agent: Optional["OpenRouterAgent"] = None
         self._fallback_used = False  # Track if fallback was triggered this session
+        self.enable_circuit_breaker = enable_circuit_breaker
+
+        # Use provided circuit breaker or get from global registry
+        if circuit_breaker is not None:
+            self._circuit_breaker = circuit_breaker
+        elif enable_circuit_breaker:
+            self._circuit_breaker = get_circuit_breaker(
+                f"cli_agent_{name}",
+                failure_threshold=3,
+                cooldown_seconds=60.0,
+            )
+        else:
+            self._circuit_breaker = None
+
+    @property
+    def circuit_breaker(self) -> CircuitBreaker | None:
+        """Get the circuit breaker for this agent."""
+        return self._circuit_breaker
+
+    def is_circuit_open(self) -> bool:
+        """Check if the circuit breaker is open (blocking requests)."""
+        if self._circuit_breaker is None:
+            return False
+        return not self._circuit_breaker.can_proceed()
 
     def _get_fallback_agent(self) -> Optional["OpenRouterAgent"]:
         """Get or create the OpenRouter fallback agent.
@@ -231,7 +259,18 @@ class CLIAgent(CritiqueMixin, Agent):
         return sanitized
 
     async def _run_cli(self, command: list[str], input_text: str | None = None) -> str:
-        """Run a CLI command and return output."""
+        """Run a CLI command and return output.
+
+        Integrates with circuit breaker to prevent cascading failures.
+        """
+        # Check circuit breaker before attempting the call
+        if self._circuit_breaker is not None and not self._circuit_breaker.can_proceed():
+            raise AgentCircuitOpenError(
+                "Circuit breaker is open for CLI agent",
+                agent_name=self.name,
+                cooldown_seconds=self._circuit_breaker.cooldown_seconds,
+            )
+
         # Sanitize all command arguments to prevent 'embedded null byte' errors
         sanitized_command = [self._sanitize_cli_arg(arg) for arg in command]
         proc = None
@@ -251,16 +290,32 @@ class CLIAgent(CritiqueMixin, Agent):
             )
 
             if proc.returncode != 0:
+                # Record failure to circuit breaker
+                if self._circuit_breaker is not None:
+                    self._circuit_breaker.record_failure()
                 raise RuntimeError(f"CLI command failed: {stderr.decode('utf-8', errors='replace')}")
+
+            # Record success to circuit breaker
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_success()
 
             return stdout.decode('utf-8', errors='replace').strip()
 
         except asyncio.TimeoutError:
+            # Record failure to circuit breaker
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_failure()
             if proc:
                 proc.kill()
                 await proc.wait()  # Ensure process is fully cleaned up
             raise TimeoutError(f"CLI command timed out after {self.timeout}s")
+        except AgentCircuitOpenError:
+            # Don't record circuit open errors as failures - just re-raise
+            raise
         except Exception as e:
+            # Record failure to circuit breaker
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_failure()
             if proc and proc.returncode is None:
                 logger.debug(f"[cleanup] Killing subprocess after error: {e}")
                 proc.kill()

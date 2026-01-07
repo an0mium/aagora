@@ -14,6 +14,26 @@ from unittest.mock import Mock, MagicMock
 
 import pytest
 
+from aragora.resilience import reset_all_circuit_breakers
+
+
+# ============================================================================
+# Global Test Setup
+# ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def reset_circuit_breakers():
+    """Reset all circuit breakers before each test.
+
+    This ensures tests don't affect each other through shared circuit breaker state.
+    Auto-used so every test gets a clean circuit breaker state.
+    """
+    reset_all_circuit_breakers()
+    yield
+    # Also reset after test to ensure clean state for next test
+    reset_all_circuit_breakers()
+
 
 # ============================================================================
 # Temporary File/Directory Fixtures

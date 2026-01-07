@@ -33,6 +33,16 @@ class Critique:
     severity: float  # 0-1, how serious are the issues
     reasoning: str
 
+    @property
+    def target(self) -> str:
+        """Alias for target_agent for backward compatibility."""
+        return self.target_agent
+
+    @property
+    def content(self) -> str:
+        """Get the critique's content as formatted text."""
+        return self.to_prompt()
+
     def to_prompt(self) -> str:
         """Format critique for inclusion in prompts."""
         issues_str = "\n".join(f"  - {i}" for i in self.issues)

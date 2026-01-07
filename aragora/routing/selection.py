@@ -472,7 +472,7 @@ class AgentSelector:
         if len(scored) <= min_size:
             return [a for a, _ in scored]
 
-        team = []
+        team: list[AgentProfile] = []
         remaining = list(scored)
 
         while len(team) < max_size and remaining:
@@ -489,11 +489,11 @@ class AgentSelector:
                     team_traits.update(a.traits)
 
                 # Find most different agent
-                best_diff = None
-                best_diff_score = -1
+                best_diff: AgentProfile | None = None
+                best_diff_score: float = -1.0
 
                 for agent, score in remaining:
-                    diff_score = 0
+                    diff_score: float = 0.0
                     if agent.agent_type not in team_types:
                         diff_score += 0.5
                     new_traits = set(agent.traits) - team_traits
@@ -518,7 +518,7 @@ class AgentSelector:
         requirements: TaskRequirements,
     ) -> dict[str, str]:
         """Assign debate roles to team members."""
-        roles = {}
+        roles: dict[str, str] = {}
 
         if not team:
             return roles

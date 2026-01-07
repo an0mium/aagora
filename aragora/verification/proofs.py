@@ -25,15 +25,66 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Optional
 import asyncio
-import concurrent.futures
 import hashlib
 import json
 import subprocess
+import sys
+import tempfile
 import traceback
 import uuid
 
 # Timeout for code execution (seconds) - prevents infinite loops/CPU exhaustion
 EXEC_TIMEOUT_SECONDS = 5.0
+
+# Patterns that could enable sandbox escape via Python introspection
+DANGEROUS_PATTERNS = [
+    "__class__",
+    "__bases__",
+    "__subclasses__",
+    "__mro__",
+    "__globals__",
+    "__code__",
+    "__builtins__",
+    "__import__",
+    "__getattribute__",
+    "__reduce__",
+    "__reduce_ex__",
+    "exec(",
+    "eval(",
+    "compile(",
+    "open(",
+    "getattr(",
+    "setattr(",
+    "delattr(",
+    "globals(",
+    "locals(",
+    "vars(",
+    "dir(",
+    "breakpoint(",
+    "__dict__",
+    "__init__",
+    "__new__",
+    "__call__",
+    "__del__",
+    "os.",
+    "sys.",
+    "subprocess",
+    "importlib",
+]
+
+
+def _validate_code_safety(code: str) -> tuple[bool, str]:
+    """
+    Check code for dangerous patterns that could enable sandbox escape.
+
+    Returns:
+        Tuple of (is_safe, error_message)
+    """
+    code_lower = code.lower()
+    for pattern in DANGEROUS_PATTERNS:
+        if pattern.lower() in code_lower:
+            return False, f"Dangerous pattern detected: '{pattern}' is not allowed"
+    return True, ""
 
 # Safe subset of builtins for proof execution (no imports, no file access)
 SAFE_BUILTINS = {
@@ -61,31 +112,154 @@ SAFE_BUILTINS = {
 }
 
 
-def _exec_with_timeout(code: str, namespace: dict, timeout: float = EXEC_TIMEOUT_SECONDS) -> None:
+def _exec_in_subprocess(
+    code: str, timeout: float = EXEC_TIMEOUT_SECONDS
+) -> dict[str, Any]:
     """
-    Execute code with timeout protection.
+    Execute code in an isolated subprocess with hard timeout.
 
-    Runs exec() in a thread pool with timeout to prevent infinite loops
-    and CPU exhaustion from untrusted code.
+    Uses subprocess isolation to prevent sandbox escapes via __class__,
+    __getattribute__, and other Python introspection mechanisms. The subprocess
+    can be killed by the OS, providing a true timeout unlike thread-based approaches.
 
     Args:
         code: Python code to execute
-        namespace: Namespace dict (will be modified in-place)
+        timeout: Maximum execution time in seconds
+
+    Returns:
+        Dict with:
+            - success: bool
+            - result: Any value assigned to 'result' variable
+            - stdout: Captured stdout
+            - error: Error message if failed
+
+    Raises:
+        TimeoutError: If execution exceeds timeout
+        RuntimeError: If execution fails
+    """
+    # Validate code for dangerous patterns before execution
+    is_safe, error_msg = _validate_code_safety(code)
+    if not is_safe:
+        return {
+            "success": False,
+            "error": error_msg,
+            "stdout": "",
+            "result": None,
+        }
+
+    # Create wrapper script that captures execution results
+    wrapper_code = f'''
+import json
+import sys
+
+namespace = {{}}
+stdout_capture = []
+
+class OutputCapture:
+    def write(self, text):
+        stdout_capture.append(text)
+    def flush(self):
+        pass
+
+old_stdout = sys.stdout
+sys.stdout = OutputCapture()
+
+try:
+    exec({repr(code)}, {{"__builtins__": {{}}}}, namespace)
+    sys.stdout = old_stdout
+    print(json.dumps({{
+        "success": True,
+        "result": repr(namespace.get("result", namespace.get("__result__", None))),
+        "stdout": "".join(stdout_capture)
+    }}))
+except Exception as e:
+    sys.stdout = old_stdout
+    print(json.dumps({{
+        "success": False,
+        "error": f"{{type(e).__name__}}: {{str(e)}}"
+    }}))
+'''
+
+    try:
+        # Write wrapper to temp file and execute in subprocess
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.py', delete=False
+        ) as f:
+            f.write(wrapper_code)
+            f.flush()
+            temp_path = f.name
+
+        try:
+            result = subprocess.run(
+                [sys.executable, temp_path],
+                capture_output=True,
+                timeout=timeout,
+                text=True,
+            )
+
+            if result.returncode != 0 and not result.stdout:
+                return {
+                    "success": False,
+                    "error": result.stderr or "Process failed with no output",
+                    "stdout": "",
+                    "result": None,
+                }
+
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError:
+                return {
+                    "success": False,
+                    "error": f"Invalid JSON output: {result.stdout[:200]}",
+                    "stdout": result.stdout,
+                    "result": None,
+                }
+
+        finally:
+            import os
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(f"Code execution exceeded {timeout}s timeout")
+
+
+def _exec_with_timeout(code: str, namespace: dict, timeout: float = EXEC_TIMEOUT_SECONDS) -> None:
+    """
+    Execute code with timeout protection using subprocess isolation.
+
+    This function maintains backward compatibility while using subprocess
+    isolation under the hood for security.
+
+    Args:
+        code: Python code to execute
+        namespace: Namespace dict (will be modified in-place with result)
         timeout: Maximum execution time in seconds
 
     Raises:
         TimeoutError: If execution exceeds timeout
-        Exception: Any exception raised during execution
+        RuntimeError: If execution fails
     """
-    def run_exec():
-        exec(code, {"__builtins__": SAFE_BUILTINS}, namespace)
+    result = _exec_in_subprocess(code, timeout)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(run_exec)
+    if not result.get("success", False):
+        error_msg = result.get("error", "Unknown execution error")
+        if "AssertionError" in error_msg:
+            raise AssertionError(error_msg)
+        raise RuntimeError(error_msg)
+
+    # Parse result back into namespace
+    if result.get("result"):
         try:
-            future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            raise TimeoutError(f"Code execution exceeded {timeout}s timeout")
+            # Try to eval the repr'd result (safe for simple types)
+            namespace["__result__"] = eval(result["result"], {"__builtins__": {}})
+        except Exception:
+            namespace["__result__"] = result["result"]
+
+    if result.get("stdout"):
+        namespace["__stdout__"] = result["stdout"]
 
 
 class ProofType(Enum):

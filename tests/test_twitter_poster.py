@@ -24,14 +24,15 @@ from aragora.connectors.twitter_poster import (
     MAX_MEDIA_SIZE_MB,
     MAX_THREAD_LENGTH,
     MAX_TWEET_LENGTH,
-    CircuitBreaker,
     DebateContentFormatter,
     ThreadResult,
     TweetResult,
+    TwitterMediaError,
     TwitterPosterConnector,
     TwitterRateLimiter,
     create_debate_summary,
 )
+from aragora.resilience import CircuitBreaker
 
 
 # =============================================================================
@@ -71,7 +72,7 @@ def unconfigured_connector():
 @pytest.fixture
 def circuit_breaker():
     """Fresh circuit breaker instance."""
-    return CircuitBreaker(failure_threshold=5, recovery_timeout=60)
+    return CircuitBreaker(failure_threshold=5, cooldown_seconds=60.0)
 
 
 @pytest.fixture
@@ -209,8 +210,8 @@ class TestCircuitBreaker:
 
         assert circuit_breaker.can_proceed() is False
 
-        # Simulate timeout passing
-        circuit_breaker.last_failure_time = time.time() - 61  # 61 seconds ago
+        # Simulate timeout passing (use internal property for single-entity mode)
+        circuit_breaker._single_open_at = time.time() - 61  # 61 seconds ago
 
         assert circuit_breaker.can_proceed() is True
 
@@ -233,7 +234,7 @@ class TestCircuitBreaker:
 
     def test_custom_threshold_and_timeout(self):
         """Test circuit breaker with custom parameters."""
-        cb = CircuitBreaker(failure_threshold=3, recovery_timeout=30)
+        cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=30.0)
 
         for _ in range(2):
             cb.record_failure()
@@ -242,8 +243,8 @@ class TestCircuitBreaker:
         cb.record_failure()  # 3rd failure
         assert cb.is_open is True
 
-        # Recovery at 30 seconds
-        cb.last_failure_time = time.time() - 31
+        # Recovery at 30 seconds (use internal property for single-entity mode)
+        cb._single_open_at = time.time() - 31
         assert cb.can_proceed() is True
 
 
@@ -562,17 +563,19 @@ class TestTwitterPosterConnector:
         self, configured_connector, large_image_file
     ):
         """Test that files > 5MB are rejected."""
-        result = await configured_connector.upload_media(large_image_file)
-        assert result is None
+        with pytest.raises(TwitterMediaError) as exc_info:
+            await configured_connector.upload_media(large_image_file)
+        assert "too large" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_upload_media_returns_none_for_missing_files(
+    async def test_upload_media_raises_for_missing_files(
         self, configured_connector, tmp_path
     ):
-        """Test that missing files return None."""
+        """Test that missing files raise TwitterMediaError."""
         missing_file = tmp_path / "nonexistent.png"
-        result = await configured_connector.upload_media(missing_file)
-        assert result is None
+        with pytest.raises(TwitterMediaError) as exc_info:
+            await configured_connector.upload_media(missing_file)
+        assert "not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_upload_media_success(self, configured_connector, temp_image_file):
@@ -851,8 +854,8 @@ class TestTwitterConnectorIntegration:
 
         assert configured_connector.circuit_breaker.can_proceed() is False
 
-        # Simulate recovery timeout
-        configured_connector.circuit_breaker.last_failure_time = time.time() - 61
+        # Simulate recovery timeout (use internal property for single-entity mode)
+        configured_connector.circuit_breaker._single_open_at = time.time() - 61
 
         # Now should allow
         assert configured_connector.circuit_breaker.can_proceed() is True

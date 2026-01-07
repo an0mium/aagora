@@ -159,3 +159,143 @@ USER_EVENT_QUEUE_SIZE = _env_int("ARAGORA_USER_EVENT_QUEUE_SIZE", 10000)
 # === Belief Network ===
 BELIEF_MAX_ITERATIONS = _env_int("ARAGORA_BELIEF_MAX_ITERATIONS", 100)
 BELIEF_CONVERGENCE_THRESHOLD = _env_float("ARAGORA_BELIEF_CONVERGENCE_THRESHOLD", 0.001)
+
+# === SSL/TLS ===
+SSL_ENABLED = _env_bool("ARAGORA_SSL_ENABLED", False)
+SSL_CERT_PATH = _env_str("ARAGORA_SSL_CERT", "")
+SSL_KEY_PATH = _env_str("ARAGORA_SSL_KEY", "")
+
+
+# ============================================================================
+# Configuration Validation
+# ============================================================================
+
+class ConfigurationError(Exception):
+    """Raised when configuration is invalid."""
+    pass
+
+
+def validate_configuration(strict: bool = False) -> dict:
+    """
+    Validate configuration at startup.
+
+    Checks that:
+    - Numeric values are in valid ranges
+    - Required paths exist (if SSL enabled)
+    - At least one API provider is configured (in strict mode)
+
+    Args:
+        strict: If True, require at least one API key to be set
+
+    Returns:
+        Dict with validation results:
+        {
+            "valid": True/False,
+            "errors": [...],
+            "warnings": [...],
+            "config_summary": {...}
+        }
+
+    Raises:
+        ConfigurationError: If strict=True and critical errors found
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    errors = []
+    warnings = []
+
+    # Validate numeric ranges
+    if DEFAULT_RATE_LIMIT <= 0:
+        errors.append(f"ARAGORA_RATE_LIMIT must be positive, got {DEFAULT_RATE_LIMIT}")
+
+    if MAX_ROUNDS < 1:
+        errors.append(f"ARAGORA_MAX_ROUNDS must be >= 1, got {MAX_ROUNDS}")
+
+    if DEFAULT_ROUNDS > MAX_ROUNDS:
+        warnings.append(f"ARAGORA_DEFAULT_ROUNDS ({DEFAULT_ROUNDS}) > MAX_ROUNDS ({MAX_ROUNDS})")
+
+    if DB_TIMEOUT_SECONDS <= 0:
+        errors.append(f"ARAGORA_DB_TIMEOUT must be positive, got {DB_TIMEOUT_SECONDS}")
+
+    if DEBATE_TIMEOUT_SECONDS < 30:
+        warnings.append(f"ARAGORA_DEBATE_TIMEOUT is very low ({DEBATE_TIMEOUT_SECONDS}s)")
+
+    if WS_MAX_MESSAGE_SIZE < 1024:
+        warnings.append(f"ARAGORA_WS_MAX_MESSAGE_SIZE is very low ({WS_MAX_MESSAGE_SIZE} bytes)")
+
+    if MAX_AGENTS_PER_DEBATE > 20:
+        warnings.append(f"ARAGORA_MAX_AGENTS_PER_DEBATE is high ({MAX_AGENTS_PER_DEBATE}), may cause performance issues")
+
+    # Validate SSL configuration if enabled
+    if SSL_ENABLED:
+        if not SSL_CERT_PATH:
+            errors.append("ARAGORA_SSL_ENABLED=true but ARAGORA_SSL_CERT not set")
+        elif not os.path.exists(SSL_CERT_PATH):
+            errors.append(f"SSL certificate not found: {SSL_CERT_PATH}")
+
+        if not SSL_KEY_PATH:
+            errors.append("ARAGORA_SSL_ENABLED=true but ARAGORA_SSL_KEY not set")
+        elif not os.path.exists(SSL_KEY_PATH):
+            errors.append(f"SSL key not found: {SSL_KEY_PATH}")
+
+    # Check API keys (in strict mode)
+    api_keys_found = []
+    api_keys_checked = [
+        ("ANTHROPIC_API_KEY", "Anthropic"),
+        ("OPENAI_API_KEY", "OpenAI"),
+        ("GEMINI_API_KEY", "Gemini"),
+        ("GOOGLE_API_KEY", "Google"),
+        ("XAI_API_KEY", "xAI/Grok"),
+        ("GROK_API_KEY", "Grok"),
+        ("OPENROUTER_API_KEY", "OpenRouter"),
+    ]
+
+    for env_var, provider in api_keys_checked:
+        if os.getenv(env_var):
+            api_keys_found.append(provider)
+
+    if strict and not api_keys_found:
+        errors.append("No API keys configured. Set at least one of: " +
+                     ", ".join(var for var, _ in api_keys_checked))
+    elif not api_keys_found:
+        warnings.append("No API keys configured - agent functionality will be limited")
+
+    # Build config summary
+    config_summary = {
+        "rate_limit": DEFAULT_RATE_LIMIT,
+        "debate_timeout": DEBATE_TIMEOUT_SECONDS,
+        "max_rounds": MAX_ROUNDS,
+        "default_rounds": DEFAULT_ROUNDS,
+        "max_agents_per_debate": MAX_AGENTS_PER_DEBATE,
+        "ws_max_message_size": WS_MAX_MESSAGE_SIZE,
+        "db_timeout": DB_TIMEOUT_SECONDS,
+        "ssl_enabled": SSL_ENABLED,
+        "api_providers": api_keys_found,
+    }
+
+    # Log configuration at startup
+    is_valid = len(errors) == 0
+    if is_valid:
+        logger.info("Configuration validated successfully")
+        logger.info(f"  API providers: {', '.join(api_keys_found) if api_keys_found else 'none'}")
+        logger.info(f"  Rate limit: {DEFAULT_RATE_LIMIT} req/min")
+        logger.info(f"  Debate timeout: {DEBATE_TIMEOUT_SECONDS}s")
+        logger.info(f"  SSL: {'enabled' if SSL_ENABLED else 'disabled'}")
+    else:
+        for error in errors:
+            logger.error(f"Configuration error: {error}")
+    for warning in warnings:
+        logger.warning(f"Configuration warning: {warning}")
+
+    result = {
+        "valid": is_valid,
+        "errors": errors,
+        "warnings": warnings,
+        "config_summary": config_summary,
+    }
+
+    if strict and errors:
+        raise ConfigurationError(f"Configuration validation failed: {'; '.join(errors)}")
+
+    return result

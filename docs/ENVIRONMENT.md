@@ -93,6 +93,41 @@ For semantic search and memory retrieval.
 
 Currently uses OpenAI or Gemini embeddings based on available API keys.
 
+## Social Media APIs (Pulse Module)
+
+For trending topics and real-time context in debates. These power the Pulse ingestors.
+
+| Variable | Required | Description | Source |
+|----------|----------|-------------|--------|
+| `TWITTER_BEARER_TOKEN` | Optional | Twitter/X API v2 Bearer token for trending topics | [Twitter Developer Portal](https://developer.twitter.com/en/portal/dashboard) |
+
+**No credentials needed:**
+- **Reddit** - Uses public JSON API (`reddit.com/.json`)
+- **Hacker News** - Uses public Firebase API (`hacker-news.firebaseio.com`)
+
+These services are automatically enabled when the pulse module loads.
+
+### Getting Twitter API Access
+
+1. Create a developer account at [developer.twitter.com](https://developer.twitter.com)
+2. Create a new project and app
+3. Generate a Bearer Token (read-only access is sufficient)
+4. Add to your `.env`:
+   ```bash
+   TWITTER_BEARER_TOKEN=AAAAAAAAAAAAAAAAAAAAAx...
+   ```
+
+### Pulse Module Usage
+
+The pulse module fetches trending topics that can inform debate context:
+
+```python
+from aragora.pulse import PulseManager
+
+pulse = PulseManager()
+trends = await pulse.get_trending()  # Returns combined trends from all sources
+```
+
 ## Formal Verification
 
 > **Note:** These variables are defined but not yet actively used in the codebase.
@@ -175,6 +210,9 @@ ARAGORA_API_TOKEN=my-secret-token
 # Optional: Webhooks
 WEBHOOK_URL=https://myserver.com/aragora-events
 WEBHOOK_SECRET=hmac-secret
+
+# Optional: Social Media (Pulse module)
+TWITTER_BEARER_TOKEN=AAAA...  # For trending topics
 ```
 
 ## Troubleshooting
@@ -194,3 +232,139 @@ WEBHOOK_SECRET=hmac-secret
 ### "Rate limit exceeded"
 - Increase `RATE_LIMIT_PER_MINUTE`
 - Or wait for rate limit window to reset
+
+---
+
+## SSL/TLS Configuration
+
+Enable HTTPS for production deployments.
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `ARAGORA_SSL_ENABLED` | Optional | Enable SSL/TLS | `false` |
+| `ARAGORA_SSL_CERT` | If SSL enabled | Path to SSL certificate file | - |
+| `ARAGORA_SSL_KEY` | If SSL enabled | Path to SSL private key file | - |
+
+Example:
+```bash
+ARAGORA_SSL_ENABLED=true
+ARAGORA_SSL_CERT=/etc/ssl/certs/aragora.pem
+ARAGORA_SSL_KEY=/etc/ssl/private/aragora-key.pem
+```
+
+### Self-signed certificate for development
+```bash
+# Generate a self-signed certificate
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+# Use with Aragora
+ARAGORA_SSL_ENABLED=true
+ARAGORA_SSL_CERT=cert.pem
+ARAGORA_SSL_KEY=key.pem
+```
+
+---
+
+## Deployment Tuning Guides
+
+### High-Load Deployments
+
+For production systems handling many concurrent debates:
+
+```bash
+# Rate limiting - increase for high-traffic APIs
+ARAGORA_RATE_LIMIT=200          # 200 req/min per token
+ARAGORA_IP_RATE_LIMIT=500       # 500 req/min per IP
+
+# Debate limits
+ARAGORA_MAX_AGENTS_PER_DEBATE=8 # Limit agents per debate
+ARAGORA_MAX_CONCURRENT_DEBATES=50  # Allow more parallel debates
+
+# WebSocket settings
+ARAGORA_WS_MAX_MESSAGE_SIZE=131072  # 128KB for large messages
+ARAGORA_WS_HEARTBEAT=15            # More frequent heartbeats
+
+# Database timeouts
+ARAGORA_DB_TIMEOUT=60.0            # Longer timeout for complex queries
+
+# Cache TTLs - shorter for freshness
+ARAGORA_CACHE_LEADERBOARD=60       # 1 minute leaderboard cache
+ARAGORA_CACHE_AGENT_PROFILE=120    # 2 minute profile cache
+```
+
+### Development Mode
+
+For local development with faster iteration:
+
+```bash
+# Debug output
+ARAGORA_DEBUG=true
+ARAGORA_LOG_LEVEL=DEBUG
+
+# Disable SSL for localhost
+ARAGORA_SSL_ENABLED=false
+
+# Lower timeouts for faster feedback
+ARAGORA_DEBATE_TIMEOUT=120         # 2 minute debate timeout
+ARAGORA_DB_TIMEOUT=10.0            # Quick database timeout
+
+# Generous rate limits
+ARAGORA_RATE_LIMIT=1000
+ARAGORA_IP_RATE_LIMIT=1000
+
+# Full telemetry for debugging
+ARAGORA_TELEMETRY_LEVEL=SPECTACLE
+```
+
+### Testing Configuration
+
+For running test suites:
+
+```bash
+# Use in-memory or test databases
+ARAGORA_DB_ELO=:memory:
+ARAGORA_DB_MEMORY=:memory:
+
+# Short timeouts for fast tests
+ARAGORA_DB_TIMEOUT=5.0
+ARAGORA_DEBATE_TIMEOUT=30
+
+# Disable external services
+# (Don't set API keys to skip external API tests)
+
+# Disable SSL
+ARAGORA_SSL_ENABLED=false
+
+# Silent telemetry
+ARAGORA_TELEMETRY_LEVEL=SILENT
+```
+
+---
+
+## Configuration Validation
+
+Aragora validates configuration at startup. Check configuration with:
+
+```python
+from aragora.config import validate_configuration
+
+# Non-strict: logs warnings, returns validation result
+result = validate_configuration(strict=False)
+print(result["valid"])       # True if no errors
+print(result["warnings"])    # List of warnings
+print(result["config_summary"])  # Current config values
+
+# Strict: raises ConfigurationError on errors
+from aragora.config import validate_configuration, ConfigurationError
+try:
+    validate_configuration(strict=True)
+except ConfigurationError as e:
+    print(f"Config error: {e}")
+```
+
+### Validation Checks
+
+- **Rate limits**: Must be positive integers
+- **Timeouts**: Must be positive numbers
+- **SSL paths**: Must exist if SSL enabled
+- **API keys**: Warning if none configured (error in strict mode)

@@ -179,6 +179,65 @@ class AuthConfig:
             for k in sorted_keys[:to_remove]:
                 del entries_dict[k]
 
+    def cleanup_expired_entries(self, ttl_seconds: int = 3600) -> dict:
+        """
+        Proactively clean up expired rate limit entries.
+
+        This method can be called periodically (e.g., every 5 minutes)
+        to prevent memory from growing unbounded between requests.
+
+        Args:
+            ttl_seconds: Remove entries older than this (default: 1 hour)
+
+        Returns:
+            Dict with cleanup statistics
+        """
+        cutoff = time.time() - ttl_seconds
+        stats = {"token_entries_removed": 0, "ip_entries_removed": 0, "revoked_tokens_removed": 0}
+
+        with self._rate_limit_lock:
+            # Clean token request counts
+            keys_to_remove = []
+            for key, timestamps in self._token_request_counts.items():
+                # Remove old timestamps
+                self._token_request_counts[key] = [t for t in timestamps if t > cutoff]
+                # Mark for removal if empty
+                if not self._token_request_counts[key]:
+                    keys_to_remove.append(key)
+            for key in keys_to_remove:
+                del self._token_request_counts[key]
+                stats["token_entries_removed"] += 1
+
+            # Clean IP request counts
+            keys_to_remove = []
+            for key, timestamps in self._ip_request_counts.items():
+                self._ip_request_counts[key] = [t for t in timestamps if t > cutoff]
+                if not self._ip_request_counts[key]:
+                    keys_to_remove.append(key)
+            for key in keys_to_remove:
+                del self._ip_request_counts[key]
+                stats["ip_entries_removed"] += 1
+
+        # Clean old revoked tokens (keep for 24 hours max)
+        revoke_cutoff = time.time() - 86400  # 24 hours
+        with self._revocation_lock:
+            keys_to_remove = [k for k, v in self._revoked_tokens.items() if v < revoke_cutoff]
+            for key in keys_to_remove:
+                del self._revoked_tokens[key]
+                stats["revoked_tokens_removed"] += 1
+
+        return stats
+
+    def get_rate_limit_stats(self) -> dict:
+        """Get current rate limiting statistics for monitoring."""
+        with self._rate_limit_lock:
+            return {
+                "token_entries": len(self._token_request_counts),
+                "ip_entries": len(self._ip_request_counts),
+                "revoked_tokens": len(self._revoked_tokens),
+                "max_tracked_entries": self._max_tracked_entries,
+            }
+
     def check_rate_limit(self, token: str) -> tuple:
         """Check if token is within rate limit.
 

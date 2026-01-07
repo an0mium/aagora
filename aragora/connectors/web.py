@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.connectors.base import BaseConnector, Evidence
+from aragora.resilience import CircuitBreaker, get_circuit_breaker
 
 logger = logging.getLogger(__name__)
 from aragora.reasoning.provenance import ProvenanceManager, SourceType
@@ -106,6 +107,8 @@ class WebConnector(BaseConnector):
         max_content_length: int = 10000,
         rate_limit_delay: float = 1.0,
         cache_dir: str = ".web_cache",
+        circuit_breaker: CircuitBreaker | None = None,
+        enable_circuit_breaker: bool = True,
     ):
         """
         Initialize WebConnector.
@@ -117,6 +120,8 @@ class WebConnector(BaseConnector):
             max_content_length: Max chars to extract from pages
             rate_limit_delay: Delay between requests (seconds)
             cache_dir: Directory for caching search results
+            circuit_breaker: Optional shared circuit breaker instance
+            enable_circuit_breaker: Whether to enable circuit breaker protection
         """
         super().__init__(provenance, default_confidence)
         self.timeout = timeout
@@ -128,6 +133,18 @@ class WebConnector(BaseConnector):
         # Initialize cache
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
+
+        # Circuit breaker for graceful failure handling
+        if circuit_breaker is not None:
+            self._circuit_breaker = circuit_breaker
+        elif enable_circuit_breaker:
+            self._circuit_breaker = get_circuit_breaker(
+                "web_connector",
+                failure_threshold=5,  # Higher threshold for web - transient errors common
+                cooldown_seconds=30.0,  # Shorter cooldown - web may recover quickly
+            )
+        else:
+            self._circuit_breaker = None
 
         # Check dependencies
         if not HTTPX_AVAILABLE:
@@ -146,12 +163,16 @@ class WebConnector(BaseConnector):
         return "Web Search"
 
     async def _get_http_client(self) -> "httpx.AsyncClient":
-        """Get or create shared HTTP client with connection pooling."""
+        """Get or create shared HTTP client with connection pooling.
+
+        Note: Redirects are disabled to allow manual validation of each
+        redirect target for SSRF protection.
+        """
         if self._http_client is None:
             try:
                 self._http_client = httpx.AsyncClient(
                     timeout=self.timeout,
-                    follow_redirects=True,
+                    follow_redirects=False,  # Disabled for SSRF protection
                     limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
                 )
             except Exception as e:
@@ -280,6 +301,74 @@ class WebConnector(BaseConnector):
             logger.warning(f"[web] URL security validation failed for {url}: {e}")
             return True
 
+    def _resolve_and_validate_ip(self, url: str) -> tuple[bool, str]:
+        """
+        Resolve hostname to IP and validate it's not private/local.
+
+        This prevents DNS rebinding attacks where an attacker's DNS server
+        returns a public IP initially but a private IP later.
+
+        Returns:
+            Tuple of (is_safe, error_message). If is_safe is False,
+            error_message contains the reason.
+        """
+        import socket
+        import ipaddress
+
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+
+            if not hostname:
+                return False, "No hostname in URL"
+
+            # Check for obvious localhost
+            if hostname in ('localhost', '127.0.0.1', '::1'):
+                return False, "Localhost access blocked"
+
+            # Resolve hostname to IP
+            try:
+                ip_str = socket.gethostbyname(hostname)
+            except socket.gaierror as e:
+                # DNS resolution failed - let httpx handle it
+                logger.debug(f"DNS resolution failed for {hostname}: {e}")
+                return True, ""
+
+            # Validate the resolved IP
+            try:
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return False, f"Resolved to private IP: {ip_str}"
+                if ip.is_reserved:
+                    return False, f"Resolved to reserved IP: {ip_str}"
+            except ValueError:
+                # Shouldn't happen since gethostbyname returns valid IPs
+                pass
+
+            return True, ""
+
+        except Exception as e:
+            logger.warning(f"[web] IP validation error for {url}: {e}")
+            return False, f"Security validation error: {e}"
+
+    def _validate_redirect_target(self, redirect_url: str) -> tuple[bool, str]:
+        """
+        Validate a redirect URL before following it.
+
+        Prevents SSRF via open redirects that lead to internal services.
+        """
+        # Check basic URL format
+        if not redirect_url:
+            return False, "Empty redirect URL"
+
+        # Must be http/https
+        parsed = urlparse(redirect_url)
+        if parsed.scheme not in ('http', 'https'):
+            return False, f"Invalid redirect scheme: {parsed.scheme}"
+
+        # Validate the target IP
+        return self._resolve_and_validate_ip(redirect_url)
+
     def _get_cache_file(self, query: str) -> Path:
         """Get the cache file path for a query."""
         query_hash = hashlib.md5(query.encode()).hexdigest()
@@ -323,12 +412,13 @@ class WebConnector(BaseConnector):
 
         return None
 
-    async def fetch_url(self, url: str) -> Optional[Evidence]:
+    async def fetch_url(self, url: str, max_redirects: int = 5) -> Optional[Evidence]:
         """
-        Fetch and parse content from a URL.
+        Fetch and parse content from a URL with SSRF protection.
 
         Args:
             url: URL to fetch
+            max_redirects: Maximum number of redirects to follow
 
         Returns:
             Evidence object with parsed content, or None on failure
@@ -336,21 +426,66 @@ class WebConnector(BaseConnector):
         if not HTTPX_AVAILABLE:
             return self._create_error_evidence("httpx not installed")
 
+        # Check circuit breaker before attempting fetch
+        if self._circuit_breaker is not None and not self._circuit_breaker.can_proceed():
+            return self._create_error_evidence(
+                f"Circuit breaker open - web requests temporarily disabled "
+                f"(cooldown: {self._circuit_breaker.cooldown_seconds}s)"
+            )
+
         # Security check: Block local/private IP ranges
         if self._is_local_ip(url):
             return self._create_error_evidence("Access to local/private IPs blocked for security")
 
+        # SSRF protection: Resolve and validate IP before fetching
+        is_safe, error_msg = self._resolve_and_validate_ip(url)
+        if not is_safe:
+            return self._create_error_evidence(f"SSRF protection: {error_msg}")
+
         await self._rate_limit()
+
+        current_url = url
+        redirect_count = 0
 
         try:
             client = await self._get_http_client()
-            response = await client.get(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; AragoraBot/1.0; +https://aragora.ai)"
-                }
-            )
-            response.raise_for_status()
+
+            while redirect_count <= max_redirects:
+                response = await client.get(
+                    current_url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; AragoraBot/1.0; +https://aragora.ai)"
+                    }
+                )
+
+                # Handle redirects manually
+                if response.is_redirect:
+                    redirect_count += 1
+                    if redirect_count > max_redirects:
+                        return self._create_error_evidence(f"Too many redirects (>{max_redirects})")
+
+                    # Get and validate redirect target
+                    redirect_url = response.headers.get("location", "")
+                    if not redirect_url:
+                        return self._create_error_evidence("Redirect without Location header")
+
+                    # Handle relative URLs
+                    if redirect_url.startswith("/"):
+                        parsed = urlparse(current_url)
+                        redirect_url = f"{parsed.scheme}://{parsed.netloc}{redirect_url}"
+
+                    # Validate redirect target for SSRF
+                    is_safe, error_msg = self._validate_redirect_target(redirect_url)
+                    if not is_safe:
+                        return self._create_error_evidence(f"Blocked redirect to: {error_msg}")
+
+                    logger.debug(f"Following redirect: {current_url} -> {redirect_url}")
+                    current_url = redirect_url
+                    continue
+
+                # Not a redirect, process the response
+                response.raise_for_status()
+                break
 
             content_type = response.headers.get("content-type", "")
 
@@ -384,13 +519,27 @@ class WebConnector(BaseConnector):
             )
 
             self._cache_put(evidence_id, evidence)
+
+            # Record success to circuit breaker
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_success()
+
             return evidence
 
         except httpx.TimeoutException:
+            # Record failure to circuit breaker
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_failure()
             return self._create_error_evidence(f"Timeout fetching {url}")
         except httpx.HTTPStatusError as e:
+            # Record failure to circuit breaker (only for 5xx errors, not 4xx)
+            if self._circuit_breaker is not None and e.response.status_code >= 500:
+                self._circuit_breaker.record_failure()
             return self._create_error_evidence(f"HTTP {e.response.status_code} for {url}")
         except Exception as e:
+            # Record failure to circuit breaker
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_failure()
             return self._create_error_evidence(f"Error fetching {url}: {e}")
 
     def _parse_html(self, html: str) -> tuple[str, str]:

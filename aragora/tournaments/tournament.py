@@ -332,8 +332,8 @@ class Tournament:
             key=lambda s: (s.points, s.total_score),
         ).agent_name
 
-        # Save to database
-        self._save_tournament(champion)
+        # Save to database (non-blocking)
+        await asyncio.to_thread(self._save_tournament, champion)
 
         return TournamentResult(
             tournament_id=self.tournament_id,
@@ -386,8 +386,9 @@ class Tournament:
         # Update standings
         self._update_standings(match)
 
-        # Update ELO
-        self.elo_system.record_match(
+        # Update ELO (non-blocking database operation)
+        await asyncio.to_thread(
+            self.elo_system.record_match,
             debate_id=match.match_id,
             participants=match.participants,
             scores=match.scores,

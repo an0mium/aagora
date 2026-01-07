@@ -10,6 +10,7 @@ Provides:
 import asyncio
 import functools
 import logging
+import random
 import re
 from typing import Any, Callable, Optional, Type, TypeVar
 
@@ -138,6 +139,207 @@ class AgentStreamError(AgentError):
         self.partial_content = partial_content
 
 
+class AgentCircuitOpenError(AgentError):
+    """Circuit breaker is open, blocking requests to agent.
+
+    This error is raised when too many consecutive failures have occurred
+    and the circuit breaker has opened to protect the system from cascading
+    failures. The request should be retried after the cooldown period.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        agent_name: str | None = None,
+        cooldown_seconds: float | None = None,
+        cause: Exception | None = None,
+    ):
+        super().__init__(message, agent_name, cause, recoverable=True)
+        self.cooldown_seconds = cooldown_seconds
+
+
+# =============================================================================
+# CLI Agent Errors
+# =============================================================================
+
+
+class CLIAgentError(AgentError):
+    """Base class for CLI agent errors."""
+
+    def __init__(
+        self,
+        message: str,
+        agent_name: str | None = None,
+        returncode: int | None = None,
+        stderr: str | None = None,
+        cause: Exception | None = None,
+        recoverable: bool = True,
+    ):
+        super().__init__(message, agent_name, cause, recoverable)
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+class CLIParseError(CLIAgentError):
+    """Error parsing CLI agent output (invalid JSON, etc.)."""
+
+    def __init__(
+        self,
+        message: str,
+        agent_name: str | None = None,
+        returncode: int | None = None,
+        stderr: str | None = None,
+        raw_output: str | None = None,
+        cause: Exception | None = None,
+    ):
+        super().__init__(message, agent_name, returncode, stderr, cause, recoverable=False)
+        self.raw_output = raw_output
+
+
+class CLITimeoutError(CLIAgentError):
+    """CLI agent subprocess timed out."""
+
+    def __init__(
+        self,
+        message: str,
+        agent_name: str | None = None,
+        timeout_seconds: float | None = None,
+        cause: Exception | None = None,
+    ):
+        super().__init__(message, agent_name, returncode=-9, cause=cause, recoverable=True)
+        self.timeout_seconds = timeout_seconds
+
+
+class CLISubprocessError(CLIAgentError):
+    """CLI subprocess failed with non-zero exit code."""
+
+    def __init__(
+        self,
+        message: str,
+        agent_name: str | None = None,
+        returncode: int | None = None,
+        stderr: str | None = None,
+        cause: Exception | None = None,
+    ):
+        # Non-zero exit codes are generally recoverable (transient failures)
+        super().__init__(message, agent_name, returncode, stderr, cause, recoverable=True)
+
+
+class CLINotFoundError(CLIAgentError):
+    """CLI tool not found or not installed."""
+
+    def __init__(
+        self,
+        message: str,
+        agent_name: str | None = None,
+        cli_name: str | None = None,
+        cause: Exception | None = None,
+    ):
+        super().__init__(message, agent_name, returncode=127, cause=cause, recoverable=False)
+        self.cli_name = cli_name
+
+
+def classify_cli_error(
+    returncode: int,
+    stderr: str,
+    stdout: str,
+    agent_name: str | None = None,
+    timeout_seconds: float | None = None,
+) -> CLIAgentError:
+    """
+    Classify a CLI agent error based on return code and output.
+
+    This function analyzes subprocess results to determine the appropriate
+    error type for proper handling and retry decisions.
+
+    Args:
+        returncode: Subprocess exit code
+        stderr: Standard error output
+        stdout: Standard output
+        agent_name: Name of the agent for error context
+        timeout_seconds: Timeout value if applicable
+
+    Returns:
+        Appropriate CLIAgentError subclass instance
+    """
+    stderr_lower = stderr.lower() if stderr else ""
+    stdout_lower = stdout.lower() if stdout else ""
+
+    # Rate limit detection
+    if "rate limit" in stderr_lower or "rate_limit" in stderr_lower or "429" in stderr:
+        return CLIAgentError(
+            f"Rate limit exceeded",
+            agent_name=agent_name,
+            returncode=returncode,
+            stderr=stderr[:500] if stderr else None,
+            recoverable=True,
+        )
+
+    # Timeout detection (SIGKILL = -9)
+    if returncode == -9 or "timeout" in stderr_lower or "timed out" in stderr_lower:
+        return CLITimeoutError(
+            f"CLI command timed out after {timeout_seconds}s" if timeout_seconds else "CLI command timed out",
+            agent_name=agent_name,
+            timeout_seconds=timeout_seconds,
+        )
+
+    # Command not found
+    if returncode == 127 or "command not found" in stderr_lower or "not found" in stderr_lower:
+        return CLINotFoundError(
+            f"CLI tool not found",
+            agent_name=agent_name,
+        )
+
+    # Permission denied
+    if returncode == 126 or "permission denied" in stderr_lower:
+        return CLISubprocessError(
+            f"Permission denied executing CLI",
+            agent_name=agent_name,
+            returncode=returncode,
+            stderr=stderr[:500] if stderr else None,
+        )
+
+    # JSON parse error detection
+    if stdout and not stdout.strip():
+        return CLIParseError(
+            f"Empty response from CLI",
+            agent_name=agent_name,
+            returncode=returncode,
+            stderr=stderr[:500] if stderr else None,
+            raw_output=stdout[:200] if stdout else None,
+        )
+
+    # Check for JSON error responses
+    if stdout and stdout.strip().startswith("{"):
+        try:
+            import json
+            data = json.loads(stdout)
+            if "error" in data:
+                return CLIAgentError(
+                    f"CLI returned error: {data.get('error', 'Unknown error')[:200]}",
+                    agent_name=agent_name,
+                    returncode=returncode,
+                    stderr=stderr[:500] if stderr else None,
+                    recoverable=True,
+                )
+        except json.JSONDecodeError:
+            return CLIParseError(
+                f"Invalid JSON response from CLI",
+                agent_name=agent_name,
+                returncode=returncode,
+                stderr=stderr[:500] if stderr else None,
+                raw_output=stdout[:200] if stdout else None,
+            )
+
+    # Generic subprocess error
+    return CLISubprocessError(
+        f"CLI exited with code {returncode}: {stderr[:200] if stderr else 'no error output'}",
+        agent_name=agent_name,
+        returncode=returncode,
+        stderr=stderr[:500] if stderr else None,
+    )
+
+
 # =============================================================================
 # Sensitive Data Sanitization
 # =============================================================================
@@ -147,6 +349,42 @@ from aragora.utils.error_sanitizer import (
     sanitize_error,
     SENSITIVE_PATTERNS as _SENSITIVE_PATTERNS,  # For backwards compatibility
 )
+
+
+# =============================================================================
+# Retry Delay Calculation
+# =============================================================================
+
+
+def _calculate_retry_delay_with_jitter(
+    attempt: int,
+    base_delay: float,
+    max_delay: float,
+    jitter_factor: float = 0.3,
+) -> float:
+    """
+    Calculate retry delay with exponential backoff and random jitter.
+
+    Jitter prevents thundering herd when multiple clients recover simultaneously
+    after a provider outage.
+
+    Args:
+        attempt: Current retry attempt (0-indexed)
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay cap in seconds
+        jitter_factor: Fraction of delay to randomize (default: 0.3 = ±30%)
+
+    Returns:
+        Delay in seconds with jitter applied
+    """
+    # Calculate base exponential delay
+    delay = min(base_delay * (2 ** attempt), max_delay)
+
+    # Apply random jitter: delay ± (jitter_factor * delay)
+    jitter = delay * jitter_factor * random.uniform(-1, 1)
+
+    # Ensure minimum delay of 0.1s
+    return max(0.1, delay + jitter)
 
 
 # =============================================================================
@@ -161,12 +399,14 @@ def handle_agent_errors(
     retry_backoff: float = 2.0,
     max_delay: float = 30.0,
     retryable_exceptions: tuple = (AgentConnectionError, AgentTimeoutError, AgentRateLimitError),
+    circuit_breaker_attr: str = "_circuit_breaker",
 ):
     """
     Decorator for async agent methods that standardizes error handling.
 
     Wraps aiohttp and other common exceptions in AgentError types,
     logs errors appropriately, and optionally retries transient failures.
+    Integrates with CircuitBreaker for graceful failure handling.
 
     Args:
         agent_name_attr: Attribute name on self containing agent name
@@ -175,6 +415,9 @@ def handle_agent_errors(
         retry_backoff: Multiplier for delay between retries
         max_delay: Maximum delay between retries
         retryable_exceptions: Tuple of AgentError subclasses to retry
+        circuit_breaker_attr: Attribute name on self for CircuitBreaker instance.
+            If the attribute exists and circuit is open, raises AgentCircuitOpenError.
+            Records success/failure to circuit breaker after each attempt.
 
     Usage:
         @handle_agent_errors(max_retries=3)
@@ -187,6 +430,16 @@ def handle_agent_errors(
         @functools.wraps(func)
         async def wrapper(self, *args, **kwargs) -> T:
             agent_name = getattr(self, agent_name_attr, "unknown")
+            circuit_breaker = getattr(self, circuit_breaker_attr, None)
+
+            # Check circuit breaker before attempting call
+            if circuit_breaker is not None and not circuit_breaker.can_proceed():
+                raise AgentCircuitOpenError(
+                    f"Circuit breaker is open for agent",
+                    agent_name=agent_name,
+                    cooldown_seconds=circuit_breaker.cooldown_seconds,
+                )
+
             attempt = 0
             delay = retry_delay
             last_error: Optional[AgentError] = None
@@ -194,7 +447,11 @@ def handle_agent_errors(
             while True:
                 attempt += 1
                 try:
-                    return await func(self, *args, **kwargs)
+                    result = await func(self, *args, **kwargs)
+                    # Record success to circuit breaker
+                    if circuit_breaker is not None:
+                        circuit_breaker.record_success()
+                    return result
 
                 # Timeout errors
                 except asyncio.TimeoutError as e:
@@ -318,7 +575,14 @@ def handle_agent_errors(
                         f"[{agent_name}] Unexpected error (attempt {attempt}): {last_error}",
                         exc_info=True,
                     )
+                    # Record failure to circuit breaker before raising
+                    if circuit_breaker is not None:
+                        circuit_breaker.record_failure()
                     raise last_error from e
+
+                # Record failure to circuit breaker
+                if circuit_breaker is not None and last_error is not None:
+                    circuit_breaker.record_failure()
 
                 # Check if we should retry
                 if (
@@ -328,18 +592,25 @@ def handle_agent_errors(
                     and isinstance(last_error, retryable_exceptions)
                     and last_error.recoverable
                 ):
-                    # Use Retry-After if available for rate limits
+                    # Use Retry-After header if available for rate limits
                     if isinstance(last_error, AgentRateLimitError) and last_error.retry_after:
-                        wait_time = min(last_error.retry_after, max_delay)
+                        # Add small jitter to Retry-After to avoid thundering herd
+                        base_wait = min(last_error.retry_after, max_delay)
+                        jitter = base_wait * 0.1 * random.uniform(0, 1)
+                        wait_time = base_wait + jitter
                     else:
-                        wait_time = min(delay, max_delay)
+                        # Calculate delay with jitter for exponential backoff
+                        wait_time = _calculate_retry_delay_with_jitter(
+                            attempt - 1,  # 0-indexed for calculation
+                            retry_delay,
+                            max_delay,
+                        )
 
                     logger.info(
                         f"[{agent_name}] Retrying in {wait_time:.1f}s "
                         f"(attempt {attempt}/{max_retries + 1})"
                     )
                     await asyncio.sleep(wait_time)
-                    delay = min(delay * retry_backoff, max_delay)
                     continue
 
                 # No more retries - raise the last error

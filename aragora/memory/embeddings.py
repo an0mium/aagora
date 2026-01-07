@@ -364,23 +364,20 @@ class SemanticRetriever:
         """Generate hash for text deduplication."""
         return hashlib.md5(text.lower().strip().encode()).hexdigest()
 
-    async def embed_and_store(self, id: str, text: str) -> list[float]:
-        """Embed text and store in database."""
-        text_hash = self._text_hash(text)
-
+    def _sync_get_existing_embedding(self, text_hash: str) -> Optional[bytes]:
+        """Sync helper: Check if embedding already exists."""
         with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             cursor = conn.cursor()
-
-            # Check if already embedded
             cursor.execute("SELECT embedding FROM embeddings WHERE text_hash = ?", (text_hash,))
             row = cursor.fetchone()
-            if row:
-                return unpack_embedding(row[0])
+            return row[0] if row else None
 
-            # Generate embedding
-            embedding = await self.provider.embed(text)
-
-            # Store
+    def _sync_store_embedding(
+        self, id: str, text_hash: str, text: str, embedding: list[float]
+    ) -> None:
+        """Sync helper: Store embedding in database."""
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO embeddings (id, text_hash, text, embedding, provider)
@@ -388,10 +385,33 @@ class SemanticRetriever:
             """,
                 (id, text_hash, text[:1000], pack_embedding(embedding), type(self.provider).__name__),
             )
-
             conn.commit()
 
+    async def embed_and_store(self, id: str, text: str) -> list[float]:
+        """Embed text and store in database."""
+        text_hash = self._text_hash(text)
+
+        # Check if already embedded (non-blocking)
+        existing = await asyncio.to_thread(self._sync_get_existing_embedding, text_hash)
+        if existing:
+            return unpack_embedding(existing)
+
+        # Generate embedding (async API call)
+        embedding = await self.provider.embed(text)
+
+        # Store (non-blocking)
+        await asyncio.to_thread(
+            self._sync_store_embedding, id, text_hash, text, embedding
+        )
+
         return embedding
+
+    def _sync_get_all_embeddings(self) -> list[tuple]:
+        """Sync helper: Retrieve all embeddings from database."""
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, text, embedding FROM embeddings")
+            return cursor.fetchall()
 
     async def find_similar(
         self,
@@ -406,11 +426,8 @@ class SemanticRetriever:
         """
         query_embedding = await self.provider.embed(query)
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT id, text, embedding FROM embeddings")
-            rows = cursor.fetchall()
+        # Fetch all embeddings (non-blocking)
+        rows = await asyncio.to_thread(self._sync_get_all_embeddings)
 
         if not rows:
             return []

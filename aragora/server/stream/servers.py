@@ -5,6 +5,12 @@ The SyncEventEmitter bridges synchronous Arena code with async WebSocket broadca
 Events are queued synchronously and consumed by an async drain loop.
 
 This module also supports unified HTTP+WebSocket serving on a single port via aiohttp.
+
+Note: Core components are now in submodules for better organization:
+- aragora.server.stream.events - StreamEventType, StreamEvent, AudienceMessage
+- aragora.server.stream.emitter - SyncEventEmitter, TokenBucket, AudienceInbox
+- aragora.server.stream.state_manager - DebateStateManager, BoundedDebateDict
+- aragora.server.stream.arena_hooks - create_arena_hooks, wrap_agent_for_streaming
 """
 
 import asyncio
@@ -15,10 +21,8 @@ import queue
 import secrets
 import threading
 import time
-from dataclasses import dataclass, field
-from enum import Enum
-from pathlib import Path
 from collections import OrderedDict
+from pathlib import Path
 from typing import Callable, Optional, Any, Dict
 from urllib.parse import parse_qs, urlparse
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +30,35 @@ import uuid
 
 # Configure module logger
 logger = logging.getLogger(__name__)
+
+# Import from sibling modules (core streaming components)
+from .events import (
+    StreamEventType,
+    StreamEvent,
+    AudienceMessage,
+)
+from .emitter import (
+    TokenBucket,
+    AudienceInbox,
+    SyncEventEmitter,
+    normalize_intensity,
+)
+from .state_manager import (
+    BoundedDebateDict,
+    LoopInstance,
+    DebateStateManager,
+    get_active_debates,
+    get_active_debates_lock,
+    get_debate_executor,
+    set_debate_executor,
+    get_debate_executor_lock,
+    cleanup_stale_debates,
+    increment_cleanup_counter,
+)
+from .arena_hooks import (
+    create_arena_hooks,
+    wrap_agent_for_streaming,
+)
 
 # Import debate components (lazy-loaded for optional functionality)
 try:
@@ -50,36 +83,10 @@ from aragora.config import (
 )
 from aragora.server.error_utils import safe_error_message as _safe_error_message
 
-# Bounded dictionary to prevent unbounded memory growth
-class BoundedDebateDict(OrderedDict):
-    """OrderedDict with a maximum size, evicting oldest entries when full.
-
-    Thread-safety must be provided externally via _active_debates_lock.
-    """
-
-    def __init__(self, maxsize: int = 1000):
-        super().__init__()
-        self.maxsize = maxsize
-
-    def __setitem__(self, key, value):
-        # If key already exists, just update it
-        if key in self:
-            super().__setitem__(key, value)
-            return
-        # Evict oldest if at capacity
-        while len(self) >= self.maxsize:
-            oldest_key, oldest_val = self.popitem(last=False)
-            logger.debug(f"Evicted oldest debate {oldest_key} to maintain maxsize={self.maxsize}")
-        super().__setitem__(key, value)
-
-
-# Thread-safe debate tracking (bounded to prevent memory leaks)
-_active_debates: BoundedDebateDict = BoundedDebateDict(maxsize=1000)
-_active_debates_lock = threading.Lock()
-_debate_executor: Optional[ThreadPoolExecutor] = None
-_debate_executor_lock = threading.Lock()
-_debate_cleanup_counter = 0
-_debate_cleanup_counter_lock = threading.Lock()
+# Backward compatibility aliases
+_active_debates = get_active_debates()
+_active_debates_lock = get_active_debates_lock()
+_debate_executor_lock = get_debate_executor_lock()
 
 # TTL for completed debates (24 hours)
 _DEBATE_TTL_SECONDS = 86400
@@ -87,96 +94,11 @@ _DEBATE_TTL_SECONDS = 86400
 
 def _cleanup_stale_debates_stream() -> None:
     """Remove completed/errored debates older than TTL."""
-    now = time.time()
-    with _active_debates_lock:
-        stale_ids = [
-            debate_id for debate_id, debate in _active_debates.items()
-            if debate.get("status") in ("completed", "error")
-            and now - debate.get("completed_at", now) > _DEBATE_TTL_SECONDS
-        ]
-        for debate_id in stale_ids:
-            _active_debates.pop(debate_id, None)
-    if stale_ids:
-        logger.debug(f"Cleaned up {len(stale_ids)} stale debate entries")
+    cleanup_stale_debates()
 
 
-def _wrap_agent_for_streaming(agent, emitter: 'SyncEventEmitter', debate_id: str):
-    """Wrap an agent to emit token streaming events.
-
-    If the agent has a generate_stream() method, we override its generate()
-    to call generate_stream() and emit TOKEN_* events.
-    """
-    from datetime import datetime
-
-    # Check if agent supports streaming
-    if not hasattr(agent, 'generate_stream'):
-        return agent
-
-    # Store original generate method
-    original_generate = agent.generate
-
-    async def streaming_generate(prompt: str, context=None):
-        """Streaming wrapper that emits TOKEN_* events."""
-        # Emit start event
-        emitter.emit(StreamEvent(
-            type=StreamEventType.TOKEN_START,
-            data={
-                "debate_id": debate_id,
-                "agent": agent.name,
-                "timestamp": datetime.now().isoformat(),
-            },
-            agent=agent.name,
-        ))
-
-        full_response = ""
-        try:
-            # Stream tokens from the agent
-            async for token in agent.generate_stream(prompt, context):
-                full_response += token
-                # Emit token delta event
-                emitter.emit(StreamEvent(
-                    type=StreamEventType.TOKEN_DELTA,
-                    data={
-                        "debate_id": debate_id,
-                        "agent": agent.name,
-                        "token": token,
-                    },
-                    agent=agent.name,
-                ))
-
-            # Emit end event
-            emitter.emit(StreamEvent(
-                type=StreamEventType.TOKEN_END,
-                data={
-                    "debate_id": debate_id,
-                    "agent": agent.name,
-                    "full_response": full_response,
-                },
-                agent=agent.name,
-            ))
-
-            return full_response
-
-        except Exception as e:
-            # Emit error as end event
-            emitter.emit(StreamEvent(
-                type=StreamEventType.TOKEN_END,
-                data={
-                    "debate_id": debate_id,
-                    "agent": agent.name,
-                    "error": _safe_error_message(e, f"token streaming for {agent.name}"),
-                    "full_response": full_response,
-                },
-                agent=agent.name,
-            ))
-            # Fall back to non-streaming
-            if full_response:
-                return full_response
-            return await original_generate(prompt, context)
-
-    # Replace the generate method
-    agent.generate = streaming_generate
-    return agent
+# Backward compatibility alias - use wrap_agent_for_streaming from arena_hooks
+_wrap_agent_for_streaming = wrap_agent_for_streaming
 
 
 # Centralized CORS configuration
@@ -192,473 +114,15 @@ TRUSTED_PROXIES = frozenset(
 )
 
 
-class StreamEventType(Enum):
-    """Types of events emitted during debates and nomic loop execution."""
-    # Debate events
-    DEBATE_START = "debate_start"
-    ROUND_START = "round_start"
-    AGENT_MESSAGE = "agent_message"
-    CRITIQUE = "critique"
-    VOTE = "vote"
-    CONSENSUS = "consensus"
-    DEBATE_END = "debate_end"
-
-    # Token streaming events (for real-time response display)
-    TOKEN_START = "token_start"      # Agent begins generating response
-    TOKEN_DELTA = "token_delta"      # Incremental token(s) received
-    TOKEN_END = "token_end"          # Agent finished generating response
-
-    # Nomic loop events
-    CYCLE_START = "cycle_start"
-    CYCLE_END = "cycle_end"
-    PHASE_START = "phase_start"
-    PHASE_END = "phase_end"
-    TASK_START = "task_start"
-    TASK_COMPLETE = "task_complete"
-    TASK_RETRY = "task_retry"
-    VERIFICATION_START = "verification_start"
-    VERIFICATION_RESULT = "verification_result"
-    COMMIT = "commit"
-    BACKUP_CREATED = "backup_created"
-    BACKUP_RESTORED = "backup_restored"
-    ERROR = "error"
-    LOG_MESSAGE = "log_message"
-
-    # Multi-loop management events
-    LOOP_REGISTER = "loop_register"      # New loop instance started
-    LOOP_UNREGISTER = "loop_unregister"  # Loop instance ended
-    LOOP_LIST = "loop_list"              # List of active loops (sent on connect)
-
-    # Audience participation events
-    USER_VOTE = "user_vote"              # Audience member voted
-    USER_SUGGESTION = "user_suggestion"  # Audience member submitted suggestion
-    AUDIENCE_SUMMARY = "audience_summary"  # Clustered audience input summary
-    AUDIENCE_METRICS = "audience_metrics"  # Vote counts, histograms, conviction distribution
-    AUDIENCE_DRAIN = "audience_drain"    # Audience events processed by arena
-
-    # Memory/learning events
-    MEMORY_RECALL = "memory_recall"      # Historical context retrieved from memory
-    INSIGHT_EXTRACTED = "insight_extracted"  # New insight extracted from debate
-
-    # Ranking/leaderboard events (debate consensus feature)
-    MATCH_RECORDED = "match_recorded"    # ELO match recorded, leaderboard updated
-    LEADERBOARD_UPDATE = "leaderboard_update"  # Periodic leaderboard snapshot
-    GROUNDED_VERDICT = "grounded_verdict"  # Evidence-backed verdict with citations
-    MOMENT_DETECTED = "moment_detected"  # Significant narrative moment detected
-
-    # Graph debate events (branching/merging visualization)
-    GRAPH_NODE_ADDED = "graph_node_added"  # New node added to debate graph
-    GRAPH_BRANCH_CREATED = "graph_branch_created"  # New branch created
-    GRAPH_BRANCH_MERGED = "graph_branch_merged"  # Branches merged/synthesized
-
-    # Position tracking events
-    FLIP_DETECTED = "flip_detected"      # Agent position reversal detected
-
-    # Mood/sentiment events (Real-Time Debate Drama)
-    MOOD_DETECTED = "mood_detected"      # Agent emotional state analyzed
-    MOOD_SHIFT = "mood_shift"            # Significant mood change detected
-    DEBATE_ENERGY = "debate_energy"      # Overall debate intensity level
-
-    # Capability probe events (Adversarial Testing)
-    PROBE_START = "probe_start"          # Probe session started for agent
-    PROBE_RESULT = "probe_result"        # Individual probe result
-    PROBE_COMPLETE = "probe_complete"    # All probes complete, report ready
-
-    # Deep Audit events (Intensive Multi-Round Analysis)
-    AUDIT_START = "audit_start"          # Deep audit session started
-    AUDIT_ROUND = "audit_round"          # Audit round completed (1-6)
-    AUDIT_FINDING = "audit_finding"      # Individual finding discovered
-    AUDIT_CROSS_EXAM = "audit_cross_exam"  # Cross-examination phase
-    AUDIT_VERDICT = "audit_verdict"      # Final audit verdict ready
-
-    # Telemetry events (Cognitive Firewall)
-    TELEMETRY_THOUGHT = "telemetry_thought"        # Agent thought process (may be redacted)
-    TELEMETRY_CAPABILITY = "telemetry_capability"  # Agent capability verification result
-    TELEMETRY_REDACTION = "telemetry_redaction"    # Content was redacted (notification only)
-    TELEMETRY_DIAGNOSTIC = "telemetry_diagnostic"  # Internal diagnostic info (dev only)
-
-
-@dataclass
-class StreamEvent:
-    """A single event in the debate stream."""
-    type: StreamEventType
-    data: dict
-    timestamp: float = field(default_factory=time.time)
-    round: int = 0
-    agent: str = ""
-    loop_id: str = ""  # For multi-loop tracking
-    seq: int = 0  # Global sequence number for ordering
-    agent_seq: int = 0  # Per-agent sequence number for token ordering
-
-    def to_dict(self) -> dict:
-        result = {
-            "type": self.type.value,
-            "data": self.data,
-            "timestamp": self.timestamp,
-            "round": self.round,
-            "agent": self.agent,
-            "seq": self.seq,
-            "agent_seq": self.agent_seq,
-        }
-        if self.loop_id:
-            result["loop_id"] = self.loop_id
-        return result
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict())
-
-
-@dataclass
-class AudienceMessage:
-    """A message from an audience member (vote or suggestion)."""
-    type: str  # "vote" or "suggestion"
-    loop_id: str  # Associated nomic loop
-    payload: dict  # Message content (e.g., {"choice": "option1"} for votes)
-    timestamp: float = field(default_factory=time.time)
-    user_id: str = ""  # Optional user identifier
-
-
-class TokenBucket:
-    """
-    Token bucket rate limiter for audience message throttling.
-
-    Allows burst traffic up to burst_size, then limits to rate_per_minute.
-    Thread-safe for concurrent access.
-    """
-
-    def __init__(self, rate_per_minute: float, burst_size: int):
-        """
-        Initialize token bucket.
-
-        Args:
-            rate_per_minute: Token refill rate (tokens per minute)
-            burst_size: Maximum tokens (bucket capacity)
-        """
-        self.rate_per_minute = rate_per_minute
-        self.burst_size = burst_size
-        self.tokens = float(burst_size)  # Start full
-        self.last_refill = time.monotonic()
-        self._lock = threading.Lock()
-
-    def consume(self, tokens: int = 1) -> bool:
-        """
-        Attempt to consume tokens from the bucket.
-
-        Args:
-            tokens: Number of tokens to consume
-
-        Returns:
-            True if tokens were available and consumed, False otherwise
-        """
-        with self._lock:
-            # Refill tokens based on elapsed time
-            now = time.monotonic()
-            elapsed_minutes = (now - self.last_refill) / 60.0
-            refill_amount = elapsed_minutes * self.rate_per_minute
-            self.tokens = min(self.burst_size, self.tokens + refill_amount)
-            self.last_refill = now
-
-            # Try to consume
-            if self.tokens >= tokens:
-                self.tokens -= tokens
-                return True
-            return False
-
-
-def normalize_intensity(value: Any, default: int = 5, min_val: int = 1, max_val: int = 10) -> int:
-    """
-    Safely normalize vote intensity to a clamped integer.
-
-    Args:
-        value: Raw intensity value from user input (may be string, float, None, etc.)
-        default: Default intensity if value is invalid
-        min_val: Minimum allowed intensity
-        max_val: Maximum allowed intensity
-
-    Returns:
-        Clamped integer intensity between min_val and max_val
-    """
-    if value is None:
-        return default
-
-    try:
-        intensity = int(float(value))
-    except (ValueError, TypeError):
-        return default
-
-    return max(min_val, min(max_val, intensity))
-
-
-class AudienceInbox:
-    """
-    Thread-safe queue for audience messages.
-
-    Collects votes and suggestions from WebSocket clients for processing
-    by the debate arena.
-    """
-
-    def __init__(self):
-        self._messages: list[AudienceMessage] = []
-        self._lock = threading.Lock()
-
-    def put(self, message: AudienceMessage) -> None:
-        """Add a message to the inbox (thread-safe)."""
-        with self._lock:
-            self._messages.append(message)
-
-    def get_all(self) -> list[AudienceMessage]:
-        """
-        Drain all messages from the inbox (thread-safe).
-
-        Returns:
-            List of all queued messages, emptying the inbox
-        """
-        with self._lock:
-            messages = self._messages.copy()
-            self._messages.clear()
-            return messages
-
-    def get_summary(self, loop_id: str | None = None) -> dict:
-        """
-        Get a summary of current inbox state without draining.
-
-        Args:
-            loop_id: Optional loop ID to filter messages by (multi-tenant support)
-
-        Returns:
-            Dict with vote counts, suggestions, histograms, and conviction distribution
-        """
-        with self._lock:
-            votes = {}
-            suggestions = 0
-            # Per-choice intensity histograms: {choice: {intensity: count}}
-            histograms = {}
-            # Global conviction distribution: {intensity: count}
-            conviction_distribution = {i: 0 for i in range(1, 11)}
-
-            for msg in self._messages:
-                # Filter by loop_id if provided
-                if loop_id and msg.loop_id != loop_id:
-                    continue
-
-                if msg.type == "vote":
-                    choice = msg.payload.get("choice", "unknown")
-                    intensity = normalize_intensity(msg.payload.get("intensity"))
-
-                    # Basic vote count
-                    votes[choice] = votes.get(choice, 0) + 1
-
-                    # Per-choice histogram
-                    if choice not in histograms:
-                        histograms[choice] = {i: 0 for i in range(1, 11)}
-                    histograms[choice][intensity] = histograms[choice].get(intensity, 0) + 1
-
-                    # Global conviction distribution
-                    conviction_distribution[intensity] = conviction_distribution.get(intensity, 0) + 1
-
-                elif msg.type == "suggestion":
-                    suggestions += 1
-
-            # Calculate weighted votes using intensity
-            weighted_votes = {}
-            for choice, histogram in histograms.items():
-                weighted_sum = sum(
-                    count * (0.5 + (intensity - 1) * 0.1667)  # Linear scale: 1->0.5, 10->2.0
-                    for intensity, count in histogram.items()
-                )
-                weighted_votes[choice] = round(weighted_sum, 2)
-
-            return {
-                "votes": votes,
-                "weighted_votes": weighted_votes,
-                "suggestions": suggestions,
-                "total": len(self._messages) if not loop_id else sum(votes.values()) + suggestions,
-                "histograms": histograms,
-                "conviction_distribution": conviction_distribution,
-            }
-
-
-class SyncEventEmitter:
-    """
-    Thread-safe event emitter bridging sync Arena code with async WebSocket.
-
-    Events are queued synchronously via emit() and consumed by async drain().
-    This pattern avoids needing to rewrite Arena to be fully async.
-
-    Sequence numbers are automatically assigned to enable:
-    - Global ordering (seq) for detecting message reordering
-    - Per-agent ordering (agent_seq) for token stream integrity
-    """
-
-    # Maximum queue size to prevent memory exhaustion (DoS protection)
-    MAX_QUEUE_SIZE = 10000
-
-    def __init__(self, loop_id: str = ""):
-        self._queue: queue.Queue[StreamEvent] = queue.Queue(maxsize=self.MAX_QUEUE_SIZE)
-        self._subscribers: list[Callable[[StreamEvent], None]] = []
-        self._loop_id = loop_id  # Default loop_id for all events
-        self._overflow_count = 0  # Track dropped events for monitoring
-        self._global_seq = 0  # Global sequence counter
-        self._agent_seqs: dict[str, int] = {}  # Per-agent sequence counters
-        self._seq_lock = threading.Lock()  # Thread-safe sequence assignment
-
-    def set_loop_id(self, loop_id: str) -> None:
-        """Set the loop_id to attach to all emitted events."""
-        self._loop_id = loop_id
-
-    def reset_sequences(self) -> None:
-        """Reset sequence counters (call when starting a new debate)."""
-        with self._seq_lock:
-            self._global_seq = 0
-            self._agent_seqs.clear()
-
-    def emit(self, event: StreamEvent) -> None:
-        """Emit event (safe to call from sync code).
-
-        Automatically assigns sequence numbers for ordering:
-        - seq: Global sequence across all events
-        - agent_seq: Per-agent sequence for token stream integrity
-        """
-        # Add loop_id to event if not already set
-        if self._loop_id and not event.loop_id:
-            event.loop_id = self._loop_id
-
-        # Assign sequence numbers (thread-safe)
-        with self._seq_lock:
-            self._global_seq += 1
-            event.seq = self._global_seq
-
-            # Per-agent sequence for token events
-            if event.agent:
-                if event.agent not in self._agent_seqs:
-                    self._agent_seqs[event.agent] = 0
-                self._agent_seqs[event.agent] += 1
-                event.agent_seq = self._agent_seqs[event.agent]
-
-        # Enforce queue size limit to prevent memory exhaustion
-        if self._queue.qsize() >= self.MAX_QUEUE_SIZE:
-            # Drop oldest event to make room (backpressure)
-            try:
-                self._queue.get_nowait()
-                self._overflow_count += 1
-                logger.warning(f"[stream] Queue overflow, dropped event (total: {self._overflow_count})")
-            except queue.Empty:
-                pass
-
-        self._queue.put(event)
-        for sub in self._subscribers:
-            try:
-                sub(event)
-            except Exception as e:
-                logger.warning(f"[stream] Subscriber callback error: {e}")
-
-    def subscribe(self, callback: Callable[[StreamEvent], None]) -> None:
-        """Add synchronous subscriber for immediate event handling."""
-        self._subscribers.append(callback)
-
-    def drain(self, max_batch_size: int = 100) -> list[StreamEvent]:
-        """Get queued events (non-blocking) with backpressure limit."""
-        events = []
-        try:
-            while len(events) < max_batch_size:
-                events.append(self._queue.get_nowait())
-        except queue.Empty:
-            pass
-        return events
-
-    def broadcast_event(
-        self,
-        event_type: StreamEventType,
-        data: dict,
-        agent: str = "",
-        round_num: int = 0,
-        redactor: Optional[Callable[[dict], dict]] = None,
-    ) -> bool:
-        """
-        Broadcast an event with optional redaction for telemetry.
-
-        This method respects the TelemetryConfig settings:
-        - SILENT: Event is not emitted
-        - DIAGNOSTIC: Event is logged but not broadcast
-        - CONTROLLED: Event is emitted with redaction applied
-        - SPECTACLE: Event is emitted without redaction
-
-        Args:
-            event_type: Type of event to emit
-            data: Event payload data
-            agent: Agent name (optional)
-            round_num: Debate round number (optional)
-            redactor: Optional function to redact sensitive data
-
-        Returns:
-            True if event was emitted, False if suppressed
-        """
-        try:
-            from aragora.debate.telemetry_config import TelemetryConfig
-
-            config = TelemetryConfig.get_instance()
-
-            # Check if telemetry should be suppressed
-            if config.is_silent():
-                return False
-
-            # Check if this is a telemetry-specific event
-            is_telemetry_event = event_type.value.startswith("telemetry_")
-
-            if is_telemetry_event:
-                if config.is_diagnostic():
-                    # Log only, don't broadcast
-                    logger.debug(f"[telemetry] {event_type.value}: {data}")
-                    return False
-
-                # Apply redaction if in controlled mode
-                if config.should_redact() and redactor is not None:
-                    try:
-                        data = redactor(data)
-                        # Emit redaction notification
-                        self.emit(StreamEvent(
-                            type=StreamEventType.TELEMETRY_REDACTION,
-                            data={"agent": agent, "event_type": event_type.value},
-                            agent=agent,
-                            round=round_num,
-                        ))
-                    except Exception as e:
-                        logger.warning(f"[telemetry] Redaction failed: {e}")
-                        # On redaction failure, suppress the event for security
-                        return False
-
-            # Emit the event
-            self.emit(StreamEvent(
-                type=event_type,
-                data=data,
-                agent=agent,
-                round=round_num,
-            ))
-            return True
-
-        except ImportError:
-            # TelemetryConfig not available, emit without telemetry controls
-            self.emit(StreamEvent(
-                type=event_type,
-                data=data,
-                agent=agent,
-                round=round_num,
-            ))
-            return True
-        except Exception as e:
-            logger.error(f"[telemetry] broadcast_event failed: {e}")
-            return False
-
-
-@dataclass
-class LoopInstance:
-    """Represents an active nomic loop instance."""
-    loop_id: str
-    name: str
-    started_at: float
-    cycle: int = 0
-    phase: str = "starting"
-    path: str = ""
+# =============================================================================
+# NOTE: Core streaming classes are now in submodules for better organization:
+# - StreamEventType, StreamEvent, AudienceMessage -> aragora.server.stream.events
+# - TokenBucket, AudienceInbox, SyncEventEmitter -> aragora.server.stream.emitter
+# - BoundedDebateDict, LoopInstance, DebateStateManager -> aragora.server.stream.state_manager
+# - create_arena_hooks, wrap_agent_for_streaming -> aragora.server.stream.arena_hooks
+#
+# The classes are imported at the top of this file for backward compatibility.
+# =============================================================================
 
 
 class DebateStreamServer:
@@ -1225,86 +689,7 @@ class DebateStreamServer:
                 _debate_executor = None
 
 
-def create_arena_hooks(emitter: SyncEventEmitter) -> dict[str, Callable]:
-    """
-    Create hook functions for Arena event emission.
-
-    These hooks are called synchronously by Arena at key points during debate.
-    They emit events to the emitter queue for async WebSocket broadcast.
-
-    Returns:
-        dict of hook name -> callback function
-    """
-
-    def on_debate_start(task: str, agents: list[str]) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.DEBATE_START,
-            data={"task": task, "agents": agents},
-        ))
-
-    def on_round_start(round_num: int) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.ROUND_START,
-            data={"round": round_num},
-            round=round_num,
-        ))
-
-    def on_message(agent: str, content: str, role: str, round_num: int) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.AGENT_MESSAGE,
-            data={"content": content, "role": role},
-            round=round_num,
-            agent=agent,
-        ))
-
-    def on_critique(
-        agent: str, target: str, issues: list[str], severity: float, round_num: int,
-        full_content: str | None = None
-    ) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.CRITIQUE,
-            data={
-                "target": target,
-                "issues": issues,  # Full issue list
-                "severity": severity,
-                "content": full_content or "\n".join(f"• {issue}" for issue in issues),
-            },
-            round=round_num,
-            agent=agent,
-        ))
-
-    def on_vote(agent: str, vote: str, confidence: float) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.VOTE,
-            data={"vote": vote, "confidence": confidence},
-            agent=agent,
-        ))
-
-    def on_consensus(reached: bool, confidence: float, answer: str) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.CONSENSUS,
-            data={
-                "reached": reached,
-                "confidence": confidence,
-                "answer": answer,  # Full answer - no truncation
-            },
-        ))
-
-    def on_debate_end(duration: float, rounds: int) -> None:
-        emitter.emit(StreamEvent(
-            type=StreamEventType.DEBATE_END,
-            data={"duration": duration, "rounds": rounds},
-        ))
-
-    return {
-        "on_debate_start": on_debate_start,
-        "on_round_start": on_round_start,
-        "on_message": on_message,
-        "on_critique": on_critique,
-        "on_vote": on_vote,
-        "on_consensus": on_consensus,
-        "on_debate_end": on_debate_end,
-    }
+# create_arena_hooks is now imported from aragora.server.stream.arena_hooks
 
 
 # =============================================================================

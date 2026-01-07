@@ -7,6 +7,7 @@ Provides security-related classes for debate orchestration:
 """
 
 import re
+from typing import Any
 
 
 class SecurityBarrier:
@@ -88,7 +89,7 @@ class SecurityBarrier:
 
         return result
 
-    def redact_dict(self, data: dict) -> dict:
+    def redact_dict(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Recursively redact sensitive content from a dictionary.
 
@@ -101,7 +102,7 @@ class SecurityBarrier:
         if not data:
             return data
 
-        result = {}
+        result: dict[str, Any] = {}
         for key, value in data.items():
             if isinstance(value, str):
                 result[key] = self.redact(value)

@@ -23,7 +23,7 @@ from aragora.server.prometheus import record_cache_hit, record_cache_miss
 from aragora.server.validation import SAFE_ID_PATTERN, SAFE_AGENT_PATTERN, SAFE_SLUG_PATTERN
 
 # Re-export DB_TIMEOUT_SECONDS for backwards compatibility
-__all__ = ["DB_TIMEOUT_SECONDS", "require_auth", "error_response", "json_response", "handle_errors"]
+__all__ = ["DB_TIMEOUT_SECONDS", "require_auth", "error_response", "json_response", "handle_errors", "log_request"]
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +295,66 @@ def handle_errors(context: str, default_status: int = 500):
                     status=status,
                     headers={"X-Trace-Id": trace_id},
                 )
+        return wrapper
+    return decorator
+
+
+def log_request(context: str, log_response: bool = False):
+    """
+    Decorator for structured request/response logging.
+
+    Logs request start, completion time, and status code for debugging
+    and observability. Use on POST/PUT handlers where detailed logging
+    is valuable.
+
+    Args:
+        context: Description of the operation (e.g., "debate creation")
+        log_response: If True, also log response body (use cautiously for
+                     privacy/size reasons)
+
+    Usage:
+        @log_request("debate creation")
+        def _create_debate(self, path, query_params, handler) -> HandlerResult:
+            ...
+
+        @log_request("plugin execution", log_response=True)
+        def _run_plugin(self, plugin_name, handler) -> HandlerResult:
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            trace_id = generate_trace_id()
+            start_time = time.time()
+            logger.info(f"[{trace_id}] {context}: started")
+
+            try:
+                result = func(*args, **kwargs)
+                duration_ms = round((time.time() - start_time) * 1000, 2)
+
+                # Extract status code from result
+                status_code = getattr(result, 'status_code', 200) if result else 200
+
+                log_msg = f"[{trace_id}] {context}: {status_code} in {duration_ms}ms"
+                if status_code >= 400:
+                    logger.warning(log_msg)
+                else:
+                    logger.info(log_msg)
+
+                if log_response and result:
+                    body = getattr(result, 'body', b'')
+                    if body and len(body) < 1000:  # Only log small responses
+                        logger.debug(f"[{trace_id}] Response: {body.decode('utf-8', errors='ignore')[:500]}")
+
+                return result
+
+            except Exception as e:
+                duration_ms = round((time.time() - start_time) * 1000, 2)
+                logger.error(
+                    f"[{trace_id}] {context}: failed in {duration_ms}ms - {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                raise
         return wrapper
     return decorator
 

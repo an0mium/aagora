@@ -7,9 +7,73 @@ failure handling in API calls and agent interactions.
 
 import logging
 import time
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
+from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# Global circuit breaker registry for shared state across components
+_circuit_breakers: dict[str, "CircuitBreaker"] = {}
+
+
+def get_circuit_breaker(
+    name: str,
+    failure_threshold: int = 3,
+    cooldown_seconds: float = 60.0,
+) -> "CircuitBreaker":
+    """
+    Get or create a named circuit breaker from the global registry.
+
+    This ensures consistent circuit breaker state across components
+    for the same service/agent.
+
+    Args:
+        name: Unique identifier for this circuit breaker (e.g., "agent_claude")
+        failure_threshold: Failures before opening circuit
+        cooldown_seconds: Seconds before attempting recovery
+
+    Returns:
+        CircuitBreaker instance (shared if already exists)
+    """
+    if name not in _circuit_breakers:
+        _circuit_breakers[name] = CircuitBreaker(
+            failure_threshold=failure_threshold,
+            cooldown_seconds=cooldown_seconds,
+        )
+        logger.debug(f"Created circuit breaker: {name}")
+    return _circuit_breakers[name]
+
+
+def reset_all_circuit_breakers() -> None:
+    """Reset all global circuit breakers. Useful for testing."""
+    for cb in _circuit_breakers.values():
+        cb.reset()
+    logger.info(f"Reset {len(_circuit_breakers)} circuit breakers")
+
+
+def get_circuit_breaker_status() -> dict[str, dict]:
+    """Get status of all registered circuit breakers."""
+    return {
+        name: {
+            "status": cb.get_status(),
+            "failures": cb.failures,
+        }
+        for name, cb in _circuit_breakers.items()
+    }
+
+
+class CircuitOpenError(Exception):
+    """Raised when attempting to use an open circuit."""
+
+    def __init__(self, circuit_name: str, cooldown_remaining: float):
+        self.circuit_name = circuit_name
+        self.cooldown_remaining = cooldown_remaining
+        super().__init__(
+            f"Circuit breaker '{circuit_name}' is open. "
+            f"Retry in {cooldown_remaining:.1f}s"
+        )
 
 
 @dataclass
@@ -304,3 +368,74 @@ class CircuitBreaker:
             if elapsed < cb.cooldown_seconds:
                 cb._circuit_open_at[name] = time.time() - elapsed
         return cb
+
+    @asynccontextmanager
+    async def protected_call(self, entity: str | None = None, circuit_name: str | None = None):
+        """
+        Async context manager for circuit-breaker-protected calls.
+
+        Automatically checks if circuit is open before call and records
+        success/failure after the call completes.
+
+        Args:
+            entity: Optional entity name for multi-entity mode
+            circuit_name: Name for error messages (defaults to entity or "circuit")
+
+        Raises:
+            CircuitOpenError: If the circuit is open
+
+        Usage:
+            async with breaker.protected_call("my-agent"):
+                result = await api_call()
+        """
+        name = circuit_name or entity or "circuit"
+
+        # Check if circuit allows requests
+        if not self.can_proceed(entity):
+            # Calculate remaining cooldown
+            if entity is None:
+                elapsed = time.time() - self._single_open_at
+            else:
+                elapsed = time.time() - self._circuit_open_at.get(entity, 0)
+            remaining = max(0, self.cooldown_seconds - elapsed)
+            raise CircuitOpenError(name, remaining)
+
+        try:
+            yield
+            self.record_success(entity)
+        except Exception:
+            self.record_failure(entity)
+            raise
+
+    @contextmanager
+    def protected_call_sync(self, entity: str | None = None, circuit_name: str | None = None):
+        """
+        Sync context manager for circuit-breaker-protected calls.
+
+        Args:
+            entity: Optional entity name for multi-entity mode
+            circuit_name: Name for error messages
+
+        Raises:
+            CircuitOpenError: If the circuit is open
+
+        Usage:
+            with breaker.protected_call_sync("my-agent"):
+                result = sync_api_call()
+        """
+        name = circuit_name or entity or "circuit"
+
+        if not self.can_proceed(entity):
+            if entity is None:
+                elapsed = time.time() - self._single_open_at
+            else:
+                elapsed = time.time() - self._circuit_open_at.get(entity, 0)
+            remaining = max(0, self.cooldown_seconds - elapsed)
+            raise CircuitOpenError(name, remaining)
+
+        try:
+            yield
+            self.record_success(entity)
+        except Exception:
+            self.record_failure(entity)
+            raise

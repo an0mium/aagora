@@ -14,6 +14,7 @@ Endpoints:
 - POST /api/debates/{id}/fork - Fork debate at a branch point
 """
 
+import logging
 from typing import Optional
 from .base import (
     BaseHandler,
@@ -23,6 +24,8 @@ from .base import (
     get_int_param,
     validate_debate_id,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DebatesHandler(BaseHandler):
@@ -39,6 +42,57 @@ class DebatesHandler(BaseHandler):
         "/api/debates/*/citations",
         "/api/debates/*/fork",  # POST - counterfactual fork
     ]
+
+    # Endpoints that require authentication
+    AUTH_REQUIRED_ENDPOINTS = [
+        "/api/debates",  # List all debates - prevents enumeration
+        "/export/",  # Export debate data
+        "/citations",  # Evidence citations
+        "/fork",  # Fork debate
+    ]
+
+    def _check_auth(self, handler) -> Optional[HandlerResult]:
+        """Check authentication for sensitive endpoints.
+
+        Returns:
+            None if auth passes, HandlerResult with 401 if auth fails.
+        """
+        from aragora.server.auth import auth_config
+
+        if handler is None:
+            logger.debug("No handler provided for auth check")
+            return None  # Can't check auth without handler
+
+        # If auth is disabled globally, allow access
+        if not auth_config.enabled:
+            return None
+
+        # Extract auth token from Authorization header
+        auth_header = None
+        if hasattr(handler, 'headers'):
+            auth_header = handler.headers.get('Authorization', '')
+
+        token = None
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+
+        # Check if API token is configured
+        if not auth_config.api_token:
+            logger.debug("No API token configured, skipping auth")
+            return None
+
+        # Validate the provided token
+        if not token or not auth_config.validate_token(token):
+            return error_response("Invalid or missing authentication token", 401)
+
+        return None
+
+    def _requires_auth(self, path: str) -> bool:
+        """Check if the given path requires authentication."""
+        for pattern in self.AUTH_REQUIRED_ENDPOINTS:
+            if pattern in path:
+                return True
+        return False
 
     def can_handle(self, path: str) -> bool:
         """Check if this handler can process the given path."""
@@ -60,6 +114,12 @@ class DebatesHandler(BaseHandler):
         Note: This delegates to the unified server's existing methods
         to maintain backward compatibility.
         """
+        # Check authentication for protected endpoints
+        if self._requires_auth(path):
+            auth_error = self._check_auth(handler)
+            if auth_error:
+                return auth_error
+
         if path == "/api/debates":
             limit = get_int_param(query_params, 'limit', 20)
             limit = min(limit, 100)  # Cap at 100

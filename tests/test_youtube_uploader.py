@@ -21,13 +21,13 @@ from aragora.connectors.youtube_uploader import (
     MAX_DESCRIPTION_LENGTH,
     MAX_TAGS_LENGTH,
     MAX_TITLE_LENGTH,
-    CircuitBreaker,
     UploadResult,
     YouTubeRateLimiter,
     YouTubeUploaderConnector,
     YouTubeVideoMetadata,
     create_video_metadata_from_debate,
 )
+from aragora.resilience import CircuitBreaker
 
 
 # =============================================================================
@@ -60,7 +60,7 @@ def unconfigured_connector():
 @pytest.fixture
 def circuit_breaker():
     """Fresh circuit breaker instance."""
-    return CircuitBreaker(failure_threshold=3, recovery_timeout=300)
+    return CircuitBreaker(failure_threshold=3, cooldown_seconds=300.0)
 
 
 @pytest.fixture
@@ -246,8 +246,8 @@ class TestCircuitBreaker:
 
         assert circuit_breaker.can_proceed() is False
 
-        # Simulate 300+ seconds passing
-        circuit_breaker.last_failure_time = time.time() - 301
+        # Simulate 300+ seconds passing (use internal property for single-entity mode)
+        circuit_breaker._single_open_at = time.time() - 301
 
         assert circuit_breaker.can_proceed() is True
 
@@ -315,8 +315,10 @@ class TestOAuthAuthentication:
             assert configured_connector.refresh_token == "new_refresh_token"
 
     @pytest.mark.asyncio
-    async def test_exchange_code_failure_returns_none(self, configured_connector):
-        """Test that failed code exchange returns None."""
+    async def test_exchange_code_failure_raises_error(self, configured_connector):
+        """Test that failed code exchange raises YouTubeAuthError."""
+        from aragora.connectors.youtube_uploader import YouTubeAuthError
+
         mock_response = MagicMock()
         mock_response.status_code = 400
         mock_response.text = "Invalid code"
@@ -326,12 +328,11 @@ class TestOAuthAuthentication:
             mock_client.return_value.__aenter__.return_value = mock_instance
             mock_instance.post.return_value = mock_response
 
-            result = await configured_connector.exchange_code(
-                code="bad_code",
-                redirect_uri="http://localhost/callback",
-            )
-
-            assert result is None
+            with pytest.raises(YouTubeAuthError):
+                await configured_connector.exchange_code(
+                    code="bad_code",
+                    redirect_uri="http://localhost/callback",
+                )
 
     @pytest.mark.asyncio
     async def test_token_refresh_uses_5_min_buffer(self, configured_connector):
@@ -546,18 +547,19 @@ class TestVideoStatusAndFactory:
             assert result["id"] == "abc123"
 
     @pytest.mark.asyncio
-    async def test_get_video_status_returns_none_when_token_unavailable(
+    async def test_get_video_status_raises_error_when_token_unavailable(
         self, configured_connector
     ):
-        """Test that get_video_status returns None when token unavailable."""
+        """Test that get_video_status raises error when token unavailable."""
+        from aragora.connectors.youtube_uploader import YouTubeAuthError
+
         # No access token set
         configured_connector._access_token = None
         configured_connector._token_expiry = None
         configured_connector.refresh_token = ""  # Also no refresh token
 
-        result = await configured_connector.get_video_status("abc123")
-
-        assert result is None
+        with pytest.raises(YouTubeAuthError):
+            await configured_connector.get_video_status("abc123")
 
     def test_create_video_metadata_from_debate_factory_works(self):
         """Test create_video_metadata_from_debate factory function."""
