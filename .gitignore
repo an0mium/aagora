@@ -67,6 +67,8 @@ venv.bak/
 *.db-shm
 *.db-wal
 *.db-journal
+elo_snapshot.json
+**/elo_snapshot.json
 agora_memory.db
 debates.db
 *.sqlite
