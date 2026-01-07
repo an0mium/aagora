@@ -367,3 +367,113 @@ def handle_openapi_request(format: str = "json") -> tuple[str, str]:
     if format == "yaml":
         return get_openapi_yaml(), "application/yaml"
     return get_openapi_json(), "application/json"
+
+
+def extract_endpoints_from_handlers() -> dict[str, dict]:
+    """Extract endpoints from handler docstrings dynamically."""
+    import re
+    from pathlib import Path
+
+    handlers_dir = Path(__file__).parent / "handlers"
+    endpoints = {}
+
+    if not handlers_dir.exists():
+        return endpoints
+
+    # Pattern: - GET /api/path - Description
+    pattern = r"- (GET|POST|PUT|DELETE|PATCH) (/api/[^\s]+)\s*-\s*(.+)"
+
+    for handler_file in handlers_dir.glob("*.py"):
+        if handler_file.name.startswith("_"):
+            continue
+
+        try:
+            content = handler_file.read_text()
+        except Exception:
+            continue
+
+        for match in re.finditer(pattern, content):
+            method = match.group(1).lower()
+            path = match.group(2)
+            description = match.group(3).strip()
+
+            # Normalize path parameters: :param -> {param}, * -> {id}
+            path = re.sub(r":(\w+)", r"{\1}", path)
+            path = re.sub(r"\*", "{id}", path)
+
+            # Determine tag from handler file
+            tag = handler_file.stem.replace("_", " ").title()
+
+            if path not in endpoints:
+                endpoints[path] = {}
+
+            # Extract path parameters
+            params = []
+            for param_match in re.finditer(r"\{(\w+)\}", path):
+                params.append({
+                    "name": param_match.group(1),
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"},
+                })
+
+            endpoint_def = {
+                "tags": [tag],
+                "summary": description,
+                "description": description,
+                "responses": {
+                    "200": {"description": "Successful response"},
+                    "400": {"description": "Bad request", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+                    "401": {"description": "Unauthorized"},
+                    "500": {"description": "Server error"},
+                },
+            }
+
+            if params:
+                endpoint_def["parameters"] = params
+
+            if method in ("post", "put", "patch"):
+                endpoint_def["requestBody"] = {
+                    "content": {"application/json": {"schema": {"type": "object"}}},
+                }
+
+            endpoints[path][method] = endpoint_def
+
+    return endpoints
+
+
+def generate_full_openapi_schema() -> dict[str, Any]:
+    """Generate complete OpenAPI schema including dynamically extracted endpoints."""
+    base_schema = generate_openapi_schema()
+
+    # Add dynamically extracted endpoints
+    dynamic_endpoints = extract_endpoints_from_handlers()
+    for path, methods in dynamic_endpoints.items():
+        if path not in base_schema["paths"]:
+            base_schema["paths"][path] = methods
+        else:
+            # Merge methods
+            for method, spec in methods.items():
+                if method not in base_schema["paths"][path]:
+                    base_schema["paths"][path][method] = spec
+
+    return base_schema
+
+
+def save_openapi_schema(output_path: str = "docs/api/openapi.json") -> tuple[str, int]:
+    """Save complete OpenAPI schema to file.
+
+    Returns:
+        Tuple of (file_path, endpoint_count)
+    """
+    from pathlib import Path
+
+    schema = generate_full_openapi_schema()
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output, "w") as f:
+        json.dump(schema, f, indent=2)
+
+    endpoint_count = sum(len(methods) for methods in schema["paths"].values())
+    return str(output.absolute()), endpoint_count
