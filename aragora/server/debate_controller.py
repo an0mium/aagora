@@ -121,6 +121,11 @@ class DebateController:
     - Handles trending topic integration
     - Manages debate state through debate_utils
 
+    Thread Safety:
+        The class-level _executor is protected by _executor_thread_lock
+        using double-check locking pattern in _get_executor(). All debate
+        state is managed through StateManager which has its own locking.
+
     Usage:
         controller = DebateController(
             factory=debate_factory,
@@ -133,7 +138,7 @@ class DebateController:
     """
 
     # Class-level thread pool (shared across instances)
-    # Protected by instance-level _executor_thread_lock for thread-safe lazy init
+    # Protected by _executor_thread_lock for thread-safe lazy initialization
     _executor: Optional[ThreadPoolExecutor] = None
 
     def __init__(

@@ -55,6 +55,17 @@ class StateManager:
     - Cleanup counters
     - Server start time
 
+    Thread Safety:
+        All public methods are thread-safe. Internal state is protected by:
+        - _debates_lock: Guards _active_debates dict
+        - _executor_lock: Guards _executor creation/shutdown
+        - _cleanup_counter_lock: Guards cleanup counter
+
+        Lock acquisition order (to prevent deadlocks):
+        1. _debates_lock
+        2. _executor_lock
+        3. _cleanup_counter_lock
+
     Usage:
         state = get_state_manager()
         state.register_debate("debate-123", {...})

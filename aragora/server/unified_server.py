@@ -321,12 +321,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _insights_handler: Optional["InsightsHandler"] = None
     _handlers_initialized: bool = False
 
-    # Thread pool for debate execution (prevents unbounded thread creation)
-    _debate_executor: Optional["ThreadPoolExecutor"] = None
-    _debate_executor_lock = threading.Lock()  # Lock for thread-safe executor creation
-    # MAX_CONCURRENT_DEBATES imported from aragora.config
-
     # Debate controller and factory (initialized lazily)
+    # Note: DebateController manages its own ThreadPoolExecutor with proper locking
     _debate_controller: Optional[DebateController] = None
     _debate_factory: Optional[DebateFactory] = None
 
@@ -1950,18 +1946,6 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
         """Suppress default logging."""
         pass
-
-
-def _shutdown_debate_executor() -> None:
-    """Shutdown debate executor on process exit."""
-    with UnifiedHandler._debate_executor_lock:
-        if UnifiedHandler._debate_executor:
-            logger.info("Shutting down debate executor...")
-            UnifiedHandler._debate_executor.shutdown(wait=True, cancel_futures=False)
-            UnifiedHandler._debate_executor = None
-
-
-atexit.register(_shutdown_debate_executor)
 
 
 class UnifiedServer:
