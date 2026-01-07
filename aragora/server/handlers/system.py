@@ -45,6 +45,9 @@ class SystemHandler(BaseHandler):
         "/api/history/debates",
         "/api/history/summary",
         "/api/system/maintenance",
+        "/api/openapi",
+        "/api/openapi.json",
+        "/api/openapi.yaml",
     ]
 
     def can_handle(self, path: str) -> bool:
@@ -116,6 +119,12 @@ class SystemHandler(BaseHandler):
             if task not in ('status', 'vacuum', 'analyze', 'checkpoint', 'full'):
                 return error_response("Invalid task. Use: status, vacuum, analyze, checkpoint, full", 400)
             return self._run_maintenance(task)
+
+        if path in ("/api/openapi", "/api/openapi.json"):
+            return self._get_openapi_spec("json")
+
+        if path == "/api/openapi.yaml":
+            return self._get_openapi_spec("yaml")
 
         return None
 
@@ -595,3 +604,27 @@ class SystemHandler(BaseHandler):
         except Exception as e:
             logger.exception(f"Maintenance task '{task}' failed: {e}")
             return error_response(f"Maintenance failed: {e}", 500)
+
+    def _get_openapi_spec(self, format: str = "json") -> HandlerResult:
+        """Get OpenAPI specification.
+
+        Args:
+            format: Output format - 'json' or 'yaml'
+
+        Returns:
+            OpenAPI 3.0 schema in requested format.
+        """
+        try:
+            from aragora.server.openapi import handle_openapi_request
+
+            content, content_type = handle_openapi_request(format=format)
+            return HandlerResult(
+                content=content,
+                content_type=content_type,
+                status=200,
+            )
+        except ImportError:
+            return error_response("OpenAPI module not available", 503)
+        except Exception as e:
+            logger.exception(f"OpenAPI generation failed: {e}")
+            return error_response(f"OpenAPI generation failed: {e}", 500)

@@ -40,6 +40,7 @@ class DebatesHandler(BaseHandler):
         "/api/debates/*/impasse",
         "/api/debates/*/convergence",
         "/api/debates/*/citations",
+        "/api/debates/*/messages",  # Paginated message history
         "/api/debates/*/fork",  # POST - counterfactual fork
     ]
 
@@ -153,6 +154,15 @@ class DebatesHandler(BaseHandler):
                 return error_response(err, 400)
             if debate_id:
                 return self._get_citations(handler, debate_id)
+
+        if path.endswith("/messages"):
+            debate_id, err = self._extract_debate_id(path)
+            if err:
+                return error_response(err, 400)
+            if debate_id:
+                limit = get_int_param(query_params, 'limit', 50)
+                offset = get_int_param(query_params, 'offset', 0)
+                return self._get_debate_messages(debate_id, limit, offset)
 
         if path.endswith("/meta-critique"):
             # Handle both /api/debates/{id}/meta-critique and /api/debate/{id}/meta-critique
@@ -628,6 +638,65 @@ class DebatesHandler(BaseHandler):
 
         except Exception as e:
             return error_response(f"Failed to get citations: {e}", 500)
+
+    def _get_debate_messages(self, debate_id: str, limit: int = 50, offset: int = 0) -> HandlerResult:
+        """Get paginated message history for a debate.
+
+        Args:
+            debate_id: The debate ID
+            limit: Maximum messages to return (default 50, max 200)
+            offset: Starting offset for pagination
+
+        Returns:
+            Paginated list of messages with metadata
+        """
+        storage = self.get_storage()
+        if not storage:
+            return error_response("Storage not available", 503)
+
+        # Clamp limit
+        limit = min(max(1, limit), 200)
+        offset = max(0, offset)
+
+        try:
+            debate = storage.get_debate(debate_id)
+            if not debate:
+                return error_response(f"Debate not found: {debate_id}", 404)
+
+            messages = debate.get("messages", [])
+            total = len(messages)
+
+            # Apply pagination
+            paginated_messages = messages[offset:offset + limit]
+
+            # Format messages for API response
+            formatted_messages = []
+            for i, msg in enumerate(paginated_messages):
+                formatted_msg = {
+                    "index": offset + i,
+                    "role": msg.get("role", "unknown"),
+                    "content": msg.get("content", ""),
+                    "agent": msg.get("agent") or msg.get("name"),
+                    "round": msg.get("round", 0),
+                }
+                # Include optional fields if present
+                if "timestamp" in msg:
+                    formatted_msg["timestamp"] = msg["timestamp"]
+                if "metadata" in msg:
+                    formatted_msg["metadata"] = msg["metadata"]
+                formatted_messages.append(formatted_msg)
+
+            return json_response({
+                "debate_id": debate_id,
+                "messages": formatted_messages,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + len(paginated_messages) < total,
+            })
+
+        except Exception as e:
+            return error_response(f"Failed to get messages: {e}", 500)
 
     def _get_meta_critique(self, debate_id: str) -> HandlerResult:
         """Get meta-level analysis of a debate (repetition, circular arguments, etc)."""

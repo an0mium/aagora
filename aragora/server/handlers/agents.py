@@ -23,6 +23,17 @@ Endpoints:
 import logging
 from typing import Optional, List
 
+from aragora.config import (
+    CACHE_TTL_LEADERBOARD,
+    CACHE_TTL_CALIBRATION_LB,
+    CACHE_TTL_RECENT_MATCHES,
+    CACHE_TTL_AGENT_PROFILE,
+    CACHE_TTL_AGENT_H2H,
+    CACHE_TTL_AGENT_FLIPS,
+    CACHE_TTL_FLIPS_RECENT,
+    CACHE_TTL_FLIPS_SUMMARY,
+)
+
 logger = logging.getLogger(__name__)
 from .base import (
     BaseHandler,
@@ -37,12 +48,14 @@ from .base import (
     validate_path_segment,
     SAFE_ID_PATTERN,
 )
+from aragora.persistence.db_config import DatabaseType, get_db_path
 
 
 class AgentsHandler(BaseHandler):
     """Handler for agent-related endpoints."""
 
     ROUTES = [
+        "/api/agents",
         "/api/leaderboard",
         "/api/rankings",
         "/api/calibration/leaderboard",
@@ -66,6 +79,8 @@ class AgentsHandler(BaseHandler):
 
     def can_handle(self, path: str) -> bool:
         """Check if this handler can process the given path."""
+        if path == "/api/agents":
+            return True
         if path in ("/api/leaderboard", "/api/rankings", "/api/calibration/leaderboard"):
             return True
         if path == "/api/matches/recent":
@@ -80,6 +95,11 @@ class AgentsHandler(BaseHandler):
 
     def handle(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
         """Route agent requests to appropriate methods."""
+        # List all agents
+        if path == "/api/agents":
+            include_stats = get_string_param(query_params, 'include_stats', 'false').lower() == 'true'
+            return self._list_agents(include_stats)
+
         # Leaderboard endpoints
         if path in ("/api/leaderboard", "/api/rankings"):
             limit = get_int_param(query_params, 'limit', 20)
@@ -182,7 +202,63 @@ class AgentsHandler(BaseHandler):
 
         return None
 
-    @ttl_cache(ttl_seconds=300, key_prefix="leaderboard", skip_first=True)
+    @handle_errors("list agents")
+    @ttl_cache(ttl_seconds=CACHE_TTL_LEADERBOARD, key_prefix="agents_list")
+    def _list_agents(self, include_stats: bool = False) -> HandlerResult:
+        """List all known agents.
+
+        Args:
+            include_stats: If True, include basic stats (ELO, match count)
+
+        Returns:
+            List of agent names or agent objects with stats
+        """
+        elo = self.get_elo_system()
+        agents = []
+
+        # Get agents from ELO system if available
+        if elo:
+            try:
+                # Get all agents from leaderboard (large limit to get all)
+                rankings = elo.get_leaderboard(limit=500)
+                for agent in rankings:
+                    if isinstance(agent, dict):
+                        name = agent.get("name", "")
+                        if include_stats:
+                            agents.append({
+                                "name": name,
+                                "elo": agent.get("elo", 1500),
+                                "matches": agent.get("matches", 0),
+                                "wins": agent.get("wins", 0),
+                                "losses": agent.get("losses", 0),
+                            })
+                        else:
+                            agents.append({"name": name})
+                    else:
+                        name = getattr(agent, "name", "")
+                        if include_stats:
+                            agents.append({
+                                "name": name,
+                                "elo": getattr(agent, "elo", 1500),
+                                "matches": getattr(agent, "matches", 0),
+                                "wins": getattr(agent, "wins", 0),
+                                "losses": getattr(agent, "losses", 0),
+                            })
+                        else:
+                            agents.append({"name": name})
+            except Exception as e:
+                logger.warning(f"Could not get agents from ELO: {e}")
+
+        # Fallback to known agent types if no ELO data
+        if not agents:
+            from aragora.agents.cli_agents import AGENT_TYPES
+            agents = [{"name": name} for name in AGENT_TYPES.keys()]
+
+        return json_response({
+            "agents": agents,
+            "total": len(agents),
+        })
+
     def _get_leaderboard(self, limit: int, domain: Optional[str]) -> HandlerResult:
         """Get agent leaderboard with consistency scores (batched to avoid N+1)."""
         elo = self.get_elo_system()
@@ -202,7 +278,7 @@ class AgentsHandler(BaseHandler):
                 from aragora.insights.flip_detector import FlipDetector
                 nomic_dir = self.get_nomic_dir()
                 if nomic_dir:
-                    detector = FlipDetector(str(nomic_dir / "grounded_positions.db"))
+                    detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
                     # Extract all agent names first
                     agent_names = []
                     for agent in rankings:
@@ -271,7 +347,7 @@ class AgentsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get leaderboard: {e}", 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="calibration_lb", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_CALIBRATION_LB, key_prefix="calibration_lb", skip_first=True)
     def _get_calibration_leaderboard(self, limit: int) -> HandlerResult:
         """Get calibration leaderboard."""
         elo = self.get_elo_system()
@@ -286,7 +362,7 @@ class AgentsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get calibration leaderboard: {e}", 500)
 
-    @ttl_cache(ttl_seconds=120, key_prefix="recent_matches", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_RECENT_MATCHES, key_prefix="recent_matches", skip_first=True)
     def _get_recent_matches(self, limit: int, loop_id: Optional[str]) -> HandlerResult:
         """Get recent matches (uses JSON snapshot cache for fast reads)."""
         elo = self.get_elo_system()
@@ -339,7 +415,7 @@ class AgentsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Comparison failed: {e}", 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="agent_profile", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_AGENT_PROFILE, key_prefix="agent_profile", skip_first=True)
     @handle_errors("agent profile")
     def _get_profile(self, agent: str) -> HandlerResult:
         """Get complete agent profile."""
@@ -390,7 +466,7 @@ class AgentsHandler(BaseHandler):
         from aragora.insights.flip_detector import FlipDetector
         nomic_dir = self.get_nomic_dir()
         if nomic_dir:
-            detector = FlipDetector(str(nomic_dir / "grounded_positions.db"))
+            detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
             score = detector.get_agent_consistency(agent)
             return json_response({"agent": agent, "consistency_score": score})
         return json_response({"agent": agent, "consistency_score": 1.0})
@@ -460,12 +536,12 @@ class AgentsHandler(BaseHandler):
         from aragora.agents.grounded import PositionLedger
         nomic_dir = self.get_nomic_dir()
         if nomic_dir:
-            ledger = PositionLedger(str(nomic_dir / "grounded_positions.db"))
+            ledger = PositionLedger(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
             positions = ledger.get_agent_positions(agent, limit=limit)
             return json_response({"agent": agent, "positions": positions})
         return json_response({"agent": agent, "positions": []})
 
-    @ttl_cache(ttl_seconds=600, key_prefix="agent_h2h", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_AGENT_H2H, key_prefix="agent_h2h", skip_first=True)
     @handle_errors("head-to-head stats")
     def _get_head_to_head(self, agent: str, opponent: str) -> HandlerResult:
         """Get head-to-head stats between two agents."""
@@ -496,7 +572,7 @@ class AgentsHandler(BaseHandler):
         if nomic_dir:
             try:
                 from aragora.agents.grounded import PositionLedger
-                db_path = nomic_dir / "grounded_positions.db"
+                db_path = get_db_path(DatabaseType.POSITIONS, nomic_dir)
                 if db_path.exists():
                     position_ledger = PositionLedger(str(db_path))
             except ImportError:
@@ -533,14 +609,14 @@ class AgentsHandler(BaseHandler):
 
     # ==================== Flip Detector Endpoints ====================
 
-    @ttl_cache(ttl_seconds=300, key_prefix="agent_flips", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_AGENT_FLIPS, key_prefix="agent_flips", skip_first=True)
     @handle_errors("agent flips")
     def _get_agent_flips(self, agent: str, limit: int) -> HandlerResult:
         """Get recent position flips for an agent."""
         from aragora.insights.flip_detector import FlipDetector
         nomic_dir = self.get_nomic_dir()
         if nomic_dir:
-            detector = FlipDetector(str(nomic_dir / "grounded_positions.db"))
+            detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
             flips = detector.detect_flips_for_agent(agent, lookback_positions=min(limit, 100))
             consistency = detector.get_agent_consistency(agent)
             return json_response({
@@ -556,14 +632,14 @@ class AgentsHandler(BaseHandler):
             "count": 0,
         })
 
-    @ttl_cache(ttl_seconds=300, key_prefix="flips_recent", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_FLIPS_RECENT, key_prefix="flips_recent", skip_first=True)
     @handle_errors("recent flips")
     def _get_recent_flips(self, limit: int) -> HandlerResult:
         """Get recent flips across all agents."""
         from aragora.insights.flip_detector import FlipDetector
         nomic_dir = self.get_nomic_dir()
         if nomic_dir:
-            detector = FlipDetector(str(nomic_dir / "grounded_positions.db"))
+            detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
             flips = detector.get_recent_flips(limit=min(limit, 100))
             summary = detector.get_flip_summary()
             return json_response({
@@ -577,14 +653,14 @@ class AgentsHandler(BaseHandler):
             "count": 0,
         })
 
-    @ttl_cache(ttl_seconds=600, key_prefix="flips_summary", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_FLIPS_SUMMARY, key_prefix="flips_summary", skip_first=True)
     @handle_errors("flip summary")
     def _get_flip_summary(self) -> HandlerResult:
         """Get flip summary for dashboard."""
         from aragora.insights.flip_detector import FlipDetector
         nomic_dir = self.get_nomic_dir()
         if nomic_dir:
-            detector = FlipDetector(str(nomic_dir / "grounded_positions.db"))
+            detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
             summary = detector.get_flip_summary()
             return json_response(summary)
         return json_response({

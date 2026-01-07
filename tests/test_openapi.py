@@ -1,0 +1,325 @@
+"""Tests for OpenAPI schema generator."""
+
+import json
+import pytest
+
+from aragora.server.openapi import (
+    API_VERSION,
+    COMMON_SCHEMAS,
+    ENDPOINTS,
+    generate_openapi_schema,
+    get_openapi_json,
+    get_openapi_yaml,
+    handle_openapi_request,
+)
+
+
+class TestOpenAPISchema:
+    """Tests for OpenAPI schema generation."""
+
+    def test_api_version_format(self):
+        """API version follows semver format."""
+        parts = API_VERSION.split(".")
+        assert len(parts) == 3
+        assert all(p.isdigit() for p in parts)
+
+    def test_common_schemas_defined(self):
+        """Common schemas are defined."""
+        assert "Error" in COMMON_SCHEMAS
+        assert "Agent" in COMMON_SCHEMAS
+        assert "Debate" in COMMON_SCHEMAS
+        assert "Message" in COMMON_SCHEMAS
+        assert "HealthCheck" in COMMON_SCHEMAS
+        assert "PaginatedResponse" in COMMON_SCHEMAS
+
+    def test_error_schema_structure(self):
+        """Error schema has required fields."""
+        error = COMMON_SCHEMAS["Error"]
+        assert error["type"] == "object"
+        assert "error" in error["properties"]
+        assert "error" in error["required"]
+
+    def test_agent_schema_structure(self):
+        """Agent schema has expected fields."""
+        agent = COMMON_SCHEMAS["Agent"]
+        assert agent["type"] == "object"
+        props = agent["properties"]
+        assert "name" in props
+        assert "elo" in props
+        assert "matches" in props
+
+    def test_debate_schema_structure(self):
+        """Debate schema has expected fields."""
+        debate = COMMON_SCHEMAS["Debate"]
+        assert debate["type"] == "object"
+        props = debate["properties"]
+        assert "id" in props
+        assert "topic" in props
+        assert "status" in props
+        assert "messages" in props
+
+    def test_message_schema_structure(self):
+        """Message schema has expected fields."""
+        message = COMMON_SCHEMAS["Message"]
+        assert message["type"] == "object"
+        props = message["properties"]
+        assert "role" in props
+        assert "content" in props
+        assert "agent" in props
+
+    def test_health_check_schema_structure(self):
+        """HealthCheck schema has expected fields."""
+        health = COMMON_SCHEMAS["HealthCheck"]
+        assert health["type"] == "object"
+        props = health["properties"]
+        assert "status" in props
+        assert "version" in props
+        assert "timestamp" in props
+
+
+class TestEndpoints:
+    """Tests for endpoint definitions."""
+
+    def test_health_endpoint_defined(self):
+        """Health endpoint is defined."""
+        assert "/api/health" in ENDPOINTS
+        assert "get" in ENDPOINTS["/api/health"]
+
+    def test_agents_endpoint_defined(self):
+        """Agents endpoint is defined."""
+        assert "/api/agents" in ENDPOINTS
+        endpoint = ENDPOINTS["/api/agents"]
+        assert "get" in endpoint
+        assert endpoint["get"]["tags"] == ["Agents"]
+
+    def test_debates_endpoint_defined(self):
+        """Debates endpoint is defined."""
+        assert "/api/debates" in ENDPOINTS
+        assert "/api/debates/{id}" in ENDPOINTS
+        assert "/api/debates/{id}/messages" in ENDPOINTS
+
+    def test_leaderboard_endpoint_defined(self):
+        """Leaderboard endpoint is defined."""
+        assert "/api/leaderboard" in ENDPOINTS
+        endpoint = ENDPOINTS["/api/leaderboard"]
+        assert "limit" in str(endpoint)
+
+    def test_analytics_endpoints_defined(self):
+        """Analytics endpoints are defined."""
+        assert "/api/analytics/disagreement" in ENDPOINTS
+        assert "/api/analytics/consensus" in ENDPOINTS
+
+    def test_pulse_endpoints_defined(self):
+        """Pulse endpoints are defined."""
+        assert "/api/pulse/trending" in ENDPOINTS
+        assert "/api/pulse/suggest" in ENDPOINTS
+
+    def test_metrics_endpoints_defined(self):
+        """Metrics endpoints are defined."""
+        assert "/api/metrics" in ENDPOINTS
+        assert "/api/metrics/prometheus" in ENDPOINTS
+
+    def test_endpoint_has_tags(self):
+        """All endpoints have tags."""
+        for path, methods in ENDPOINTS.items():
+            for method, spec in methods.items():
+                assert "tags" in spec, f"{path} {method} missing tags"
+
+    def test_endpoint_has_summary(self):
+        """All endpoints have summary."""
+        for path, methods in ENDPOINTS.items():
+            for method, spec in methods.items():
+                assert "summary" in spec, f"{path} {method} missing summary"
+
+    def test_endpoint_has_responses(self):
+        """All endpoints have responses."""
+        for path, methods in ENDPOINTS.items():
+            for method, spec in methods.items():
+                assert "responses" in spec, f"{path} {method} missing responses"
+
+
+class TestGenerateOpenAPISchema:
+    """Tests for schema generation function."""
+
+    def test_returns_dict(self):
+        """Returns a dictionary."""
+        schema = generate_openapi_schema()
+        assert isinstance(schema, dict)
+
+    def test_openapi_version(self):
+        """Has correct OpenAPI version."""
+        schema = generate_openapi_schema()
+        assert schema["openapi"] == "3.0.3"
+
+    def test_info_section(self):
+        """Has info section with required fields."""
+        schema = generate_openapi_schema()
+        info = schema["info"]
+        assert info["title"] == "Aragora API"
+        assert info["version"] == API_VERSION
+        assert "description" in info
+
+    def test_servers_section(self):
+        """Has servers section."""
+        schema = generate_openapi_schema()
+        servers = schema["servers"]
+        assert len(servers) >= 1
+        assert "url" in servers[0]
+        assert "description" in servers[0]
+
+    def test_tags_section(self):
+        """Has tags section."""
+        schema = generate_openapi_schema()
+        tags = schema["tags"]
+        tag_names = [t["name"] for t in tags]
+        assert "System" in tag_names
+        assert "Agents" in tag_names
+        assert "Debates" in tag_names
+
+    def test_paths_section(self):
+        """Has paths section with endpoints."""
+        schema = generate_openapi_schema()
+        assert "paths" in schema
+        assert len(schema["paths"]) > 0
+
+    def test_components_section(self):
+        """Has components section with schemas."""
+        schema = generate_openapi_schema()
+        assert "components" in schema
+        assert "schemas" in schema["components"]
+        assert len(schema["components"]["schemas"]) > 0
+
+    def test_security_schemes(self):
+        """Has security schemes defined."""
+        schema = generate_openapi_schema()
+        security = schema["components"]["securitySchemes"]
+        assert "bearerAuth" in security
+        assert security["bearerAuth"]["type"] == "http"
+        assert security["bearerAuth"]["scheme"] == "bearer"
+
+
+class TestGetOpenAPIJson:
+    """Tests for JSON output."""
+
+    def test_returns_string(self):
+        """Returns a JSON string."""
+        result = get_openapi_json()
+        assert isinstance(result, str)
+
+    def test_valid_json(self):
+        """Returns valid JSON."""
+        result = get_openapi_json()
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    def test_json_has_openapi_key(self):
+        """JSON has openapi key."""
+        result = get_openapi_json()
+        parsed = json.loads(result)
+        assert "openapi" in parsed
+
+
+class TestGetOpenAPIYaml:
+    """Tests for YAML output."""
+
+    def test_returns_string(self):
+        """Returns a string."""
+        result = get_openapi_yaml()
+        assert isinstance(result, str)
+
+    def test_contains_openapi_key(self):
+        """Output contains openapi key."""
+        result = get_openapi_yaml()
+        assert "openapi" in result
+
+    def test_yaml_format_if_available(self):
+        """Uses YAML format if PyYAML available."""
+        try:
+            import yaml
+            result = get_openapi_yaml()
+            # YAML format uses colons without quotes
+            assert "openapi:" in result
+        except ImportError:
+            # Falls back to JSON
+            result = get_openapi_yaml()
+            assert '"openapi"' in result
+
+
+class TestHandleOpenAPIRequest:
+    """Tests for request handler."""
+
+    def test_default_json_format(self):
+        """Default format is JSON."""
+        content, content_type = handle_openapi_request()
+        assert content_type == "application/json"
+        assert '"openapi"' in content
+
+    def test_explicit_json_format(self):
+        """JSON format when requested."""
+        content, content_type = handle_openapi_request(format="json")
+        assert content_type == "application/json"
+
+    def test_yaml_format(self):
+        """YAML format when requested."""
+        content, content_type = handle_openapi_request(format="yaml")
+        assert content_type == "application/yaml"
+        assert "openapi" in content
+
+    def test_content_is_string(self):
+        """Content is always a string."""
+        for fmt in ["json", "yaml"]:
+            content, _ = handle_openapi_request(format=fmt)
+            assert isinstance(content, str)
+
+
+class TestSchemaValidation:
+    """Tests for schema validation."""
+
+    def test_all_refs_valid(self):
+        """All $ref references point to existing schemas."""
+        schema = generate_openapi_schema()
+        schemas = schema["components"]["schemas"]
+
+        def check_refs(obj, path=""):
+            if isinstance(obj, dict):
+                if "$ref" in obj:
+                    ref = obj["$ref"]
+                    # Extract schema name from #/components/schemas/SchemaName
+                    if ref.startswith("#/components/schemas/"):
+                        schema_name = ref.split("/")[-1]
+                        assert schema_name in schemas, f"Invalid $ref at {path}: {ref}"
+                for k, v in obj.items():
+                    check_refs(v, f"{path}.{k}")
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    check_refs(item, f"{path}[{i}]")
+
+        check_refs(schema["paths"])
+
+    def test_path_parameters_match(self):
+        """Path parameters in URL match parameter definitions."""
+        schema = generate_openapi_schema()
+
+        for path, methods in schema["paths"].items():
+            # Extract path params from URL
+            import re
+            url_params = set(re.findall(r"\{(\w+)\}", path))
+
+            for method, spec in methods.items():
+                if url_params:
+                    params = spec.get("parameters", [])
+                    defined_path_params = {
+                        p["name"] for p in params if p.get("in") == "path"
+                    }
+                    assert url_params == defined_path_params, \
+                        f"{path} {method}: URL params {url_params} != defined {defined_path_params}"
+
+    def test_response_codes_valid(self):
+        """Response codes are valid HTTP codes."""
+        schema = generate_openapi_schema()
+        valid_codes = {"200", "201", "204", "400", "401", "403", "404", "429", "500", "503"}
+
+        for path, methods in schema["paths"].items():
+            for method, spec in methods.items():
+                for code in spec["responses"].keys():
+                    assert code in valid_codes, f"{path} {method}: invalid response code {code}"

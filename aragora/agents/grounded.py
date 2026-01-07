@@ -22,12 +22,40 @@ from pathlib import Path
 from typing import Generator, Literal, Optional, Union
 
 from aragora.config import DB_ELO_PATH, DB_PERSONAS_PATH
+from aragora.insights.database import InsightsDatabase
+from aragora.ranking.database import EloDatabase
 from .personas import Persona, PersonaManager, EXPERTISE_DOMAINS
+
+# Import from extracted modules for backward compatibility
+from .positions import (
+    Position,
+    CalibrationBucket,
+    DomainCalibration,
+    PositionLedger,
+)
+from .relationships import (
+    AgentRelationship,
+    RelationshipTracker,
+)
 
 logger = logging.getLogger(__name__)
 
 # Database connection timeout in seconds
 DB_TIMEOUT_SECONDS = 30
+
+# Re-export for backward compatibility
+__all__ = [
+    "Position",
+    "CalibrationBucket",
+    "DomainCalibration",
+    "AgentRelationship",
+    "GroundedPersona",
+    "PositionLedger",
+    "RelationshipTracker",
+    "PersonaSynthesizer",
+    "SignificantMoment",
+    "MomentDetector",
+]
 
 
 @dataclass
@@ -243,16 +271,14 @@ class PositionLedger:
 
     def __init__(self, db_path: str = DB_PERSONAS_PATH):
         self.db_path = Path(db_path)
+        self.db = InsightsDatabase(db_path)
         self._init_tables()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_tables(self) -> None:
         """Add positions table if not exists."""
@@ -519,16 +545,14 @@ class RelationshipTracker:
         elo_db_path: str = DB_ELO_PATH,
     ):
         self.elo_db_path = Path(elo_db_path)
+        self.db = EloDatabase(elo_db_path)
         self._init_tables()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.elo_db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_tables(self) -> None:
         """Add agent_relationships table if not exists."""
