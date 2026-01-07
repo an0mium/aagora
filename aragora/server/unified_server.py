@@ -48,7 +48,7 @@ from aragora.config import (
     ALLOWED_AGENT_TYPES,
 )
 from aragora.server.error_utils import safe_error_message as _safe_error_message
-from aragora.server.validation import SAFE_ID_PATTERN
+from aragora.server.validation import SAFE_ID_PATTERN, validate_id
 
 # Import utilities from extracted modules
 from aragora.server.http_utils import (
@@ -69,6 +69,12 @@ from aragora.server.debate_utils import (
     _active_debates,
     _active_debates_lock,
 )
+from aragora.server.debate_controller import (
+    DebateController,
+    DebateRequest,
+    DebateResponse,
+)
+from aragora.server.debate_factory import DebateFactory
 
 # DoS protection limits
 MAX_MULTIPART_PARTS = 10
@@ -87,161 +93,100 @@ TRUSTED_PROXIES = frozenset(
 )
 
 
-# Optional imports using utility for consistent handling
-from aragora.utils.optional_imports import try_import
-
-# Optional Supabase persistence
-_imp, PERSISTENCE_AVAILABLE = try_import("aragora.persistence", "SupabaseClient")
-SupabaseClient = _imp["SupabaseClient"]
-
-# Optional InsightStore for debate insights
-_imp, INSIGHTS_AVAILABLE = try_import("aragora.insights.store", "InsightStore")
-InsightStore = _imp["InsightStore"]
-
-# Optional EloSystem for agent rankings
-_imp, RANKING_AVAILABLE = try_import("aragora.ranking.elo", "EloSystem")
-EloSystem = _imp["EloSystem"]
-
-# Optional FlipDetector for position reversal detection
-_imp, FLIP_DETECTOR_AVAILABLE = try_import(
-    "aragora.insights.flip_detector",
-    "FlipDetector", "format_flip_for_ui", "format_consistency_for_ui"
+# Import optional subsystems from centralized initialization module
+from aragora.server.initialization import (
+    # Availability flags
+    PERSISTENCE_AVAILABLE,
+    INSIGHTS_AVAILABLE,
+    RANKING_AVAILABLE,
+    FLIP_DETECTOR_AVAILABLE,
+    DEBATE_AVAILABLE,
+    PERSONAS_AVAILABLE,
+    EMBEDDINGS_AVAILABLE,
+    CONSENSUS_MEMORY_AVAILABLE,
+    CALIBRATION_AVAILABLE,
+    PULSE_AVAILABLE,
+    VERIFICATION_AVAILABLE,
+    CONTINUUM_AVAILABLE,
+    POSITION_LEDGER_AVAILABLE,
+    MOMENT_DETECTOR_AVAILABLE,
+    POSITION_TRACKER_AVAILABLE,
+    BROADCAST_AVAILABLE,
+    RELATIONSHIP_TRACKER_AVAILABLE,
+    CRITIQUE_STORE_AVAILABLE,
+    EXPORT_AVAILABLE,
+    PROBER_AVAILABLE,
+    REDTEAM_AVAILABLE,
+    LABORATORY_AVAILABLE,
+    BELIEF_NETWORK_AVAILABLE,
+    PROVENANCE_AVAILABLE,
+    FORMAL_VERIFICATION_AVAILABLE,
+    IMPASSE_DETECTOR_AVAILABLE,
+    CONVERGENCE_DETECTOR_AVAILABLE,
+    ROUTING_AVAILABLE,
+    TOURNAMENT_AVAILABLE,
+    EVOLUTION_AVAILABLE,
+    INSIGHT_EXTRACTOR_AVAILABLE,
+    # Classes (for type hints and direct use)
+    Arena,
+    DebateProtocol,
+    create_agent,
+    Environment,
+    format_flip_for_ui,
+    format_consistency_for_ui,
+    PositionLedger,
+    # Broadcast module
+    broadcast_debate,
+    DebateTrace,
+    # RelationshipTracker
+    RelationshipTracker,
+    # CritiqueStore
+    CritiqueStore,
+    # Export module
+    DebateArtifact,
+    CSVExporter,
+    DOTExporter,
+    StaticHTMLExporter,
+    # Prober and RedTeam
+    CapabilityProber,
+    RedTeamMode,
+    # Laboratory
+    PersonaLaboratory,
+    # Belief network
+    BeliefNetwork,
+    BeliefPropagationAnalyzer,
+    # Provenance
+    ProvenanceTracker,
+    # Verification
+    FormalVerificationManager,
+    get_formal_verification_manager,
+    # Impasse and Convergence
+    ImpasseDetector,
+    ConvergenceDetector,
+    # Routing
+    AgentSelector,
+    AgentProfile,
+    TaskRequirements,
+    # Tournament
+    TournamentManager,
+    # Evolution
+    PromptEvolver,
+    # Memory
+    ContinuumMemory,
+    MemoryTier,
+    # Insights
+    InsightExtractor,
+    # Initialization functions
+    initialize_subsystems,
+    SubsystemRegistry,
 )
-FlipDetector = _imp["FlipDetector"]
-format_flip_for_ui = _imp.get("format_flip_for_ui")
-format_consistency_for_ui = _imp.get("format_consistency_for_ui")
 
-# Optional debate orchestrator for ad-hoc debates
-_imp1, _avail1 = try_import("aragora.debate.orchestrator", "Arena", "DebateProtocol")
-_imp2, _avail2 = try_import("aragora.agents.base", "create_agent")
-_imp3, _avail3 = try_import("aragora.core", "Environment")
-DEBATE_AVAILABLE = _avail1 and _avail2 and _avail3
-Arena = _imp1["Arena"]
-DebateProtocol = _imp1["DebateProtocol"]
-create_agent = _imp2["create_agent"]
-Environment = _imp3["Environment"]
-
-# Optional PersonaManager for agent specialization
-_imp, PERSONAS_AVAILABLE = try_import("aragora.agents.personas", "PersonaManager")
-PersonaManager = _imp["PersonaManager"]
-
-# Optional DebateEmbeddingsDatabase for historical memory
-_imp, EMBEDDINGS_AVAILABLE = try_import("aragora.debate.embeddings", "DebateEmbeddingsDatabase")
-DebateEmbeddingsDatabase = _imp["DebateEmbeddingsDatabase"]
-
-# Optional ConsensusMemory for historical consensus data
-_imp, CONSENSUS_MEMORY_AVAILABLE = try_import(
-    "aragora.memory.consensus", "ConsensusMemory", "DissentRetriever"
+# Import static file serving utilities
+from aragora.server.static_server import (
+    serve_static_file,
+    serve_audio_file,
+    get_content_type,
 )
-ConsensusMemory = _imp["ConsensusMemory"]
-DissentRetriever = _imp["DissentRetriever"]
-
-# Optional CalibrationTracker for agent calibration
-_imp, CALIBRATION_AVAILABLE = try_import("aragora.agents.calibration", "CalibrationTracker")
-CalibrationTracker = _imp["CalibrationTracker"]
-
-# Optional PulseManager for trending topics
-_imp, PULSE_AVAILABLE = try_import(
-    "aragora.pulse.ingestor", "PulseManager", "TrendingTopic", "TwitterIngestor"
-)
-PulseManager = _imp["PulseManager"]
-TrendingTopic = _imp["TrendingTopic"]
-
-# Optional FormalVerificationManager for theorem proving
-_imp, FORMAL_VERIFICATION_AVAILABLE = try_import(
-    "aragora.verification.formal",
-    "FormalVerificationManager", "get_formal_verification_manager"
-)
-FormalVerificationManager = _imp["FormalVerificationManager"]
-get_formal_verification_manager = _imp["get_formal_verification_manager"]
-
-# Optional Broadcast module for podcast generation
-_imp1, _avail1 = try_import("aragora.broadcast", "broadcast_debate")
-_imp2, _avail2 = try_import("aragora.debate.traces", "DebateTrace")
-BROADCAST_AVAILABLE = _avail1 and _avail2
-broadcast_debate = _imp1["broadcast_debate"]
-DebateTrace = _imp2["DebateTrace"]
-
-# Optional RelationshipTracker for agent network analysis
-_imp, RELATIONSHIP_TRACKER_AVAILABLE = try_import("aragora.agents.grounded", "RelationshipTracker")
-RelationshipTracker = _imp["RelationshipTracker"]
-
-# Optional PositionLedger for truth-grounded personas
-_imp, POSITION_LEDGER_AVAILABLE = try_import("aragora.agents.grounded", "PositionLedger")
-PositionLedger = _imp["PositionLedger"]
-
-# Optional CritiqueStore for pattern retrieval
-_imp, CRITIQUE_STORE_AVAILABLE = try_import("aragora.memory.store", "CritiqueStore")
-CritiqueStore = _imp["CritiqueStore"]
-
-# Optional export module for debate artifact export
-_imp, EXPORT_AVAILABLE = try_import(
-    "aragora.export", "DebateArtifact", "CSVExporter", "DOTExporter", "StaticHTMLExporter"
-)
-DebateArtifact = _imp["DebateArtifact"]
-CSVExporter = _imp["CSVExporter"]
-DOTExporter = _imp["DOTExporter"]
-StaticHTMLExporter = _imp["StaticHTMLExporter"]
-
-# Optional CapabilityProber for vulnerability detection
-_imp, PROBER_AVAILABLE = try_import("aragora.modes.prober", "CapabilityProber")
-CapabilityProber = _imp["CapabilityProber"]
-
-# Optional RedTeamMode for adversarial testing
-_imp, REDTEAM_AVAILABLE = try_import("aragora.modes.redteam", "RedTeamMode")
-RedTeamMode = _imp["RedTeamMode"]
-
-# Optional PersonaLaboratory for emergent traits
-_imp, LABORATORY_AVAILABLE = try_import("aragora.agents.laboratory", "PersonaLaboratory")
-PersonaLaboratory = _imp["PersonaLaboratory"]
-
-# Optional BeliefNetwork for debate cruxes
-_imp, BELIEF_NETWORK_AVAILABLE = try_import(
-    "aragora.reasoning.belief", "BeliefNetwork", "BeliefPropagationAnalyzer"
-)
-BeliefNetwork = _imp["BeliefNetwork"]
-BeliefPropagationAnalyzer = _imp["BeliefPropagationAnalyzer"]
-
-# Optional ProvenanceTracker for claim support
-_imp, PROVENANCE_AVAILABLE = try_import("aragora.reasoning.provenance", "ProvenanceTracker")
-ProvenanceTracker = _imp["ProvenanceTracker"]
-
-# Optional MomentDetector for significant agent moments
-_imp, MOMENT_DETECTOR_AVAILABLE = try_import("aragora.agents.grounded", "MomentDetector")
-MomentDetector = _imp["MomentDetector"]
-
-# Optional ImpasseDetector for debate deadlock detection
-_imp, IMPASSE_DETECTOR_AVAILABLE = try_import("aragora.debate.counterfactual", "ImpasseDetector")
-ImpasseDetector = _imp["ImpasseDetector"]
-
-# Optional ConvergenceDetector for semantic position convergence
-_imp, CONVERGENCE_DETECTOR_AVAILABLE = try_import("aragora.debate.convergence", "ConvergenceDetector")
-ConvergenceDetector = _imp["ConvergenceDetector"]
-
-# Optional AgentSelector for routing recommendations and auto team selection
-_imp, ROUTING_AVAILABLE = try_import(
-    "aragora.routing.selection", "AgentSelector", "AgentProfile", "TaskRequirements"
-)
-AgentSelector = _imp["AgentSelector"]
-AgentProfile = _imp["AgentProfile"]
-TaskRequirements = _imp["TaskRequirements"]
-
-# Optional TournamentManager for tournament standings
-_imp, TOURNAMENT_AVAILABLE = try_import("aragora.tournaments.tournament", "TournamentManager")
-TournamentManager = _imp["TournamentManager"]
-
-# Optional PromptEvolver for evolution history
-_imp, EVOLUTION_AVAILABLE = try_import("aragora.evolution.evolver", "PromptEvolver")
-PromptEvolver = _imp["PromptEvolver"]
-
-# Optional ContinuumMemory for multi-timescale memory
-_imp, CONTINUUM_AVAILABLE = try_import("aragora.memory.continuum", "ContinuumMemory", "MemoryTier")
-ContinuumMemory = _imp["ContinuumMemory"]
-MemoryTier = _imp["MemoryTier"]
-
-# Optional InsightExtractor for debate insights
-_imp, INSIGHT_EXTRACTOR_AVAILABLE = try_import("aragora.insights.extractor", "InsightExtractor")
-InsightExtractor = _imp["InsightExtractor"]
 
 # Modular HTTP handlers for endpoint routing
 try:
@@ -380,6 +325,10 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     _debate_executor: Optional["ThreadPoolExecutor"] = None
     _debate_executor_lock = threading.Lock()  # Lock for thread-safe executor creation
     # MAX_CONCURRENT_DEBATES imported from aragora.config
+
+    # Debate controller and factory (initialized lazily)
+    _debate_controller: Optional[DebateController] = None
+    _debate_factory: Optional[DebateFactory] = None
 
     # Upload rate limiting (IP-based, independent of auth)
     _upload_counts: Dict[str, list] = {}  # IP -> list of upload timestamps
@@ -821,6 +770,36 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": "Failed to revoke token"}, status=500)
 
+    def _get_debate_controller(self) -> DebateController:
+        """Get or create the debate controller (lazy initialization).
+
+        Returns:
+            DebateController instance
+        """
+        if UnifiedHandler._debate_controller is None:
+            # Create factory with all subsystems
+            factory = DebateFactory(
+                elo_system=self.elo_system,
+                persona_manager=self.persona_manager,
+                debate_embeddings=self.debate_embeddings,
+                position_tracker=self.position_tracker,
+                position_ledger=self.position_ledger,
+                flip_detector=self.flip_detector,
+                dissent_retriever=self.dissent_retriever,
+                moment_detector=self.moment_detector,
+                stream_emitter=self.stream_emitter,
+            )
+            UnifiedHandler._debate_factory = factory
+
+            # Create controller
+            UnifiedHandler._debate_controller = DebateController(
+                factory=factory,
+                emitter=self.stream_emitter,
+                elo_system=self.elo_system,
+                auto_select_fn=self._auto_select_agents,
+            )
+        return UnifiedHandler._debate_controller
+
     def _auto_select_agents(self, question: str, config: dict) -> str:
         """Select optimal agents using AgentSelector.
 
@@ -1183,14 +1162,14 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
         Accepts JSON body with:
             question: The topic/question to debate (required)
-            agents: Comma-separated agent list (optional, default: "claude,openai")
+            agents: Comma-separated agent list (optional, default varies)
             rounds: Number of debate rounds (optional, default: 3)
             consensus: Consensus method (optional, default: "majority")
+            auto_select: Whether to auto-select agents (optional, default: False)
+            use_trending: Whether to use trending topic (optional, default: False)
 
         Rate limited: requires auth when enabled.
         """
-        global _active_debates
-
         # Rate limit expensive debate creation
         if not self._check_rate_limit():
             return
@@ -1226,285 +1205,19 @@ class UnifiedHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid JSON"}, status=400)
             return
 
-        # Validate required fields with length limits
-        question = data.get('question', '').strip()
-        if not question:
-            self._send_json({"error": "question field is required"}, status=400)
-            return
-        if len(question) > 10000:
-            self._send_json({"error": "question must be under 10,000 characters"}, status=400)
-            return
-
-        # Parse optional fields with validation
-        auto_select = data.get('auto_select', False)
-        auto_select_config = data.get('auto_select_config', {})
-
-        # Auto-select agents or use provided list
-        if auto_select and ROUTING_AVAILABLE:
-            agents_str = self._auto_select_agents(question, auto_select_config)
-        else:
-            agents_str = data.get('agents', 'anthropic-api,openai-api,gemini,grok')
-
+        # Parse and validate request using DebateRequest
         try:
-            rounds = min(max(int(data.get('rounds', 3)), 1), 10)  # Clamp to 1-10
-        except (ValueError, TypeError):
-            rounds = 3  # Default on invalid input
-        consensus = data.get('consensus', 'majority')
-
-        # Parse optional trending topic parameter
-        trending_topic = None
-        use_trending = data.get('use_trending', False)
-        trending_category = data.get('trending_category', None)
-
-        if use_trending:
-            try:
-                from aragora.pulse.ingestor import (
-                    PulseManager,
-                    TwitterIngestor,
-                    HackerNewsIngestor,
-                    RedditIngestor,
-                )
-                import asyncio as _async
-
-                async def _fetch_topic():
-                    manager = PulseManager()
-                    manager.add_ingestor("twitter", TwitterIngestor())
-                    manager.add_ingestor("hackernews", HackerNewsIngestor())
-                    manager.add_ingestor("reddit", RedditIngestor())
-
-                    filters = {}
-                    if trending_category:
-                        filters["categories"] = [trending_category]
-
-                    topics = await manager.get_trending_topics(
-                        limit_per_platform=3, filters=filters if filters else None
-                    )
-                    return manager.select_topic_for_debate(topics)
-
-                # Run async in the current thread
-                loop = _async.new_event_loop()
-                try:
-                    trending_topic = loop.run_until_complete(_fetch_topic())
-                finally:
-                    loop.close()
-
-                if trending_topic:
-                    logger.info(f"Selected trending topic: {trending_topic.topic}")
-            except Exception as e:
-                logger.warning(f"Trending topic fetch failed (non-fatal): {e}")
-
-        # Generate debate ID
-        debate_id = f"adhoc_{uuid.uuid4().hex[:8]}"
-
-        # Track this debate (thread-safe)
-        with _active_debates_lock:
-            _active_debates[debate_id] = {
-                "id": debate_id,
-                "question": question,
-                "status": "starting",
-                "agents": agents_str,
-                "rounds": rounds,
-            }
-
-        # Periodic cleanup of stale debates (every 100 debates)
-        global _debate_cleanup_counter
-        _debate_cleanup_counter += 1
-        if _debate_cleanup_counter >= 100:
-            _debate_cleanup_counter = 0
-            _cleanup_stale_debates()
-
-        # Set loop_id on emitter so events are tagged
-        self.stream_emitter.set_loop_id(debate_id)
-
-        # Start debate in background thread
-        def run_debate():
-            import asyncio as _asyncio
-
-            try:
-                # Parse agents with bounds check
-                agent_list = [s.strip() for s in agents_str.split(",") if s.strip()]
-                if len(agent_list) > MAX_AGENTS_PER_DEBATE:
-                    _update_debate_status(debate_id, "error", error=f"Too many agents. Maximum: {MAX_AGENTS_PER_DEBATE}")
-                    return
-                if len(agent_list) < 2:
-                    _update_debate_status(debate_id, "error", error="At least 2 agents required for a debate")
-                    return
-
-                agent_specs = []
-                for spec in agent_list:
-                    spec = spec.strip()
-                    if ":" in spec:
-                        agent_type, role = spec.split(":", 1)
-                    else:
-                        agent_type = spec
-                        role = None
-                    # Validate agent type against allowlist
-                    if agent_type.lower() not in ALLOWED_AGENT_TYPES:
-                        raise ValueError(f"Invalid agent type: {agent_type}. Allowed: {', '.join(sorted(ALLOWED_AGENT_TYPES))}")
-                    agent_specs.append((agent_type, role))
-
-                # Create agents with streaming support
-                # All agents are proposers for full participation in all rounds
-                agents = []
-                failed_agents = []
-                for i, (agent_type, role) in enumerate(agent_specs):
-                    if role is None:
-                        role = "proposer"  # All agents propose and participate fully
-                    try:
-                        agent = create_agent(
-                            model_type=agent_type,
-                            name=f"{agent_type}_{role}",
-                            role=role,
-                        )
-                        # Check if API key is missing (for API-based agents)
-                        if hasattr(agent, 'api_key') and not agent.api_key:
-                            raise ValueError(f"Missing API key for {agent_type}")
-                        # Wrap agent for token streaming if supported
-                        agent = _wrap_agent_for_streaming(agent, self.stream_emitter, debate_id)
-                        agents.append(agent)
-                        logger.debug(f"Created agent {agent_type} successfully")
-                    except Exception as e:
-                        error_msg = f"Failed to create agent {agent_type}: {e}"
-                        logger.error(error_msg)
-                        failed_agents.append((agent_type, str(e)))
-                        # Emit error event so frontend knows which agent failed
-                        self.stream_emitter.emit(StreamEvent(
-                            type=StreamEventType.ERROR,
-                            data={"agent": agent_type, "error": str(e), "phase": "initialization"},
-                            debate_id=debate_id,
-                        ))
-
-                # Check if enough agents were created
-                if len(agents) < 2:
-                    error_msg = f"Only {len(agents)} agents initialized (need at least 2). Failed: {', '.join(a for a, _ in failed_agents)}"
-                    logger.error(error_msg)
-                    _update_debate_status(debate_id, "error", error=error_msg)
-                    self.stream_emitter.emit(StreamEvent(
-                        type=StreamEventType.ERROR,
-                        data={"error": error_msg, "failed_agents": [a for a, _ in failed_agents]},
-                        debate_id=debate_id,
-                    ))
-                    return
-
-                # Create environment and protocol
-                env = Environment(task=question, context="", max_rounds=rounds)
-                protocol = DebateProtocol(
-                    rounds=rounds,
-                    consensus=consensus,
-                    proposer_count=len(agents),  # All agents propose initially
-                    topology="all-to-all",  # Everyone critiques everyone
-                )
-
-                # Create arena with hooks and all available context systems
-                hooks = create_arena_hooks(self.stream_emitter)
-                arena = Arena(
-                    env, agents, protocol,
-                    event_hooks=hooks,
-                    event_emitter=self.stream_emitter,
-                    persona_manager=self.persona_manager,
-                    debate_embeddings=self.debate_embeddings,
-                    elo_system=self.elo_system,
-                    position_tracker=self.position_tracker,
-                    position_ledger=self.position_ledger,
-                    flip_detector=self.flip_detector,
-                    dissent_retriever=self.dissent_retriever,
-                    moment_detector=self.moment_detector,
-                    loop_id=debate_id,
-                    trending_topic=trending_topic,
-                )
-
-                # Log and optionally reset circuit breaker for fresh debates
-                cb_status = arena.circuit_breaker.get_all_status()
-                if cb_status:
-                    logger.debug(f"Agent status before debate: {cb_status}")
-                    # Reset all circuits for ad-hoc debates to ensure full participation
-                    open_circuits = [name for name, status in cb_status.items() if status["status"] == "open"]
-                    if open_circuits:
-                        logger.debug(f"Resetting open circuits for: {open_circuits}")
-                        arena.circuit_breaker.reset_all()
-
-                # Run debate with timeout protection (10 minutes max)
-                _update_debate_status(debate_id, "running")
-                async def run_with_timeout():
-                    return await _asyncio.wait_for(arena.run(), timeout=600)
-                result = _asyncio.run(run_with_timeout())
-                _update_debate_status(debate_id, "completed", result={
-                    "final_answer": result.final_answer,
-                    "consensus_reached": result.consensus_reached,
-                    "confidence": result.confidence,
-                    "grounded_verdict": result.grounded_verdict.to_dict() if result.grounded_verdict else None,
-                })
-
-                # Emit LEADERBOARD_UPDATE after debate completes (if ELO system available)
-                if self.elo_system:
-                    try:
-                        top_agents = self.elo_system.get_leaderboard(limit=10)
-                        self.stream_emitter.emit(StreamEvent(
-                            type=StreamEventType.LEADERBOARD_UPDATE,
-                            data={
-                                "debate_id": debate_id,
-                                "leaderboard": [
-                                    {"agent": a.agent_name, "elo": a.elo_rating, "wins": a.wins, "debates": a.total_debates}
-                                    for a in top_agents
-                                ],
-                            }
-                        ))
-                    except Exception as e:
-                        logger.debug(f"Leaderboard emission failed: {e}")
-
-            except Exception as e:
-                import traceback
-                # Use safe error message for client, keep full trace server-side
-                safe_msg = _safe_error_message(e, "debate_execution")
-                error_trace = traceback.format_exc()
-                _update_debate_status(debate_id, "error", error=safe_msg)
-                # Log full traceback so thread failures aren't silent
-                logger.error(f"[debate] Thread error in {debate_id}: {str(e)}\n{error_trace}")
-                # Emit sanitized error event to client
-                self.stream_emitter.emit(StreamEvent(
-                    type=StreamEventType.ERROR,
-                    data={"error": safe_msg, "debate_id": debate_id},
-                ))
-
-        # Use thread pool to prevent unbounded thread creation
-        # Capture executor reference under lock to prevent race with shutdown
-        with UnifiedHandler._debate_executor_lock:
-            if UnifiedHandler._debate_executor is None:
-                UnifiedHandler._debate_executor = ThreadPoolExecutor(
-                    max_workers=MAX_CONCURRENT_DEBATES,
-                    thread_name_prefix="debate-"
-                )
-            executor = UnifiedHandler._debate_executor
-
-        try:
-            executor.submit(run_debate)
-        except RuntimeError as e:
-            # Thread pool full or shut down
-            logger.warning(f"Cannot submit debate: {e}")
-            self._send_json({
-                "success": False,
-                "error": "Server at capacity. Please try again later.",
-            }, status=503)
-            return
-        except (AttributeError, TypeError) as e:
-            # Executor not initialized or invalid state
-            logger.error(f"Failed to submit debate: {type(e).__name__}: {e}")
-            self._send_json({
-                "success": False,
-                "error": "Internal server error",
-            }, status=500)
+            request = DebateRequest.from_dict(data)
+        except ValueError as e:
+            self._send_json({"error": str(e)}, status=400)
             return
 
-        # Return immediately with debate ID
-        self._send_json({
-            "success": True,
-            "debate_id": debate_id,
-            "question": question,
-            "agents": agents_str.split(","),
-            "rounds": rounds,
-            "status": "starting",
-            "message": "Debate started. Connect to WebSocket to receive events.",
-        })
+        # Get or create debate controller and start debate
+        controller = self._get_debate_controller()
+        response = controller.start_debate(request)
+
+        # Send response
+        self._send_json(response.to_dict(), status=response.status_code)
 
     def _list_documents(self) -> None:
         """List all uploaded documents."""
@@ -1615,7 +1328,8 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
             agents = []
             for name in agent_names[:5]:  # Limit to 5 agents
-                if not re.match(SAFE_ID_PATTERN, name):
+                is_valid, _ = validate_id(name, "agent name")
+                if not is_valid:
                     continue
                 try:
                     agent = create_agent(model_type, name=name, role="proposer")
