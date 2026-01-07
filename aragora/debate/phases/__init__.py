@@ -53,6 +53,8 @@ __all__ = [
     "VotingPhase",
     "VoteWeightCalculator",
     "WeightedVoteResult",
+    "DebateBeliefAnalyzer",
+    "BeliefAnalysisResult",
     "CritiquePhase",
     "JudgmentPhase",
     "RolesManager",

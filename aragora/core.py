@@ -118,6 +118,7 @@ class DebateResult:
     dissenting_views: list[str] = field(default_factory=list)
     winning_patterns: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
+    winner: Optional[str] = None  # Winning agent name (set after consensus)
     # Convergence detection results
     convergence_status: str = ""  # "converged", "refining", "diverging", ""
     convergence_similarity: float = 0.0  # Average similarity at end
