@@ -25,11 +25,14 @@ from aragora.server.handlers.base import clear_cache
 def mock_storage():
     """Create a mock storage instance."""
     storage = Mock()
-    storage.list_debates.return_value = [
-        {"slug": "debate-1", "loop_id": "loop-001"},
-        {"slug": "debate-2", "loop_id": "loop-001"},
-        {"slug": "debate-3", "loop_id": "loop-002"},
+    # Mock both methods for backwards compatibility
+    mock_debates = [
+        Mock(slug="debate-1", loop_id="loop-001"),
+        Mock(slug="debate-2", loop_id="loop-001"),
+        Mock(slug="debate-3", loop_id="loop-002"),
     ]
+    storage.list_recent.return_value = mock_debates
+    storage.list_debates.return_value = mock_debates  # Alias for backwards compat
     return storage
 
 
@@ -509,7 +512,7 @@ class TestHistoryDebatesEndpoint:
 
     def test_handles_exception(self, system_handler, mock_storage):
         """Should return 500 on exception."""
-        mock_storage.list_debates.side_effect = Exception("DB error")
+        mock_storage.list_recent.side_effect = Exception("DB error")
 
         result = system_handler.handle("/api/history/debates", {}, None)
 
@@ -564,7 +567,7 @@ class TestHistorySummaryEndpoint:
 
     def test_handles_exception(self, system_handler, mock_storage):
         """Should return 500 on exception."""
-        mock_storage.list_debates.side_effect = Exception("Summary error")
+        mock_storage.list_recent.side_effect = Exception("Summary error")
 
         result = system_handler.handle("/api/history/summary", {}, None)
 

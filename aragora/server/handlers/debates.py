@@ -13,6 +13,7 @@ Endpoints:
 - GET /api/debate/{id}/meta-critique - Get meta-level debate analysis
 - GET /api/debate/{id}/graph/stats - Get argument graph statistics
 - POST /api/debates/{id}/fork - Fork debate at a branch point
+- GET /api/search - Cross-debate search by query
 """
 
 import logging
@@ -44,6 +45,7 @@ class DebatesHandler(BaseHandler):
         "/api/debates/*/citations",
         "/api/debates/*/messages",  # Paginated message history
         "/api/debates/*/fork",  # POST - counterfactual fork
+        "/api/search",  # Cross-debate search
     ]
 
     # Endpoints that require authentication
@@ -161,6 +163,8 @@ class DebatesHandler(BaseHandler):
         """Check if this handler can process the given path."""
         if path == "/api/debates":
             return True
+        if path == "/api/search":
+            return True
         if path.startswith("/api/debates/"):
             return True
         # Also handle /api/debate/{id}/meta-critique and /api/debate/{id}/graph/stats
@@ -177,6 +181,15 @@ class DebatesHandler(BaseHandler):
             auth_error = self._check_auth(handler)
             if auth_error:
                 return auth_error
+
+        # Search endpoint
+        if path == "/api/search":
+            query = query_params.get('q', query_params.get('query', ''))
+            if isinstance(query, list):
+                query = query[0] if query else ''
+            limit = min(get_int_param(query_params, 'limit', 20), 100)
+            offset = get_int_param(query_params, 'offset', 0)
+            return self._search_debates(query, limit, offset)
 
         # Exact path matches
         if path == "/api/debates":
@@ -245,10 +258,76 @@ class DebatesHandler(BaseHandler):
         """List recent debates."""
         storage = self.get_storage()
         try:
-            debates = storage.list_debates(limit=limit)
-            return json_response({"debates": debates, "count": len(debates)})
+            debates = storage.list_recent(limit=limit)
+            # Convert DebateMetadata objects to dicts
+            debates_list = [d.__dict__ if hasattr(d, '__dict__') else d for d in debates]
+            return json_response({"debates": debates_list, "count": len(debates_list)})
         except Exception as e:
             return error_response(f"Failed to list debates: {e}", 500)
+
+    @require_storage
+    def _search_debates(self, query: str, limit: int, offset: int) -> HandlerResult:
+        """Search debates by query string.
+
+        Searches across debate tasks/topics using SQL LIKE pattern matching.
+
+        Args:
+            query: Search query string
+            limit: Maximum results to return
+            offset: Offset for pagination
+
+        Returns:
+            HandlerResult with matching debates and pagination metadata
+        """
+        storage = self.get_storage()
+        try:
+            import sqlite3
+            from aragora.config import DB_TIMEOUT_SECONDS
+
+            # Get all recent debates and filter in Python
+            # (More robust than raw SQL for now)
+            all_debates = storage.list_recent(limit=500)
+
+            # Filter by query if provided
+            if query:
+                query_lower = query.lower()
+                matching = []
+                for d in all_debates:
+                    task = getattr(d, 'task', '') or ''
+                    topic = getattr(d, 'topic', '') or task
+                    slug = getattr(d, 'slug', '') or ''
+
+                    if (query_lower in task.lower() or
+                        query_lower in topic.lower() or
+                        query_lower in slug.lower()):
+                        matching.append(d)
+            else:
+                matching = list(all_debates)
+
+            # Apply pagination
+            total = len(matching)
+            paginated = matching[offset:offset + limit]
+
+            # Convert to dicts
+            results = []
+            for d in paginated:
+                if hasattr(d, '__dict__'):
+                    results.append(d.__dict__)
+                elif isinstance(d, dict):
+                    results.append(d)
+                else:
+                    results.append({"data": str(d)})
+
+            return json_response({
+                "results": results,
+                "query": query,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + len(results) < total,
+            })
+        except Exception as e:
+            return error_response(f"Search failed: {e}", 500)
 
     @require_storage
     def _get_debate_by_slug(self, handler, slug: str) -> HandlerResult:

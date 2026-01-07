@@ -15,7 +15,7 @@ import os
 import subprocess
 import json
 import re
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from aragora.agents.base import CritiqueMixin, MAX_CONTEXT_CHARS, MAX_MESSAGE_CHARS
 from aragora.agents.errors import (
@@ -262,6 +262,86 @@ class CLIAgent(CritiqueMixin, Agent):
 
     # _parse_critique is inherited from CritiqueMixin
 
+    def _build_full_prompt(self, prompt: str, context: list[Message] | None = None) -> str:
+        """Build full prompt with context and system prompt.
+
+        Consolidates the repeated pattern across all CLI agents.
+        """
+        full_prompt = prompt
+        if context:
+            full_prompt = self._build_context_prompt(context) + prompt
+        if self.system_prompt:
+            full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
+        return full_prompt
+
+    async def _generate_with_fallback(
+        self,
+        cli_command: list[str],
+        prompt: str,
+        context: list[Message] | None = None,
+        input_text: str | None = None,
+        response_extractor: Callable | None = None,
+    ) -> str:
+        """Execute CLI command with automatic fallback on errors.
+
+        Consolidates the repeated try/except fallback pattern across all CLI agents.
+
+        Args:
+            cli_command: CLI command to execute
+            prompt: Original prompt (for fallback)
+            context: Message context (for fallback)
+            input_text: Optional stdin input for CLI
+            response_extractor: Optional function to extract response from CLI output
+
+        Returns:
+            Generated response string
+        """
+        try:
+            result = await self._run_cli(cli_command, input_text=input_text)
+            if response_extractor:
+                return response_extractor(result)
+            return result
+
+        except Exception as e:
+            if self._is_fallback_error(e):
+                fallback = self._get_fallback_agent()
+                if fallback:
+                    logger.warning(
+                        f"[{self.name}] CLI failed ({type(e).__name__}: {str(e)[:100]}), "
+                        f"falling back to OpenRouter"
+                    )
+                    self._fallback_used = True
+                    return await fallback.generate(prompt, context)
+            raise
+
+    def _build_critique_prompt(self, proposal: str, task: str) -> str:
+        """Build standard critique prompt.
+
+        Subclasses can override for custom critique prompts.
+        """
+        return f"""Analyze this proposal critically for the given task.
+
+Task: {task}
+
+Proposal:
+{proposal}
+
+Provide structured feedback:
+- ISSUES: Specific problems (bullet points)
+- SUGGESTIONS: Improvements (bullet points)
+- SEVERITY: 0.0-1.0 rating
+- REASONING: Brief explanation"""
+
+    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
+        """Critique a proposal using this CLI agent.
+
+        Default implementation uses _build_critique_prompt and generate.
+        Subclasses can override for custom critique behavior.
+        """
+        critique_prompt = self._build_critique_prompt(proposal, task)
+        response = await self.generate(critique_prompt, context)
+        return self._parse_critique(response, "proposal", proposal)
+
 
 @AgentRegistry.register(
     "codex",
@@ -275,57 +355,33 @@ class CodexAgent(CLIAgent):
     Falls back to OpenRouter (OpenAI GPT-4o) on CLI failures if enabled.
     """
 
-    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
-        """Generate a response using codex exec.
-
-        Automatically falls back to OpenRouter API on rate limits or CLI errors.
-        """
-        full_prompt = prompt
-        if context:
-            full_prompt = self._build_context_prompt(context) + prompt
-
-        if self.system_prompt:
-            full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
-
-        try:
-            # Use codex exec for non-interactive execution
-            result = await self._run_cli([
-                "codex", "exec", "--skip-git-repo-check", full_prompt
-            ])
-
-            # Extract the actual response (skip the header)
-            lines = result.split('\n')
-            # Find where the actual response starts (after "codex" line)
-            response_lines = []
-            in_response = False
-            for line in lines:
-                if line.strip() == 'codex':
-                    in_response = True
+    def _extract_codex_response(self, result: str) -> str:
+        """Extract the actual response from codex output (skip header)."""
+        lines = result.split('\n')
+        response_lines = []
+        in_response = False
+        for line in lines:
+            if line.strip() == 'codex':
+                in_response = True
+                continue
+            if in_response:
+                if line.startswith('tokens used'):
                     continue
-                if in_response:
-                    # Skip token count lines
-                    if line.startswith('tokens used'):
-                        continue
-                    response_lines.append(line)
+                response_lines.append(line)
+        return '\n'.join(response_lines).strip() if response_lines else result
 
-            return '\n'.join(response_lines).strip() if response_lines else result
+    async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
+        """Generate a response using codex exec."""
+        full_prompt = self._build_full_prompt(prompt, context)
+        return await self._generate_with_fallback(
+            ["codex", "exec", "--skip-git-repo-check", full_prompt],
+            prompt, context,
+            response_extractor=self._extract_codex_response,
+        )
 
-        except Exception as e:
-            # Check if we should fallback
-            if self._is_fallback_error(e):
-                fallback = self._get_fallback_agent()
-                if fallback:
-                    logger.warning(
-                        f"[{self.name}] CLI failed ({type(e).__name__}: {str(e)[:100]}), "
-                        f"falling back to OpenRouter"
-                    )
-                    self._fallback_used = True
-                    return await fallback.generate(prompt, context)
-            raise
-
-    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
-        """Critique a proposal using codex."""
-        critique_prompt = f"""You are a critical reviewer. Analyze this proposal for the given task.
+    def _build_critique_prompt(self, proposal: str, task: str) -> str:
+        """Build critique prompt with codex-specific formatting."""
+        return f"""You are a critical reviewer. Analyze this proposal for the given task.
 
 Task: {task}
 
@@ -339,9 +395,6 @@ Provide a structured critique with:
 4. REASONING: Brief explanation of your assessment
 
 Be constructive but thorough. Identify both technical and conceptual issues."""
-
-        response = await self.generate(critique_prompt, context)
-        return self._parse_critique(response, "proposal", proposal)
 
 
 @AgentRegistry.register(
@@ -357,56 +410,14 @@ class ClaudeAgent(CLIAgent):
     """
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
-        """Generate a response using claude CLI.
-
-        Automatically falls back to OpenRouter API on rate limits or CLI errors.
-        """
-        full_prompt = prompt
-        if context:
-            full_prompt = self._build_context_prompt(context) + prompt
-
-        if self.system_prompt:
-            full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
-
-        try:
-            # Use claude with --print flag for non-interactive output
-            # Pass prompt via stdin to avoid shell argument length limits on large prompts
-            result = await self._run_cli(
-                ["claude", "--print", "-p", "-"],
-                input_text=full_prompt
-            )
-            return result
-
-        except Exception as e:
-            # Check if we should fallback
-            if self._is_fallback_error(e):
-                fallback = self._get_fallback_agent()
-                if fallback:
-                    logger.warning(
-                        f"[{self.name}] CLI failed ({type(e).__name__}: {str(e)[:100]}), "
-                        f"falling back to OpenRouter"
-                    )
-                    self._fallback_used = True
-                    return await fallback.generate(prompt, context)
-            raise
-
-    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
-        """Critique a proposal using claude."""
-        critique_prompt = f"""Analyze this proposal critically for the given task.
-
-Task: {task}
-
-Proposal:
-{proposal}
-
-Provide structured feedback:
-- ISSUES: Specific problems (bullet points)
-- SUGGESTIONS: Improvements (bullet points)
-- SEVERITY: 0.0-1.0 rating
-- REASONING: Brief explanation"""
-
-        response = await self.generate(critique_prompt, context)
-        return self._parse_critique(response, "proposal", proposal)
+        """Generate a response using claude CLI via stdin."""
+        full_prompt = self._build_full_prompt(prompt, context)
+        # Pass prompt via stdin to avoid shell argument length limits
+        return await self._generate_with_fallback(
+            ["claude", "--print", "-p", "-"],
+            prompt, context,
+            input_text=full_prompt,
+        )
 
 
 @AgentRegistry.register(
@@ -421,59 +432,20 @@ class GeminiCLIAgent(CLIAgent):
     Falls back to OpenRouter (Google Gemini) on CLI failures if enabled.
     """
 
+    def _extract_gemini_response(self, result: str) -> str:
+        """Filter out YOLO mode message from gemini output."""
+        lines = result.split('\n')
+        filtered = [l for l in lines if not l.startswith('YOLO mode is enabled')]
+        return '\n'.join(filtered).strip()
+
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
-        """Generate a response using gemini CLI.
-
-        Automatically falls back to OpenRouter API on rate limits or CLI errors.
-        """
-        full_prompt = prompt
-        if context:
-            full_prompt = self._build_context_prompt(context) + prompt
-
-        if self.system_prompt:
-            full_prompt = f"System context: {self.system_prompt}\n\n{full_prompt}"
-
-        try:
-            # Use gemini with positional prompt and --yolo for auto-approval
-            # Output format json for easier parsing, text for human-readable
-            result = await self._run_cli([
-                "gemini", "--yolo", "-o", "text", full_prompt
-            ])
-
-            # Filter out YOLO mode message if present
-            lines = result.split('\n')
-            filtered = [l for l in lines if not l.startswith('YOLO mode is enabled')]
-            return '\n'.join(filtered).strip()
-
-        except Exception as e:
-            if self._is_fallback_error(e):
-                fallback = self._get_fallback_agent()
-                if fallback:
-                    logger.warning(
-                        f"[{self.name}] CLI failed ({type(e).__name__}: {str(e)[:100]}), "
-                        f"falling back to OpenRouter"
-                    )
-                    self._fallback_used = True
-                    return await fallback.generate(prompt, context)
-            raise
-
-    async def critique(self, proposal: str, task: str, context: list[Message] | None = None) -> Critique:
-        """Critique a proposal using gemini."""
-        critique_prompt = f"""Analyze this proposal critically for the given task.
-
-Task: {task}
-
-Proposal:
-{proposal}
-
-Provide structured feedback:
-- ISSUES: Specific problems (bullet points)
-- SUGGESTIONS: Improvements (bullet points)
-- SEVERITY: 0.0-1.0 rating
-- REASONING: Brief explanation"""
-
-        response = await self.generate(critique_prompt, context)
-        return self._parse_critique(response, "proposal", proposal)
+        """Generate a response using gemini CLI."""
+        full_prompt = self._build_full_prompt(prompt, context)
+        return await self._generate_with_fallback(
+            ["gemini", "--yolo", "-o", "text", full_prompt],
+            prompt, context,
+            response_extractor=self._extract_gemini_response,
+        )
 
 
 @AgentRegistry.register(
