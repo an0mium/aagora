@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Literal, Optional, Union
 
-from aragora.config import DB_ELO_PATH, DB_PERSONAS_PATH
+from aragora.config import DB_ELO_PATH, DB_PERSONAS_PATH, DB_TIMEOUT_SECONDS
 from aragora.insights.database import InsightsDatabase
 from aragora.ranking.database import EloDatabase
 from .personas import Persona, PersonaManager, EXPERTISE_DOMAINS
@@ -39,9 +39,6 @@ from .relationships import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 # Re-export for backward compatibility
 __all__ = [

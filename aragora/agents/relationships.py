@@ -13,13 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
-from aragora.config import DB_ELO_PATH
+from aragora.config import DB_ELO_PATH, DB_TIMEOUT_SECONDS
 from aragora.ranking.database import EloDatabase
 
 logger = logging.getLogger(__name__)
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass

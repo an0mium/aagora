@@ -15,12 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.agents.personas import EXPERTISE_DOMAINS, PERSONALITY_TRAITS
 from aragora.genesis.database import GenesisDatabase
 from aragora.genesis.genome import AgentGenome, GenomeStore, generate_genome_id
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass

@@ -8,6 +8,7 @@ Endpoints:
 - GET /api/memory/tier-stats - Get tier statistics
 """
 
+import time
 from typing import Optional
 
 from .base import (
@@ -131,7 +132,6 @@ class MemoryHandler(BaseHandler):
             return error_response("Continuum memory not initialized", 503)
 
         try:
-            import time
             start = time.time()
 
             # Run consolidation
@@ -159,7 +159,6 @@ class MemoryHandler(BaseHandler):
             return error_response("Continuum memory not initialized", 503)
 
         try:
-            import time
             start = time.time()
 
             # Parse parameters

@@ -20,6 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.genesis.database import GenesisDatabase
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,6 @@ from aragora.reasoning.provenance import (
 )
 from aragora.debate.consensus import ConsensusProof
 from aragora.genesis.genome import AgentGenome
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 class GenesisEventType(Enum):

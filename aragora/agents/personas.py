@@ -15,13 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
-from aragora.config import DB_PERSONAS_PATH
+from aragora.config import DB_PERSONAS_PATH, DB_TIMEOUT_SECONDS
 from aragora.insights.database import InsightsDatabase
 from aragora.storage.schema import SchemaManager
 from aragora.utils.json_helpers import safe_json_loads
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 # Schema version for PersonaManager migrations
 PERSONA_SCHEMA_VERSION = 1

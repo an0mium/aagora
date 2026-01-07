@@ -17,12 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
-from aragora.config import DB_CALIBRATION_PATH
+from aragora.config import DB_CALIBRATION_PATH, DB_TIMEOUT_SECONDS
 from aragora.ranking.calibration_database import CalibrationDatabase
 from aragora.storage.schema import SchemaManager
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 # Schema version for CalibrationTracker migrations
 CALIBRATION_SCHEMA_VERSION = 1

@@ -252,6 +252,59 @@ class ErrorClassifier:
 
         return "unknown"
 
+    @classmethod
+    def classify_error(cls, error: Exception) -> tuple[bool, str]:
+        """Classify an error in a single pass, returning both fallback decision and category.
+
+        More efficient than calling should_fallback() and get_error_category() separately
+        when both pieces of information are needed.
+
+        Args:
+            error: The exception to classify
+
+        Returns:
+            Tuple of (should_fallback, category) where:
+            - should_fallback: True if fallback should be attempted
+            - category: "rate_limit", "network", "cli", "timeout", or "unknown"
+        """
+        error_str = str(error).lower()
+
+        # Check timeout first (common case)
+        if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+            return True, "timeout"
+
+        # Check rate limit patterns
+        if cls.is_rate_limit(error_str):
+            return True, "rate_limit"
+
+        # Check network errors
+        if cls.is_network_error(error_str) or isinstance(
+            error, (ConnectionError, ConnectionRefusedError,
+                    ConnectionResetError, BrokenPipeError)
+        ):
+            return True, "network"
+
+        # Check OS-level network errors
+        if isinstance(error, OSError) and error.errno in cls.NETWORK_ERRNO:
+            return True, "network"
+
+        # Check CLI errors
+        if cls.is_cli_error(error_str) or isinstance(error, subprocess.SubprocessError):
+            return True, "cli"
+
+        # Check RuntimeError patterns
+        if isinstance(error, RuntimeError):
+            if "cli command failed" in error_str or "cli" in error_str:
+                return True, "cli"
+            if any(kw in error_str for kw in ["api error", "http error", "status"]):
+                return True, "unknown"
+
+        # Check remaining fallback patterns (not categorized above)
+        if any(pattern in error_str for pattern in ALL_FALLBACK_PATTERNS):
+            return True, "unknown"
+
+        return False, "unknown"
+
 
 # =============================================================================
 # CLI Error Classification

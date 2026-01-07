@@ -17,11 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.agents.personas import EXPERTISE_DOMAINS, PERSONALITY_TRAITS, Persona
 from aragora.genesis.database import GenesisDatabase
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 def generate_genome_id(traits: dict, expertise: dict, parents: list[str]) -> str:

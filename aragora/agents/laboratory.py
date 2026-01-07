@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
-from aragora.config import DB_LAB_PATH
+from aragora.config import DB_LAB_PATH, DB_TIMEOUT_SECONDS
 from aragora.insights.database import InsightsDatabase
 from aragora.agents.personas import (
     Persona,
@@ -31,9 +31,6 @@ from aragora.agents.personas import (
 from aragora.utils.json_helpers import safe_json_loads
 
 logger = logging.getLogger(__name__)
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass

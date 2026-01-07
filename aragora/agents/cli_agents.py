@@ -165,9 +165,8 @@ class CLIAgent(CritiqueMixin, Agent):
 
         This method is intentionally permissive to maximize fallback opportunities.
         """
-        should_fallback = ErrorClassifier.should_fallback(error)
+        should_fallback, category = ErrorClassifier.classify_error(error)
         if should_fallback:
-            category = ErrorClassifier.get_error_category(error)
             logger.debug(f"[{self.name}] Detected fallback error ({category}): {str(error)[:100]}")
         return should_fallback
 

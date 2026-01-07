@@ -23,13 +23,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Generator, Optional
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.utils.json_helpers import safe_json_loads
 from aragora.insights.database import InsightsDatabase
 
 logger = logging.getLogger(__name__)
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass

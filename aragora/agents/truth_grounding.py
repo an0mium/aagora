@@ -17,10 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.insights.database import InsightsDatabase
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass

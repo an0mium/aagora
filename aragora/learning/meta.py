@@ -21,12 +21,9 @@ from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional
 import math
 
-from aragora.config import DB_MEMORY_PATH
+from aragora.config import DB_MEMORY_PATH, DB_TIMEOUT_SECONDS
 from aragora.memory.database import MemoryDatabase
 from aragora.utils.json_helpers import safe_json_loads
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 @dataclass

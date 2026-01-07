@@ -23,12 +23,10 @@ import itertools
 
 logger = logging.getLogger(__name__)
 
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.core import Agent, DebateResult, Environment
 from aragora.ranking.elo import EloSystem
 from aragora.tournaments.database import TournamentDatabase
-
-# Database connection timeout in seconds
-DB_TIMEOUT_SECONDS = 30
 
 
 class TournamentFormat(Enum):

@@ -46,6 +46,48 @@ class PulseHandler(BaseHandler):
 
         return None
 
+    def _run_async_safely(self, coro_factory, timeout: float = None) -> list:
+        """Run an async coroutine safely, handling event loop edge cases.
+
+        Handles three scenarios:
+        1. No running event loop - uses asyncio.run() directly
+        2. Running event loop - uses ThreadPoolExecutor to avoid nested loop
+        3. Timeout or failure - returns empty list with warning
+
+        Args:
+            coro_factory: Callable that returns a coroutine (called inside executor)
+            timeout: Optional timeout in seconds (defaults to DB_TIMEOUT_SECONDS)
+
+        Returns:
+            Result from coroutine, or empty list on failure
+        """
+        import asyncio
+        import concurrent.futures
+
+        if timeout is None:
+            timeout = DB_TIMEOUT_SECONDS
+
+        try:
+            # Check if we're in an async context
+            try:
+                asyncio.get_running_loop()
+                # Running loop exists - use thread pool to avoid nested loop
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    try:
+                        return pool.submit(asyncio.run, coro_factory()).result(timeout=timeout)
+                    except concurrent.futures.TimeoutError:
+                        logger.warning("Async fetch timed out after %.1fs", timeout)
+                        return []
+                    except Exception as e:
+                        logger.warning("Async fetch failed in thread pool: %s", e)
+                        return []
+            except RuntimeError:
+                # No running loop, safe to use asyncio.run() directly
+                return asyncio.run(coro_factory())
+        except Exception as e:
+            logger.warning("Async fetch failed: %s", e)
+            return []
+
     def _get_trending_topics(self, limit: int) -> HandlerResult:
         """Get trending topics from multiple pulse ingestors.
 
@@ -66,8 +108,6 @@ class PulseHandler(BaseHandler):
             return error_response("Pulse module not available", 503)
 
         try:
-            import asyncio
-
             # Create manager with multiple real ingestors
             manager = PulseManager()
             manager.add_ingestor("hackernews", HackerNewsIngestor())
@@ -78,28 +118,7 @@ class PulseHandler(BaseHandler):
             async def fetch():
                 return await manager.get_trending_topics(limit_per_platform=limit)
 
-            # Run in event loop - use get_running_loop check to avoid deprecation warning
-            try:
-                # Check if we're in an async context
-                try:
-                    asyncio.get_running_loop()
-                    # If we get here, there's a running loop - use thread pool
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        try:
-                            topics = pool.submit(asyncio.run, fetch()).result(timeout=DB_TIMEOUT_SECONDS)
-                        except concurrent.futures.TimeoutError:
-                            logger.warning("Trending topics fetch timed out")
-                            topics = []
-                        except Exception as e:
-                            logger.warning(f"Trending topics fetch failed: {e}")
-                            topics = []
-                except RuntimeError:
-                    # No running loop, safe to use asyncio.run()
-                    topics = asyncio.run(fetch())
-            except Exception as e:
-                logger.warning(f"Trending topics fetch failed: {e}")
-                topics = []
+            topics = self._run_async_safely(fetch)
 
             # Normalize scores: find max volume and scale to 0-1
             max_volume = max((t.volume for t in topics), default=1) or 1
@@ -138,8 +157,6 @@ class PulseHandler(BaseHandler):
             return error_response("Pulse module not available", 503)
 
         try:
-            import asyncio
-
             # Create manager with ingestors
             manager = PulseManager()
             manager.add_ingestor("hackernews", HackerNewsIngestor())
@@ -151,28 +168,7 @@ class PulseHandler(BaseHandler):
                 filters = {"categories": [category]} if category else None
                 return await manager.get_trending_topics(limit_per_platform=10, filters=filters)
 
-            # Run in event loop - use get_running_loop check to avoid deprecation warning
-            try:
-                # Check if we're in an async context
-                try:
-                    asyncio.get_running_loop()
-                    # If we get here, there's a running loop - use thread pool
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        try:
-                            topics = pool.submit(asyncio.run, fetch()).result(timeout=DB_TIMEOUT_SECONDS)
-                        except concurrent.futures.TimeoutError:
-                            logger.warning("Trending topics fetch timed out")
-                            topics = []
-                        except Exception as e:
-                            logger.warning(f"Trending topics fetch failed: {e}")
-                            topics = []
-                except RuntimeError:
-                    # No running loop, safe to use asyncio.run()
-                    topics = asyncio.run(fetch())
-            except Exception as e:
-                logger.warning(f"Trending topics fetch failed: {e}")
-                topics = []
+            topics = self._run_async_safely(fetch)
 
             # Select best topic for debate
             selected = manager.select_topic_for_debate(topics)
