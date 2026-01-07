@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 from aragora.core import Agent, DebateResult, Environment
 from aragora.ranking.elo import EloSystem
+from aragora.tournaments.database import TournamentDatabase
 
 # Database connection timeout in seconds
 DB_TIMEOUT_SECONDS = 30
@@ -125,6 +126,7 @@ class Tournament:
         self.format = format
         self.elo_system = elo_system or EloSystem()
         self.db_path = Path(db_path)
+        self.db = TournamentDatabase(db_path)
 
         self.matches: list[TournamentMatch] = []
         self.standings: dict[str, TournamentStanding] = {
@@ -140,11 +142,8 @@ class Tournament:
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self):
         """Initialize database schema."""
@@ -593,15 +592,13 @@ class TournamentManager:
     def __init__(self, db_path: str):
         """Initialize tournament manager with database path."""
         self.db_path = Path(db_path)
+        self.db = TournamentDatabase(db_path)
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def get_tournament(self) -> Optional[dict]:
         """Get the tournament metadata."""

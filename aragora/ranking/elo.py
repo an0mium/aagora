@@ -6,6 +6,9 @@ Inspired by ChatArena's competitive environments, this module provides:
 - Domain-specific skill ratings
 - Match history and statistics
 - Leaderboards
+
+Performance: Uses LRU caching for frequently accessed data like leaderboards.
+Cache is automatically invalidated when ratings are updated.
 """
 
 import json
@@ -24,9 +27,12 @@ from aragora.config import (
     ELO_INITIAL_RATING,
     ELO_K_FACTOR,
     ELO_CALIBRATION_MIN_COUNT,
+    CACHE_TTL_LEADERBOARD,
+    CACHE_TTL_RECENT_MATCHES,
 )
 from aragora.ranking.database import EloDatabase
 from aragora.utils.json_helpers import safe_json_loads
+from aragora.utils.cache import TTLCache, lru_cache_with_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +131,12 @@ class EloSystem:
     ELO-based ranking system for agents.
 
     Tracks agent skill ratings, match history, and provides leaderboards.
+    Uses LRU caching for frequently accessed data.
     """
+
+    # Class-level cache for leaderboard data (shared across instances)
+    _leaderboard_cache: TTLCache[list] = TTLCache(maxsize=50, ttl_seconds=CACHE_TTL_LEADERBOARD)
+    _rating_cache: TTLCache[AgentRating] = TTLCache(maxsize=200, ttl_seconds=CACHE_TTL_RECENT_MATCHES)
 
     def __init__(self, db_path: str = DB_ELO_PATH):
         self.db_path = Path(db_path)
@@ -258,8 +269,22 @@ class EloSystem:
         safe_add_column(conn, "ratings", "calibration_brier_sum", "REAL", default="0.0")
 
 
-    def get_rating(self, agent_name: str) -> AgentRating:
-        """Get or create rating for an agent."""
+    def get_rating(self, agent_name: str, use_cache: bool = True) -> AgentRating:
+        """Get or create rating for an agent.
+
+        Args:
+            agent_name: Name of the agent
+            use_cache: Whether to use cached value (default True). Set False
+                      for operations that need the latest data.
+        """
+        cache_key = f"rating:{agent_name}"
+
+        # Check cache first
+        if use_cache:
+            cached = self._rating_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         with self._db.connection() as conn:
             cursor = conn.cursor()
 
@@ -276,23 +301,27 @@ class EloSystem:
             row = cursor.fetchone()
 
         if not row:
-            return AgentRating(agent_name=agent_name)
+            rating = AgentRating(agent_name=agent_name)
+        else:
+            rating = AgentRating(
+                agent_name=row[0],
+                elo=row[1],
+                domain_elos=safe_json_loads(row[2], {}),
+                wins=row[3],
+                losses=row[4],
+                draws=row[5],
+                debates_count=row[6],
+                critiques_accepted=row[7],
+                critiques_total=row[8],
+                calibration_correct=row[9] or 0,
+                calibration_total=row[10] or 0,
+                calibration_brier_sum=row[11] or 0.0,
+                updated_at=row[12],
+            )
 
-        return AgentRating(
-            agent_name=row[0],
-            elo=row[1],
-            domain_elos=safe_json_loads(row[2], {}),
-            wins=row[3],
-            losses=row[4],
-            draws=row[5],
-            debates_count=row[6],
-            critiques_accepted=row[7],
-            critiques_total=row[8],
-            calibration_correct=row[9] or 0,
-            calibration_total=row[10] or 0,
-            calibration_brier_sum=row[11] or 0.0,
-            updated_at=row[12],
-        )
+        # Cache the result
+        self._rating_cache.set(cache_key, rating)
+        return rating
 
     def get_ratings_batch(self, agent_names: list[str]) -> dict[str, AgentRating]:
         """Get ratings for multiple agents in a single query (batch optimization).
@@ -446,6 +475,10 @@ class EloSystem:
             )
             conn.commit()
 
+        # Invalidate caches after write
+        self._rating_cache.invalidate(f"rating:{rating.agent_name}")
+        self._leaderboard_cache.clear()
+
     def _save_ratings_batch(self, ratings: list[AgentRating]) -> None:
         """Save multiple ratings in a single transaction.
 
@@ -495,6 +528,11 @@ class EloSystem:
                     ),
                 )
             conn.commit()
+
+        # Invalidate caches after batch write
+        for rating in ratings:
+            self._rating_cache.invalidate(f"rating:{rating.agent_name}")
+        self._leaderboard_cache.clear()
 
     def _record_elo_history_batch(
         self, entries: list[tuple[str, float, str | None]]
@@ -843,6 +881,43 @@ class EloSystem:
             for row in rows
         ]
 
+    def get_cached_leaderboard(
+        self, limit: int = 20, domain: str | None = None
+    ) -> list[AgentRating]:
+        """
+        Get leaderboard with caching for better performance.
+
+        Uses a 5-minute TTL cache. For real-time data, use get_leaderboard() directly.
+
+        Args:
+            limit: Maximum number of agents to return
+            domain: Optional domain to sort by
+
+        Returns:
+            Cached list of AgentRating sorted by ELO
+        """
+        cache_key = f"leaderboard:{limit}:{domain or 'global'}"
+        cached = self._leaderboard_cache.get(cache_key)
+        if cached is not None:
+            logger.debug(f"Leaderboard cache hit for {cache_key}")
+            return cached
+
+        # Cache miss - fetch from database
+        result = self.get_leaderboard(limit=limit, domain=domain)
+        self._leaderboard_cache.set(cache_key, result)
+        logger.debug(f"Leaderboard cache miss, stored {cache_key}")
+        return result
+
+    def invalidate_leaderboard_cache(self) -> int:
+        """Invalidate all cached leaderboard data. Call after rating changes."""
+        return self._leaderboard_cache.clear()
+
+    def invalidate_rating_cache(self, agent_name: str | None = None) -> int:
+        """Invalidate cached ratings. Pass agent_name for specific agent, None for all."""
+        if agent_name:
+            return 1 if self._rating_cache.invalidate(f"rating:{agent_name}") else 0
+        return self._rating_cache.clear()
+
     def get_top_agents_for_domain(self, domain: str, limit: int = 5) -> list[AgentRating]:
         """Get agents ranked by domain-specific performance.
 
@@ -853,7 +928,7 @@ class EloSystem:
         Returns:
             List of AgentRating sorted by domain-specific ELO (highest first)
         """
-        return self.get_leaderboard(limit=limit, domain=domain)
+        return self.get_cached_leaderboard(limit=limit, domain=domain)
 
     def get_elo_history(self, agent_name: str, limit: int = 50) -> list[tuple[str, float]]:
         """Get ELO history for an agent."""

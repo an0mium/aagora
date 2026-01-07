@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from aragora.config import DB_INSIGHTS_PATH, DB_TIMEOUT_SECONDS
+from aragora.insights.database import InsightsDatabase
 from aragora.insights.extractor import Insight, InsightType, DebateInsights
 from aragora.storage.schema import SchemaManager
 from aragora.utils.json_helpers import safe_json_loads
@@ -58,11 +59,12 @@ class InsightStore:
 
     def __init__(self, db_path: str = DB_INSIGHTS_PATH):
         self.db_path = Path(db_path)
+        self.db = InsightsDatabase(db_path)
         self._init_db()
 
     def _init_db(self) -> None:
         """Initialize the database schema using SchemaManager."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             # Use SchemaManager for version tracking and migrations
             manager = SchemaManager(
                 conn, "insight_store", current_version=INSIGHT_STORE_SCHEMA_VERSION
@@ -136,7 +138,7 @@ class InsightStore:
 
     def _sync_store_debate_insights(self, insights: DebateInsights) -> int:
         """Sync helper: Store debate insights."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             # Store debate summary
@@ -265,7 +267,7 @@ class InsightStore:
 
     def _sync_get_insight(self, insight_id: str) -> Optional[tuple]:
         """Sync helper: Retrieve insight row by ID."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM insights WHERE id = ?", (insight_id,))
             return cursor.fetchone()
@@ -285,7 +287,7 @@ class InsightStore:
         limit: int,
     ) -> list[tuple]:
         """Sync helper: Search insights."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             sql = "SELECT * FROM insights WHERE 1=1"
@@ -339,7 +341,7 @@ class InsightStore:
         self, min_occurrences: int, category: Optional[str], limit: int
     ) -> list[tuple]:
         """Sync helper: Get common patterns."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             sql = """
@@ -387,7 +389,7 @@ class InsightStore:
 
     def _sync_get_agent_stats(self, agent_name: str) -> Optional[tuple]:
         """Sync helper: Get agent stats."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -430,7 +432,7 @@ class InsightStore:
 
     def _sync_get_all_agent_rankings(self) -> list[tuple]:
         """Sync helper: Get agent rankings."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -467,7 +469,7 @@ class InsightStore:
 
     def _sync_get_recent_insights(self, limit: int) -> list[tuple]:
         """Sync helper: Get recent insights."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT * FROM insights ORDER BY created_at DESC LIMIT ?",
@@ -482,7 +484,7 @@ class InsightStore:
 
     def _sync_get_stats(self) -> dict:
         """Sync helper: Get overall stats."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             stats = {}

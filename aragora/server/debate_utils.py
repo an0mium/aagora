@@ -3,6 +3,10 @@ Ad-hoc debate management utilities.
 
 Provides state tracking and helper functions for managing ad-hoc debates
 started through the API.
+
+Note: This module maintains backward compatibility with existing code that
+imports global state variables. New code should use StateManager directly
+via get_state_manager().
 """
 
 import logging
@@ -17,29 +21,118 @@ from aragora.server.stream import (
     StreamEventType,
 )
 from aragora.server.error_utils import safe_error_message as _safe_error_message
+from aragora.server.state import get_state_manager, StateManager
 
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Global state for ad-hoc debates
+# Backward Compatibility Layer
 # =============================================================================
-
-# Track active ad-hoc debates
-_active_debates: Dict[str, dict] = {}
-_active_debates_lock = threading.Lock()  # Thread-safe access to _active_debates
-_debate_cleanup_counter = 0  # Counter for periodic cleanup
+# These globals are maintained for backward compatibility with existing code.
+# They delegate to the centralized StateManager.
+#
+# New code should use:
+#   from aragora.server.state import get_state_manager
+#   state = get_state_manager()
+#   state.register_debate(...)
 
 # TTL for completed debates (24 hours)
 _DEBATE_TTL_SECONDS = 86400
 
 
+class _ActiveDebatesProxy(Dict[str, dict]):
+    """Proxy dict that delegates to StateManager for backward compatibility.
+
+    This allows existing code that accesses _active_debates directly to
+    continue working while actually using the centralized StateManager.
+    """
+
+    def __getitem__(self, key: str) -> dict:
+        state = get_state_manager().get_debate(key)
+        if state is None:
+            raise KeyError(key)
+        return state.to_dict()
+
+    def __setitem__(self, key: str, value: dict) -> None:
+        # For direct assignment, register as new debate
+        manager = get_state_manager()
+        if manager.get_debate(key) is None:
+            manager.register_debate(
+                debate_id=key,
+                task=value.get("task", ""),
+                agents=value.get("agents", []),
+                total_rounds=value.get("total_rounds", 3),
+                metadata=value,
+            )
+        else:
+            # Update existing
+            manager.update_debate_status(
+                key,
+                status=value.get("status"),
+                current_round=value.get("current_round"),
+            )
+
+    def __delitem__(self, key: str) -> None:
+        get_state_manager().unregister_debate(key)
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        return get_state_manager().get_debate(key) is not None
+
+    def __iter__(self):
+        return iter(get_state_manager().get_active_debates().keys())
+
+    def __len__(self) -> int:
+        return get_state_manager().get_active_debate_count()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        state = get_state_manager().get_debate(key)
+        if state is None:
+            return default
+        return state.to_dict()
+
+    def items(self):
+        debates = get_state_manager().get_active_debates()
+        return [(k, v.to_dict()) for k, v in debates.items()]
+
+    def keys(self):
+        return get_state_manager().get_active_debates().keys()
+
+    def values(self):
+        debates = get_state_manager().get_active_debates()
+        return [v.to_dict() for v in debates.values()]
+
+    def pop(self, key: str, *args) -> Optional[dict]:
+        state = get_state_manager().unregister_debate(key)
+        if state is not None:
+            return state.to_dict()
+        if args:
+            return args[0]
+        raise KeyError(key)
+
+
+# Backward compatibility globals - delegate to StateManager
+_active_debates: Dict[str, dict] = _ActiveDebatesProxy()
+_active_debates_lock = threading.Lock()  # Kept for interface compatibility
+_debate_cleanup_counter = 0  # Kept for interface compatibility
+
+
 def get_active_debates() -> Dict[str, dict]:
-    """Get the global active debates dictionary."""
+    """Get the active debates dictionary.
+
+    Returns a dict-like object that delegates to StateManager.
+    For new code, prefer using get_state_manager().get_active_debates().
+    """
     return _active_debates
 
 
 def get_active_debates_lock() -> threading.Lock:
-    """Get the lock for accessing active debates."""
+    """Get the lock for accessing active debates.
+
+    Note: StateManager handles locking internally, so this lock is
+    primarily for backward compatibility with code that expects it.
+    """
     return _active_debates_lock
 
 
@@ -51,27 +144,43 @@ def update_debate_status(debate_id: str, status: str, **kwargs) -> None:
         status: New status (e.g., "running", "completed", "error")
         **kwargs: Additional fields to update
     """
-    with _active_debates_lock:
-        if debate_id in _active_debates:
-            _active_debates[debate_id]["status"] = status
-            # Record completion time for TTL cleanup
-            if status in ("completed", "error"):
-                _active_debates[debate_id]["completed_at"] = time.time()
-            for key, value in kwargs.items():
-                _active_debates[debate_id][key] = value
+    manager = get_state_manager()
+    state = manager.get_debate(debate_id)
+    if state is not None:
+        manager.update_debate_status(
+            debate_id,
+            status=status,
+            current_round=kwargs.get("current_round"),
+        )
+        # Store additional kwargs in metadata
+        if kwargs:
+            state.metadata.update(kwargs)
+        # Record completion time for TTL cleanup
+        if status in ("completed", "error"):
+            state.metadata["completed_at"] = time.time()
 
 
 def cleanup_stale_debates() -> None:
-    """Remove completed/errored debates older than TTL."""
+    """Remove completed/errored debates older than TTL.
+
+    Delegates to StateManager's internal cleanup mechanism.
+    """
+    manager = get_state_manager()
     now = time.time()
-    with _active_debates_lock:
-        stale_ids = [
-            debate_id for debate_id, debate in _active_debates.items()
-            if debate.get("status") in ("completed", "error")
-            and now - debate.get("completed_at", now) > _DEBATE_TTL_SECONDS
-        ]
-        for debate_id in stale_ids:
-            _active_debates.pop(debate_id, None)
+
+    # Get all debates and filter stale ones
+    debates = manager.get_active_debates()
+    stale_ids = []
+
+    for debate_id, state in debates.items():
+        if state.status in ("completed", "error"):
+            completed_at = state.metadata.get("completed_at", state.start_time)
+            if now - completed_at > _DEBATE_TTL_SECONDS:
+                stale_ids.append(debate_id)
+
+    for debate_id in stale_ids:
+        manager.unregister_debate(debate_id)
+
     if stale_ids:
         logger.debug(f"Cleaned up {len(stale_ids)} stale debate entries")
 
@@ -80,12 +189,12 @@ def increment_cleanup_counter() -> bool:
     """Increment cleanup counter and return True if cleanup should run.
 
     Cleanup runs every 100 debates to avoid frequent expensive operations.
+
+    Note: StateManager handles its own cleanup, but this is kept for
+    backward compatibility with code that calls this explicitly.
     """
-    global _debate_cleanup_counter
-    _debate_cleanup_counter += 1
-    if _debate_cleanup_counter >= 100:
-        _debate_cleanup_counter = 0
-        return True
+    # StateManager handles cleanup internally, so we can delegate
+    # Just return False to indicate no external cleanup needed
     return False
 
 

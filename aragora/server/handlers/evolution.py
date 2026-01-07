@@ -16,6 +16,7 @@ from .base import (
     get_int_param,
     validate_agent_name,
 )
+from aragora.persistence.db_config import DatabaseType, get_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class EvolutionHandler(BaseHandler):
             return error_response("Nomic directory not configured", 503)
 
         try:
-            evolver = PromptEvolver(db_path=str(nomic_dir / "prompt_evolution.db"))
+            evolver = PromptEvolver(db_path=str(get_db_path(DatabaseType.PROMPT_EVOLUTION, nomic_dir)))
             history = evolver.get_evolution_history(agent, limit=limit)
 
             return json_response({

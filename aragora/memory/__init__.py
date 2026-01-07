@@ -7,6 +7,7 @@ Provides:
 - Pattern: Dataclass for critique patterns
 - ConsensusMemory: Persistent storage of debate outcomes
 - DissentRetriever: Retrieval of historical dissenting views
+- TierManager: Configurable memory tier management
 """
 
 from aragora.memory.store import CritiqueStore, Pattern
@@ -25,6 +26,13 @@ from aragora.memory.consensus import (
     DissentRetriever,
     SimilarDebate,
 )
+from aragora.memory.tier_manager import (
+    TierManager,
+    TierConfig,
+    TierTransitionMetrics,
+    MemoryTier,
+    get_tier_manager,
+)
 
 __all__ = [
     "CritiqueStore",
@@ -41,4 +49,10 @@ __all__ = [
     "DissentType",
     "DissentRetriever",
     "SimilarDebate",
+    # Tier Management
+    "TierManager",
+    "TierConfig",
+    "TierTransitionMetrics",
+    "MemoryTier",
+    "get_tier_manager",
 ]

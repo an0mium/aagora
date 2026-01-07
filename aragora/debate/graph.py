@@ -754,19 +754,19 @@ class GraphDebateOrchestrator:
         import asyncio
 
         # Create event-emitting wrapper callbacks
-        def emit_node(node: DebateNode):
+        def emit_node(node: DebateNode) -> None:
             if on_node:
                 on_node(node)
             if event_emitter:
                 self._emit_graph_event(event_emitter, "node", node.to_dict(), debate_id)
 
-        def emit_branch(branch: Branch):
+        def emit_branch(branch: Branch) -> None:
             if on_branch:
                 on_branch(branch)
             if event_emitter:
                 self._emit_graph_event(event_emitter, "branch", branch.to_dict(), debate_id)
 
-        def emit_merge(merge_result: MergeResult):
+        def emit_merge(merge_result: MergeResult) -> None:
             if on_merge:
                 on_merge(merge_result)
             if event_emitter:

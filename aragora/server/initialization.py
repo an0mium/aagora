@@ -15,6 +15,10 @@ from aragora.config import (
     DB_INSIGHTS_PATH,
     DB_PERSONAS_PATH,
 )
+from aragora.persistence.db_config import (
+    DatabaseType,
+    get_db_path,
+)
 from aragora.utils.optional_imports import try_import
 
 logger = logging.getLogger(__name__)
@@ -249,7 +253,7 @@ def init_elo_system(nomic_dir: Path) -> Optional[Any]:
     if not RANKING_AVAILABLE or not EloSystem:
         return None
 
-    elo_path = nomic_dir / "agent_elo.db"
+    elo_path = get_db_path(DatabaseType.ELO, nomic_dir)
     if elo_path.exists():
         system = EloSystem(str(elo_path))
         logger.info("[init] EloSystem loaded for leaderboard API")
@@ -263,7 +267,7 @@ def init_flip_detector(nomic_dir: Path) -> Optional[Any]:
     if not FLIP_DETECTOR_AVAILABLE or not FlipDetector:
         return None
 
-    positions_path = nomic_dir / "aragora_positions.db"
+    positions_path = get_db_path(DatabaseType.POSITIONS, nomic_dir)
     if positions_path.exists():
         detector = FlipDetector(str(positions_path))
         logger.info("[init] FlipDetector loaded for position reversal API")
@@ -277,7 +281,7 @@ def init_persona_manager(nomic_dir: Path) -> Optional[Any]:
     if not PERSONAS_AVAILABLE or not PersonaManager:
         return None
 
-    personas_path = nomic_dir / DB_PERSONAS_PATH
+    personas_path = get_db_path(DatabaseType.PERSONAS, nomic_dir)
     manager = PersonaManager(str(personas_path))
     logger.info("[init] PersonaManager loaded for agent specialization")
     return manager
@@ -288,7 +292,7 @@ def init_position_ledger(nomic_dir: Path) -> Optional[Any]:
     if not POSITION_LEDGER_AVAILABLE or not PositionLedger:
         return None
 
-    ledger_path = nomic_dir / "position_ledger.db"
+    ledger_path = get_db_path(DatabaseType.TRUTH_GROUNDING, nomic_dir)
     try:
         ledger = PositionLedger(db_path=str(ledger_path))
         logger.info("[init] PositionLedger loaded for truth-grounded personas")
@@ -303,7 +307,7 @@ def init_debate_embeddings(nomic_dir: Path) -> Optional[Any]:
     if not EMBEDDINGS_AVAILABLE or not DebateEmbeddingsDatabase:
         return None
 
-    embeddings_path = nomic_dir / "debate_embeddings.db"
+    embeddings_path = get_db_path(DatabaseType.EMBEDDINGS, nomic_dir)
     try:
         db = DebateEmbeddingsDatabase(str(embeddings_path))
         logger.info("[init] DebateEmbeddings loaded for historical memory")

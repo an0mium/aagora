@@ -403,6 +403,18 @@ from aragora.learning import (
     TIER_CONFIGS,
 )
 
+# Protocols (Type Interfaces)
+from aragora.protocols import (
+    StorageBackend,
+    MemoryBackend,
+    EloBackend,
+    EmbeddingBackend,
+    ConsensusBackend,
+    CritiqueBackend,
+    PersonaBackend,
+    GenesisBackend,
+)
+
 __version__ = "0.8.0"
 __all__ = [
     # Core
@@ -710,4 +722,13 @@ __all__ = [
     "MemoryTier",
     "TierConfig",
     "TIER_CONFIGS",
+    # Protocols
+    "StorageBackend",
+    "MemoryBackend",
+    "EloBackend",
+    "EmbeddingBackend",
+    "ConsensusBackend",
+    "CritiqueBackend",
+    "PersonaBackend",
+    "GenesisBackend",
 ]

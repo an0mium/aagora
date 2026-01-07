@@ -15,7 +15,7 @@ import os
 import subprocess
 import json
 import re
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 from aragora.agents.base import CritiqueMixin, MAX_CONTEXT_CHARS, MAX_MESSAGE_CHARS
 from aragora.agents.errors import (
@@ -29,7 +29,7 @@ from aragora.agents.errors import (
 )
 from aragora.agents.registry import AgentRegistry
 from aragora.core import Agent, Critique, Message
-from aragora.resilience import CircuitBreaker, get_circuit_breaker
+from aragora.resilience import CircuitBreaker
 
 if TYPE_CHECKING:
     from aragora.agents.api_agents import OpenRouterAgent
@@ -98,12 +98,12 @@ class CLIAgent(CritiqueMixin, Agent):
         self._fallback_used = False  # Track if fallback was triggered this session
         self.enable_circuit_breaker = enable_circuit_breaker
 
-        # Use provided circuit breaker or get from global registry
+        # Use provided circuit breaker or create a new local instance
+        # This avoids global state and improves testability
         if circuit_breaker is not None:
             self._circuit_breaker = circuit_breaker
         elif enable_circuit_breaker:
-            self._circuit_breaker = get_circuit_breaker(
-                f"cli_agent_{name}",
+            self._circuit_breaker = CircuitBreaker(
                 failure_threshold=3,
                 cooldown_seconds=60.0,
             )
@@ -847,7 +847,7 @@ class OpenAIAgent(CLIAgent):
     Falls back to OpenRouter (OpenAI GPT) on CLI failures if enabled.
     """
 
-    def __init__(self, name: str, model: str = "gpt-4o", role: str = "proposer", timeout: int = 120):
+    def __init__(self, name: str, model: str = "gpt-4o", role: str = "proposer", timeout: int = 120) -> None:
         super().__init__(name, model, role, timeout)
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
@@ -918,7 +918,7 @@ REASONING: explanation"""
 
 
 # Synchronous wrappers for convenience
-def run_sync(coro):
+def run_sync(coro: Any) -> Any:
     """Run an async function synchronously.
 
     Uses asyncio.run() which properly creates and closes the event loop,

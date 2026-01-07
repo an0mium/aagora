@@ -60,28 +60,150 @@ class MigrationResult:
 class DatabaseMigrator:
     """Handles database consolidation migrations."""
 
-    # Source -> Target mapping
+    # Schema file locations (relative to project root)
+    SCHEMA_DIR = Path("aragora/persistence/schemas")
+
+    # Source -> (Target, Table mappings)
+    # Each mapping is: source_table -> target_table (or same if unchanged)
     MIGRATION_MAP = {
-        # Core database consolidation
-        "aragora_debates.db": ("aragora_core.db", ["debates"]),
-        "consensus_memory.db": ("aragora_core.db", ["consensus", "dissent"]),
-        "position_ledger.db": ("aragora_core.db", ["positions"]),
+        # === CORE DATABASE (debates, traces, tournaments, embeddings, positions) ===
+        # From server/storage.py
+        "debates.db": ("core.db", {"debates": "debates"}),
 
-        # Memory database consolidation
-        "aragora_memory.db": ("aragora_memory.db", ["continuum_memory", "tier_transitions", "meta_learning_state"]),
-        "agora_memory.db": ("aragora_memory.db", ["critiques", "patterns", "agent_reputation"]),
-        "aragora_insights.db": ("aragora_memory.db", ["insights", "pattern_clusters"]),
+        # From debate/traces.py (embedded in various DBs)
+        # Traces are typically in-memory or debate-specific
 
-        # Agent database consolidation
-        "aragora_elo.db": ("aragora_agents.db", ["ratings", "matches", "elo_history", "calibration_buckets"]),
-        "persona_lab.db": ("aragora_agents.db", ["experiments"]),
+        # From tournaments/tournament.py
+        # Tournaments may be in aragora_positions.db or separate
+
+        # From memory/embeddings.py
+        "debate_embeddings.db": ("core.db", {"embeddings": "embeddings"}),
+
+        # From insights/flip_detector.py, agents/grounded.py
+        "aragora_positions.db": ("core.db", {"positions": "positions", "detected_flips": "detected_flips"}),
+        "grounded_positions.db": ("core.db", {"positions": "positions"}),
+        "position_ledger.db": ("core.db", {"positions": "positions"}),
+
+        # === MEMORY DATABASE (continuum, memories, consensus, critiques, patterns) ===
+        # From memory/continuum.py
+        "continuum.db": ("memory.db", {
+            "continuum_memory": "continuum_memory",
+            "tier_transitions": "tier_transitions",
+            "continuum_memory_archive": "continuum_memory_archive",
+            "meta_learning_state": "meta_learning_state",
+        }),
+
+        # From memory/streams.py
+        "agent_memories.db": ("memory.db", {
+            "memories": "memories",
+            "reflection_schedule": "reflection_schedule",
+        }),
+
+        # From memory/consensus.py
+        "consensus_memory.db": ("memory.db", {
+            "consensus": "consensus",
+            "dissent": "dissent",
+        }),
+
+        # From memory/store.py
+        "agora_memory.db": ("memory.db", {
+            "debates": "debates",
+            "critiques": "critiques",
+            "patterns": "patterns",
+            "pattern_embeddings": "pattern_embeddings",
+            "agent_reputation": "agent_reputation",
+            "patterns_archive": "patterns_archive",
+        }),
+
+        # From audience/feedback.py
+        "suggestion_feedback.db": ("memory.db", {
+            "suggestion_injections": "suggestion_injections",
+            "contributor_stats": "contributor_stats",
+        }),
+
+        # From memory/embeddings.py (semantic)
+        "semantic_patterns.db": ("memory.db", {"embeddings": "semantic_embeddings"}),
+
+        # === ANALYTICS DATABASE (ELO, calibration, insights, evolution) ===
+        # From ranking/elo.py
+        "agent_elo.db": ("analytics.db", {
+            "ratings": "ratings",
+            "matches": "matches",
+            "elo_history": "elo_history",
+            "calibration_predictions": "calibration_predictions",
+            "domain_calibration": "domain_calibration",
+            "calibration_buckets": "calibration_buckets",
+            "agent_relationships": "agent_relationships",
+        }),
+        "elo.db": ("analytics.db", {"ratings": "ratings", "matches": "matches"}),
+
+        # From agents/calibration.py
+        "agent_calibration.db": ("analytics.db", {"predictions": "calibration_predictions"}),
+
+        # From insights/store.py
+        "aragora_insights.db": ("analytics.db", {
+            "insights": "insights",
+            "debate_summaries": "debate_summaries",
+            "agent_performance_history": "agent_performance_history",
+            "pattern_clusters": "pattern_clusters",
+        }),
+
+        # From evolution/evolver.py
+        "prompt_evolution.db": ("analytics.db", {
+            "prompt_versions": "prompt_versions",
+            "extracted_patterns": "extracted_patterns",
+            "evolution_history": "evolution_history",
+        }),
+
+        # From learning/meta.py
+        "meta_learning.db": ("analytics.db", {
+            "meta_hyperparams": "meta_hyperparams",
+            "meta_efficiency_log": "meta_efficiency_log",
+        }),
+
+        # === AGENTS DATABASE (personas, relationships, experiments, genomes) ===
+        # From agents/personas.py
+        "agent_personas.db": ("agents.db", {
+            "personas": "personas",
+            "performance_history": "performance_history",
+        }),
+        "aragora_personas.db": ("agents.db", {
+            "personas": "personas",
+            "performance_history": "performance_history",
+        }),
+        "personas.db": ("agents.db", {"personas": "personas"}),
+
+        # From agents/grounded.py (relationships in elo DB)
+        "agent_relationships.db": ("agents.db", {"agent_relationships": "agent_relationships"}),
+
+        # From agents/truth_grounding.py
+        # position_history and debate_outcomes
+
+        # From agents/laboratory.py
+        "persona_lab.db": ("agents.db", {
+            "experiments": "experiments",
+            "emergent_traits": "emergent_traits",
+            "trait_transfers": "trait_transfers",
+            "evolution_history": "agent_evolution_history",
+        }),
+
+        # From genesis/genome.py
+        "genesis.db": ("agents.db", {
+            "genomes": "genomes",
+            "populations": "populations",
+            "active_population": "active_population",
+            "genesis_events": "genesis_events",
+        }),
     }
 
-    TARGET_DATABASES = [
-        "aragora_core.db",
-        "aragora_memory.db",
-        "aragora_agents.db",
-    ]
+    TARGET_DATABASES = ["core.db", "memory.db", "analytics.db", "agents.db"]
+
+    TARGET_SCHEMAS = {
+        "core.db": "core.sql",
+        "memory.db": "memory.sql",
+        "analytics.db": "analytics.sql",
+        "agents.db": "agents.sql",
+    }
 
     def __init__(self, source_dir: Path, target_dir: Path, backup_dir: Path):
         self.source_dir = source_dir
@@ -206,302 +328,364 @@ class DatabaseMigrator:
     def validate_source(self) -> Tuple[bool, List[str]]:
         """Validate source databases are readable and have expected tables."""
         errors = []
+        warnings = []
 
-        for source_db, (target_db, expected_tables) in self.MIGRATION_MAP.items():
+        for source_db, (target_db, table_map) in self.MIGRATION_MAP.items():
             if source_db not in self.inventory:
                 # Not all databases are required (some are created on-demand)
-                logger.warning(f"Source database not found: {source_db}")
+                warnings.append(f"Source database not found: {source_db}")
                 continue
 
             inv = self.inventory[source_db]
-            for table in expected_tables:
-                if table not in inv.tables:
-                    errors.append(f"Missing table {table} in {source_db}")
+            for source_table in table_map.keys():
+                if source_table not in inv.tables:
+                    errors.append(f"Missing table {source_table} in {source_db}")
+
+        # Log warnings but don't fail validation for missing optional DBs
+        for warning in warnings:
+            logger.warning(warning)
 
         return len(errors) == 0, errors
 
     def create_target_schemas(self, dry_run: bool = True) -> bool:
-        """Create the consolidated target database schemas."""
+        """Create the consolidated target database schemas from SQL files."""
         if dry_run:
-            logger.info("[DRY RUN] Would create target schemas")
+            logger.info("[DRY RUN] Would create target schemas:")
+            for db_name, schema_file in self.TARGET_SCHEMAS.items():
+                schema_path = self.source_dir / self.SCHEMA_DIR / schema_file
+                if schema_path.exists():
+                    logger.info(f"  {db_name} <- {schema_file}")
+                else:
+                    logger.warning(f"  {db_name} <- {schema_file} (MISSING)")
             return True
 
         self.target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Schema definitions for consolidated databases
-        schemas = {
-            "aragora_core.db": """
-                -- Debates table (from DebateStorage)
-                CREATE TABLE IF NOT EXISTS debates (
-                    id TEXT PRIMARY KEY,
-                    slug TEXT UNIQUE,
-                    topic TEXT NOT NULL,
-                    agents TEXT,  -- JSON array
-                    rounds INTEGER,
-                    result TEXT,  -- JSON
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_debates_slug ON debates(slug);
+        for db_name, schema_file in self.TARGET_SCHEMAS.items():
+            schema_path = self.source_dir / self.SCHEMA_DIR / schema_file
 
-                -- Consensus table (from ConsensusMemory)
-                CREATE TABLE IF NOT EXISTS consensus (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    debate_id TEXT,
-                    topic TEXT NOT NULL,
-                    position TEXT NOT NULL,
-                    confidence REAL,
-                    evidence TEXT,  -- JSON
-                    participants TEXT,  -- JSON
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (debate_id) REFERENCES debates(id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_consensus_topic ON consensus(topic);
+            if not schema_path.exists():
+                logger.error(f"Schema file not found: {schema_path}")
+                return False
 
-                -- Dissent table (from ConsensusMemory)
-                CREATE TABLE IF NOT EXISTS dissent (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    consensus_id INTEGER,
-                    agent TEXT NOT NULL,
-                    position TEXT NOT NULL,
-                    reasoning TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (consensus_id) REFERENCES consensus(id)
-                );
-
-                -- Positions table (new unified position tracking)
-                CREATE TABLE IF NOT EXISTS positions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    agent TEXT NOT NULL,
-                    claim TEXT NOT NULL,
-                    stance TEXT,  -- 'support', 'oppose', 'neutral'
-                    confidence REAL,
-                    citations TEXT,  -- JSON
-                    debate_id TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (debate_id) REFERENCES debates(id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_positions_agent ON positions(agent);
-
-                -- Schema version tracking
-                CREATE TABLE IF NOT EXISTS _schema_versions (
-                    module TEXT PRIMARY KEY,
-                    version INTEGER NOT NULL,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-            """,
-
-            "aragora_memory.db": """
-                -- Continuum memory tiers
-                CREATE TABLE IF NOT EXISTS continuum_memory (
-                    id TEXT PRIMARY KEY,
-                    tier TEXT NOT NULL,  -- 'fast', 'medium', 'slow', 'glacial'
-                    content TEXT NOT NULL,
-                    importance REAL DEFAULT 0.5,
-                    surprise_score REAL DEFAULT 0.0,
-                    consolidation_score REAL DEFAULT 0.0,
-                    access_count INTEGER DEFAULT 0,
-                    success_rate REAL DEFAULT 0.0,
-                    update_count INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_continuum_tier ON continuum_memory(tier);
-
-                -- Tier transitions log
-                CREATE TABLE IF NOT EXISTS tier_transitions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    memory_id TEXT,
-                    from_tier TEXT,
-                    to_tier TEXT,
-                    reason TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Critiques (from CritiqueStore)
-                CREATE TABLE IF NOT EXISTS critiques (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    debate_id TEXT,
-                    agent TEXT,
-                    target_agent TEXT,
-                    critique_type TEXT,
-                    content TEXT,
-                    impact_score REAL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Patterns (from CritiqueStore)
-                CREATE TABLE IF NOT EXISTS patterns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pattern_type TEXT,
-                    description TEXT,
-                    frequency INTEGER DEFAULT 1,
-                    agents TEXT,  -- JSON
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Agent reputation (from CritiqueStore)
-                CREATE TABLE IF NOT EXISTS agent_reputation (
-                    agent TEXT PRIMARY KEY,
-                    reputation_score REAL DEFAULT 0.0,
-                    critique_count INTEGER DEFAULT 0,
-                    helpful_count INTEGER DEFAULT 0,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Insights (from InsightStore)
-                CREATE TABLE IF NOT EXISTS insights (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    debate_id TEXT,
-                    insight_type TEXT,
-                    content TEXT,
-                    confidence REAL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Pattern clusters (from InsightStore)
-                CREATE TABLE IF NOT EXISTS pattern_clusters (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    cluster_id TEXT,
-                    patterns TEXT,  -- JSON
-                    centroid TEXT,  -- JSON embedding
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Schema version tracking
-                CREATE TABLE IF NOT EXISTS _schema_versions (
-                    module TEXT PRIMARY KEY,
-                    version INTEGER NOT NULL,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-            """,
-
-            "aragora_agents.db": """
-                -- ELO ratings (from EloSystem)
-                CREATE TABLE IF NOT EXISTS ratings (
-                    agent TEXT PRIMARY KEY,
-                    elo REAL DEFAULT 1500.0,
-                    wins INTEGER DEFAULT 0,
-                    losses INTEGER DEFAULT 0,
-                    draws INTEGER DEFAULT 0,
-                    peak_elo REAL DEFAULT 1500.0,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Match history (from EloSystem)
-                CREATE TABLE IF NOT EXISTS matches (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    debate_id TEXT,
-                    agent_a TEXT,
-                    agent_b TEXT,
-                    winner TEXT,  -- 'a', 'b', 'draw'
-                    elo_delta_a REAL,
-                    elo_delta_b REAL,
-                    domain TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_matches_agents ON matches(agent_a, agent_b);
-
-                -- ELO history (from EloSystem)
-                CREATE TABLE IF NOT EXISTS elo_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    agent TEXT,
-                    elo REAL,
-                    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_elo_history_agent ON elo_history(agent);
-
-                -- Calibration data (from EloSystem)
-                CREATE TABLE IF NOT EXISTS calibration_buckets (
-                    bucket_id TEXT PRIMARY KEY,
-                    agent TEXT,
-                    confidence_low REAL,
-                    confidence_high REAL,
-                    correct_count INTEGER DEFAULT 0,
-                    total_count INTEGER DEFAULT 0,
-                    calibration_score REAL,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Genomes (from GenomeStore)
-                CREATE TABLE IF NOT EXISTS genomes (
-                    id TEXT PRIMARY KEY,
-                    agent TEXT NOT NULL,
-                    traits TEXT,  -- JSON
-                    lineage TEXT,  -- JSON
-                    fitness_score REAL,
-                    generation INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_genomes_agent ON genomes(agent);
-
-                -- Personas (from PersonaManager)
-                CREATE TABLE IF NOT EXISTS personas (
-                    agent TEXT PRIMARY KEY,
-                    traits TEXT,  -- JSON
-                    expertise TEXT,  -- JSON
-                    specialization TEXT,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Experiments (from PersonaLaboratory)
-                CREATE TABLE IF NOT EXISTS experiments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    experiment_id TEXT UNIQUE,
-                    agent TEXT,
-                    variant_a TEXT,  -- JSON
-                    variant_b TEXT,  -- JSON
-                    metrics TEXT,  -- JSON
-                    winner TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-
-                -- Schema version tracking
-                CREATE TABLE IF NOT EXISTS _schema_versions (
-                    module TEXT PRIMARY KEY,
-                    version INTEGER NOT NULL,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-            """,
-        }
-
-        for db_name, schema in schemas.items():
             db_path = self.target_dir / db_name
             try:
+                # Read schema SQL
+                with open(schema_path, "r") as f:
+                    schema_sql = f.read()
+
+                # Create database with schema
                 conn = sqlite3.connect(db_path)
-                conn.executescript(schema)
+                conn.executescript(schema_sql)
                 conn.commit()
                 conn.close()
-                logger.info(f"Created schema for {db_name}")
+                logger.info(f"Created schema for {db_name} from {schema_file}")
             except sqlite3.Error as e:
                 logger.error(f"Failed to create schema for {db_name}: {e}")
+                return False
+            except IOError as e:
+                logger.error(f"Failed to read schema {schema_file}: {e}")
                 return False
 
         return True
 
     def migrate(self, dry_run: bool = True) -> List[MigrationResult]:
         """Execute the migration."""
+        results = []
+
         if dry_run:
             logger.info("[DRY RUN] Migration plan:")
-            for source_db, (target_db, tables) in self.MIGRATION_MAP.items():
+            for source_db, (target_db, table_map) in self.MIGRATION_MAP.items():
                 if source_db in self.inventory:
                     inv = self.inventory[source_db]
-                    total_rows = sum(inv.row_counts.get(t, 0) for t in tables if t in inv.row_counts)
-                    logger.info(f"  {source_db} -> {target_db}: {tables} ({total_rows} rows)")
-            return []
+                    total_rows = sum(
+                        inv.row_counts.get(t, 0)
+                        for t in table_map.keys()
+                        if t in inv.row_counts
+                    )
+                    tables_str = ", ".join(f"{s}->{t}" for s, t in table_map.items())
+                    logger.info(f"  {source_db} -> {target_db}: [{tables_str}] ({total_rows} rows)")
+            return results
 
-        # Actual migration would happen here
-        logger.warning("Full migration not yet implemented. Use --dry-run to see plan.")
-        return []
+        # Actual migration
+        logger.info("Starting migration...")
+        start_time = datetime.now()
 
-    def report(self) -> Dict:
+        for source_db, (target_db, table_map) in self.MIGRATION_MAP.items():
+            if source_db not in self.inventory:
+                logger.debug(f"Skipping {source_db} (not found)")
+                continue
+
+            inv = self.inventory[source_db]
+            result = MigrationResult(
+                source_db=source_db,
+                target_db=target_db,
+                tables_migrated=[],
+                rows_migrated=0,
+                success=False,
+            )
+
+            migration_start = datetime.now()
+            try:
+                rows_migrated = self._migrate_database(
+                    source_path=inv.path,
+                    target_path=self.target_dir / target_db,
+                    table_map=table_map,
+                )
+                result.tables_migrated = list(table_map.keys())
+                result.rows_migrated = rows_migrated
+                result.success = True
+                logger.info(
+                    f"Migrated {source_db} -> {target_db}: "
+                    f"{len(table_map)} tables, {rows_migrated} rows"
+                )
+            except Exception as e:
+                result.error = str(e)
+                logger.error(f"Failed to migrate {source_db}: {e}")
+
+            result.duration_seconds = (datetime.now() - migration_start).total_seconds()
+            results.append(result)
+
+        total_duration = (datetime.now() - start_time).total_seconds()
+        total_rows = sum(r.rows_migrated for r in results)
+        successful = sum(1 for r in results if r.success)
+        logger.info(
+            f"Migration complete: {successful}/{len(results)} databases, "
+            f"{total_rows} rows in {total_duration:.1f}s"
+        )
+
+        return results
+
+    def _migrate_database(
+        self,
+        source_path: Path,
+        target_path: Path,
+        table_map: Dict[str, str],
+    ) -> int:
+        """
+        Migrate tables from source to target database.
+
+        Args:
+            source_path: Path to source SQLite database
+            target_path: Path to target SQLite database
+            table_map: Mapping of source_table -> target_table
+
+        Returns:
+            Total number of rows migrated
+        """
+        total_rows = 0
+
+        source_conn = sqlite3.connect(source_path)
+        source_conn.row_factory = sqlite3.Row
+        target_conn = sqlite3.connect(target_path)
+
+        try:
+            for source_table, target_table in table_map.items():
+                rows = self._migrate_table(
+                    source_conn, target_conn, source_table, target_table
+                )
+                total_rows += rows
+        finally:
+            source_conn.close()
+            target_conn.close()
+
+        return total_rows
+
+    def _migrate_table(
+        self,
+        source_conn: sqlite3.Connection,
+        target_conn: sqlite3.Connection,
+        source_table: str,
+        target_table: str,
+    ) -> int:
+        """
+        Migrate a single table from source to target.
+
+        Handles column mapping between source and target schemas.
+
+        Returns:
+            Number of rows migrated
+        """
+        source_cursor = source_conn.cursor()
+        target_cursor = target_conn.cursor()
+
+        # Get source table columns
+        try:
+            source_cursor.execute(f"PRAGMA table_info({source_table})")
+            source_columns = {row[1] for row in source_cursor.fetchall()}
+        except sqlite3.Error:
+            logger.warning(f"Source table {source_table} not found, skipping")
+            return 0
+
+        if not source_columns:
+            return 0
+
+        # Get target table columns
+        target_cursor.execute(f"PRAGMA table_info({target_table})")
+        target_columns = {row[1] for row in target_cursor.fetchall()}
+
+        if not target_columns:
+            logger.warning(f"Target table {target_table} not found, skipping")
+            return 0
+
+        # Find common columns (columns that exist in both tables)
+        common_columns = source_columns & target_columns
+
+        if not common_columns:
+            logger.warning(
+                f"No common columns between {source_table} and {target_table}"
+            )
+            return 0
+
+        # Build insert statement
+        columns_str = ", ".join(sorted(common_columns))
+        placeholders = ", ".join("?" * len(common_columns))
+        insert_sql = f"INSERT OR IGNORE INTO {target_table} ({columns_str}) VALUES ({placeholders})"
+
+        # Read source data
+        select_sql = f"SELECT {columns_str} FROM {source_table}"
+        source_cursor.execute(select_sql)
+
+        # Batch insert
+        batch_size = 1000
+        rows_migrated = 0
+        batch = []
+
+        for row in source_cursor:
+            batch.append(tuple(row))
+            if len(batch) >= batch_size:
+                target_cursor.executemany(insert_sql, batch)
+                rows_migrated += len(batch)
+                batch = []
+
+        # Insert remaining rows
+        if batch:
+            target_cursor.executemany(insert_sql, batch)
+            rows_migrated += len(batch)
+
+        target_conn.commit()
+
+        logger.debug(
+            f"  {source_table} -> {target_table}: {rows_migrated} rows "
+            f"({len(common_columns)} columns)"
+        )
+
+        return rows_migrated
+
+    def rollback(self, backup_name: str) -> bool:
+        """
+        Rollback to a previous backup.
+
+        Args:
+            backup_name: Name of backup directory (e.g., "backup_20260107_143022")
+
+        Returns:
+            True if rollback succeeded
+        """
+        backup_path = self.backup_dir / backup_name
+
+        if not backup_path.exists():
+            logger.error(f"Backup not found: {backup_path}")
+            return False
+
+        manifest_path = backup_path / "manifest.json"
+        if not manifest_path.exists():
+            logger.error(f"Manifest not found in backup: {manifest_path}")
+            return False
+
+        try:
+            with open(manifest_path, "r") as f:
+                manifest = json.load(f)
+
+            logger.info(f"Rolling back to backup from {manifest.get('timestamp', 'unknown')}")
+
+            # Restore each database from backup
+            for db_name in manifest.get("databases", {}):
+                backup_db = backup_path / db_name
+                if backup_db.exists():
+                    # Find target location
+                    target_path = self.source_dir / ".nomic" / db_name
+                    if not target_path.parent.exists():
+                        target_path = self.source_dir / db_name
+
+                    logger.info(f"Restoring {db_name} -> {target_path}")
+                    shutil.copy2(backup_db, target_path)
+
+            logger.info("Rollback complete!")
+            return True
+
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}")
+            return False
+
+    def verify_migration(self) -> Tuple[bool, List[str]]:
+        """
+        Verify migrated databases have expected data.
+
+        Returns:
+            (success, list of issues)
+        """
+        issues = []
+
+        for target_db in self.TARGET_DATABASES:
+            target_path = self.target_dir / target_db
+
+            if not target_path.exists():
+                issues.append(f"Target database missing: {target_db}")
+                continue
+
+            try:
+                conn = sqlite3.connect(target_path)
+                cursor = conn.cursor()
+
+                # Check schema version exists
+                cursor.execute(
+                    "SELECT version FROM _schema_versions WHERE module = ?",
+                    (target_db.replace(".db", ""),)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    issues.append(f"Schema version missing in {target_db}")
+                else:
+                    logger.info(f"{target_db}: schema version {row[0]}")
+
+                # Count tables and rows
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+                tables = [r[0] for r in cursor.fetchall()]
+
+                total_rows = 0
+                for table in tables:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = cursor.fetchone()[0]
+                    total_rows += count
+
+                logger.info(f"{target_db}: {len(tables)} tables, {total_rows} rows")
+
+                conn.close()
+
+            except sqlite3.Error as e:
+                issues.append(f"Error reading {target_db}: {e}")
+
+        return len(issues) == 0, issues
+
+    def report(self) -> Dict[str, Any]:
         """Generate migration report."""
-        report = {
+        report: Dict[str, Any] = {
             "timestamp": datetime.now().isoformat(),
             "source_dir": str(self.source_dir),
             "target_dir": str(self.target_dir),
+            "schema_dir": str(self.SCHEMA_DIR),
+            "target_databases": self.TARGET_DATABASES,
             "inventory": {},
             "migration_plan": {},
+            "summary": {
+                "total_databases": len(self.inventory),
+                "total_tables": 0,
+                "total_rows": 0,
+                "total_size_bytes": 0,
+            },
         }
 
         for db_name, inv in self.inventory.items():
@@ -512,12 +696,19 @@ class DatabaseMigrator:
                 "row_counts": inv.row_counts,
                 "checksum": inv.checksum,
             }
+            report["summary"]["total_tables"] += len(inv.tables)
+            report["summary"]["total_rows"] += sum(inv.row_counts.values())
+            report["summary"]["total_size_bytes"] += inv.size_bytes
 
-        for source, (target, tables) in self.MIGRATION_MAP.items():
+        for source, (target, table_map) in self.MIGRATION_MAP.items():
             if source in self.inventory:
+                inv = self.inventory[source]
                 report["migration_plan"][source] = {
                     "target": target,
-                    "tables": tables,
+                    "table_mappings": table_map,
+                    "estimated_rows": sum(
+                        inv.row_counts.get(t, 0) for t in table_map.keys()
+                    ),
                 }
 
         return report
@@ -581,6 +772,17 @@ See docs/DATABASE_CONSOLIDATION.md for full documentation.
         action="store_true",
         help="Generate JSON report of current state"
     )
+    parser.add_argument(
+        "--rollback",
+        type=str,
+        metavar="BACKUP_DIR",
+        help="Rollback to a previous backup (specify backup directory name)"
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify migrated databases match expected row counts"
+    )
 
     args = parser.parse_args()
 
@@ -613,11 +815,32 @@ See docs/DATABASE_CONSOLIDATION.md for full documentation.
         success = migrator.backup_all()
         return 0 if success else 1
 
+    if args.rollback:
+        success = migrator.rollback(args.rollback)
+        return 0 if success else 1
+
+    if args.verify:
+        success, issues = migrator.verify_migration()
+        if success:
+            logger.info("Verification passed!")
+        else:
+            logger.error(f"Verification failed with {len(issues)} issues:")
+            for issue in issues:
+                logger.error(f"  - {issue}")
+            return 1
+        return 0
+
     if args.migrate:
         if not args.backup:
             logger.warning("Recommend running --backup before --migrate")
-        migrator.create_target_schemas(dry_run=args.dry_run)
-        results = migrator.migrate(dry_run=args.dry_run)
+        if not migrator.create_target_schemas(dry_run=False):
+            logger.error("Failed to create target schemas")
+            return 1
+        results = migrator.migrate(dry_run=False)
+        failed = sum(1 for r in results if not r.success)
+        if failed > 0:
+            logger.warning(f"{failed} databases failed to migrate")
+            return 1
         return 0
 
     if args.dry_run:

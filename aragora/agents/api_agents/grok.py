@@ -19,6 +19,7 @@ from aragora.agents.api_agents.common import (
     get_api_key,
     _sanitize_error_message,
     MAX_STREAM_BUFFER_SIZE,
+    iter_chunks_with_timeout,
 )
 from aragora.agents.registry import AgentRegistry
 
@@ -142,7 +143,8 @@ class GrokAgent(APIAgent):
 
                 try:
                     buffer = ""
-                    async for chunk in response.content.iter_any():
+                    # Use timeout wrapper to prevent hanging on stalled streams
+                    async for chunk in iter_chunks_with_timeout(response.content):
                         buffer += chunk.decode('utf-8', errors='ignore')
 
                         # Prevent unbounded buffer growth (DoS protection)

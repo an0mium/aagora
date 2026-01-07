@@ -10,8 +10,10 @@ Endpoints:
 
 import logging
 import re
+import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Generator
 
 from .base import (
     BaseHandler,
@@ -21,12 +23,27 @@ from .base import (
     get_int_param,
     get_float_param,
     validate_agent_name,
-    DB_TIMEOUT_SECONDS,
 )
+from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.server.validation import SAFE_ID_PATTERN
 from aragora.utils.optional_imports import try_import
+from aragora.persistence.db_config import DatabaseType, get_db_path
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _get_connection(db_path: str) -> Generator[sqlite3.Connection, None, None]:
+    """Get a database connection with proper cleanup.
+
+    Uses the db_path directly rather than relying on tracker.db.connection()
+    for better testability with mocks.
+    """
+    conn = sqlite3.connect(db_path, timeout=DB_TIMEOUT_SECONDS)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 # Lazy imports for optional dependencies using centralized utility
 _relationship_imports, RELATIONSHIP_TRACKER_AVAILABLE = try_import(
@@ -94,9 +111,9 @@ class RelationshipHandler(BaseHandler):
         if not RELATIONSHIP_TRACKER_AVAILABLE:
             return None
         try:
-            # Use the grounded positions DB if nomic_dir is set
+            # Use the positions DB if nomic_dir is set
             if nomic_dir:
-                db_path = nomic_dir / "grounded_positions.db"
+                db_path = get_db_path(DatabaseType.POSITIONS, nomic_dir)
                 if db_path.exists():
                     return RelationshipTracker(elo_db_path=str(db_path))
             # Fall back to default
@@ -122,8 +139,7 @@ class RelationshipHandler(BaseHandler):
 
             # We need to query the DB directly to get all relationships
             # Use a helper to get all pairs from the database
-            import sqlite3
-            with sqlite3.connect(tracker.elo_db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with _get_connection(str(tracker.elo_db_path)) as conn:
                 cursor = conn.cursor()
 
                 # Check if table exists
@@ -235,8 +251,7 @@ class RelationshipHandler(BaseHandler):
             if not tracker:
                 return error_response("Failed to initialize relationship tracker", 503)
 
-            import sqlite3
-            with sqlite3.connect(tracker.elo_db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with _get_connection(str(tracker.elo_db_path)) as conn:
                 cursor = conn.cursor()
 
                 # Check if table exists
@@ -432,8 +447,7 @@ class RelationshipHandler(BaseHandler):
             if not tracker:
                 return error_response("Failed to initialize relationship tracker", 503)
 
-            import sqlite3
-            with sqlite3.connect(tracker.elo_db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with _get_connection(str(tracker.elo_db_path)) as conn:
                 cursor = conn.cursor()
 
                 # Check if table exists

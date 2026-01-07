@@ -6,13 +6,9 @@ import aiohttp
 import asyncio
 import json
 import logging
-import os
-from typing import TYPE_CHECKING, AsyncGenerator
+from typing import AsyncGenerator
 
 from aragora.agents.api_agents.base import APIAgent
-
-if TYPE_CHECKING:
-    from aragora.agents.api_agents.openrouter import OpenRouterAgent
 from aragora.agents.api_agents.common import (
     Message,
     Critique,
@@ -23,7 +19,9 @@ from aragora.agents.api_agents.common import (
     get_api_key,
     _sanitize_error_message,
     MAX_STREAM_BUFFER_SIZE,
+    iter_chunks_with_timeout,
 )
+from aragora.agents.fallback import QuotaFallbackMixin
 from aragora.agents.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
@@ -37,14 +35,16 @@ logger = logging.getLogger(__name__)
     env_vars="ANTHROPIC_API_KEY",
     accepts_api_key=True,
 )
-class AnthropicAPIAgent(APIAgent):
+class AnthropicAPIAgent(QuotaFallbackMixin, APIAgent):
     """Agent that uses Anthropic API directly (without CLI).
 
     Supports automatic fallback to OpenRouter when Anthropic API returns
     billing/quota errors (e.g., "credit balance is too low").
+
+    Uses QuotaFallbackMixin for shared quota detection and fallback logic.
     """
 
-    # Model mapping from Anthropic to OpenRouter format
+    # Model mapping from Anthropic to OpenRouter format (used by QuotaFallbackMixin)
     OPENROUTER_MODEL_MAP = {
         "claude-opus-4-5-20251101": "anthropic/claude-sonnet-4",
         "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
@@ -53,6 +53,7 @@ class AnthropicAPIAgent(APIAgent):
         "claude-3-sonnet-20240229": "anthropic/claude-3-sonnet",
         "claude-3-haiku-20240307": "anthropic/claude-3-haiku",
     }
+    DEFAULT_FALLBACK_MODEL = "anthropic/claude-sonnet-4"
 
     def __init__(
         self,
@@ -73,46 +74,7 @@ class AnthropicAPIAgent(APIAgent):
         )
         self.agent_type = "anthropic"
         self.enable_fallback = enable_fallback
-        self._fallback_agent = None  # Lazy-loaded OpenRouter fallback
-
-    def _get_fallback_agent(self) -> "OpenRouterAgent":
-        """Get or create the OpenRouter fallback agent for Claude models."""
-        if self._fallback_agent is None:
-            # Lazy import to avoid circular dependency
-            from aragora.agents.api_agents.openrouter import OpenRouterAgent
-
-            # Map the model to OpenRouter format
-            openrouter_model = self.OPENROUTER_MODEL_MAP.get(
-                self.model, "anthropic/claude-sonnet-4"
-            )
-
-            self._fallback_agent = OpenRouterAgent(
-                name=f"{self.name}_fallback",
-                model=openrouter_model,
-                role=self.role,
-                system_prompt=self.system_prompt,
-                timeout=self.timeout,
-            )
-            logger.info(f"Created OpenRouter fallback agent with model {openrouter_model}")
-        return self._fallback_agent
-
-    def _is_anthropic_quota_error(self, status_code: int, error_text: str) -> bool:
-        """Check if the error is a billing/quota/rate limit error from Anthropic."""
-        # 429 is rate limit
-        if status_code == 429:
-            return True
-        # Check for billing/credit-related messages in any error code
-        quota_keywords = [
-            "credit balance",
-            "insufficient",
-            "quota",
-            "rate_limit",
-            "billing",
-            "exceeded",
-            "purchase credits",
-        ]
-        error_lower = error_text.lower()
-        return any(kw in error_lower for kw in quota_keywords)
+        self._fallback_agent = None  # Cached by QuotaFallbackMixin
 
     @handle_agent_errors(
         max_retries=3,
@@ -159,21 +121,10 @@ class AnthropicAPIAgent(APIAgent):
                     sanitized = _sanitize_error_message(error_text)
 
                     # Check if this is a quota/billing error and fallback is enabled
-                    if self.enable_fallback and self._is_anthropic_quota_error(
-                        response.status, error_text
-                    ):
-                        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-                        if openrouter_key:
-                            logger.warning(
-                                f"Anthropic API billing/quota error (status {response.status}), "
-                                f"falling back to OpenRouter for {self.name}"
-                            )
-                            fallback = self._get_fallback_agent()
-                            return await fallback.generate(prompt, context)
-                        else:
-                            logger.warning(
-                                "Anthropic quota exceeded but OPENROUTER_API_KEY not set - cannot fallback"
-                            )
+                    if self.is_quota_error(response.status, error_text):
+                        result = await self.fallback_generate(prompt, context, response.status)
+                        if result is not None:
+                            return result
 
                     raise RuntimeError(f"Anthropic API error {response.status}: {sanitized}")
 
@@ -223,30 +174,18 @@ class AnthropicAPIAgent(APIAgent):
                     sanitized = _sanitize_error_message(error_text)
 
                     # Check for quota/billing errors and fallback to OpenRouter
-                    if self.enable_fallback and self._is_anthropic_quota_error(
-                        response.status, error_text
-                    ):
-                        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-                        if openrouter_key:
-                            logger.warning(
-                                f"Anthropic API billing/quota error (status {response.status}), "
-                                f"falling back to OpenRouter streaming for {self.name}"
-                            )
-                            fallback = self._get_fallback_agent()
-                            async for chunk in fallback.generate_stream(prompt, context):
-                                yield chunk
-                            return
-                        else:
-                            logger.warning(
-                                "Anthropic quota exceeded but OPENROUTER_API_KEY not set - cannot fallback"
-                            )
+                    if self.is_quota_error(response.status, error_text):
+                        async for chunk in self.fallback_generate_stream(prompt, context, response.status):
+                            yield chunk
+                        return
 
                     raise RuntimeError(f"Anthropic streaming API error {response.status}: {sanitized}")
 
                 # Anthropic uses SSE format: data: {...}\n\n
                 buffer = ""
                 try:
-                    async for chunk in response.content.iter_any():
+                    # Use timeout wrapper to prevent hanging on stalled streams
+                    async for chunk in iter_chunks_with_timeout(response.content):
                         buffer += chunk.decode('utf-8', errors='ignore')
                         # Prevent unbounded buffer growth (DoS protection)
                         if len(buffer) > MAX_STREAM_BUFFER_SIZE:

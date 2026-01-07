@@ -24,9 +24,10 @@ from aragora.server.validation import SAFE_ID_PATTERN, SAFE_AGENT_PATTERN, SAFE_
 
 # Re-export DB_TIMEOUT_SECONDS for backwards compatibility
 __all__ = [
-    "DB_TIMEOUT_SECONDS", "require_auth", "error_response", "json_response",
-    "handle_errors", "log_request", "ttl_cache", "clear_cache", "get_cache_stats",
-    "invalidate_cache", "CACHE_INVALIDATION_MAP", "rate_limit", "RateLimiter",
+    "DB_TIMEOUT_SECONDS", "require_auth", "require_storage", "error_response",
+    "json_response", "handle_errors", "log_request", "ttl_cache", "clear_cache",
+    "get_cache_stats", "invalidate_cache", "CACHE_INVALIDATION_MAP", "rate_limit",
+    "RateLimiter",
 ]
 
 logger = logging.getLogger(__name__)
@@ -683,6 +684,28 @@ def require_auth(func: Callable) -> Callable:
             return error_response("Invalid or missing authentication token", 401)
 
         return func(*args, **kwargs)
+    return wrapper
+
+
+def require_storage(func: Callable) -> Callable:
+    """
+    Decorator that requires storage to be available before executing the handler.
+
+    Eliminates boilerplate storage availability checks from handler methods.
+    Returns 503 Service Unavailable if storage is not configured.
+
+    Usage:
+        @require_storage
+        def _list_debates(self, handler, limit: int) -> HandlerResult:
+            storage = self.get_storage()  # Guaranteed to be non-None
+            ...
+    """
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        storage = self.get_storage()
+        if not storage:
+            return error_response("Storage not available", 503)
+        return func(self, *args, **kwargs)
     return wrapper
 
 

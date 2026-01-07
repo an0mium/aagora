@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Optional
 import sqlite3
 
-from aragora.config import DB_TIMEOUT_SECONDS, get_api_key
+from aragora.config import DB_TIMEOUT_SECONDS, get_api_key, CACHE_TTL_EMBEDDINGS
+from aragora.memory.database import MemoryDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class EmbeddingCache:
 
 
 # Global embedding cache (shared across providers)
-_embedding_cache = EmbeddingCache(ttl_seconds=3600, max_size=1000)
+_embedding_cache = EmbeddingCache(ttl_seconds=CACHE_TTL_EMBEDDINGS, max_size=1000)
 
 # Default API timeout
 _API_TIMEOUT = aiohttp.ClientTimeout(total=30)
@@ -325,6 +326,7 @@ class SemanticRetriever:
         provider: EmbeddingProvider = None,
     ):
         self.db_path = Path(db_path)
+        self.db = MemoryDatabase(db_path)
         self.provider = provider or self._auto_detect_provider()
         self._init_tables()
 
@@ -369,7 +371,7 @@ class SemanticRetriever:
 
     def _init_tables(self):
         """Initialize embedding tables."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -393,7 +395,7 @@ class SemanticRetriever:
 
     def _sync_get_existing_embedding(self, text_hash: str) -> Optional[bytes]:
         """Sync helper: Check if embedding already exists."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT embedding FROM embeddings WHERE text_hash = ?", (text_hash,))
             row = cursor.fetchone()
@@ -403,7 +405,7 @@ class SemanticRetriever:
         self, id: str, text_hash: str, text: str, embedding: list[float]
     ) -> None:
         """Sync helper: Store embedding in database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -435,7 +437,7 @@ class SemanticRetriever:
 
     def _sync_get_all_embeddings(self) -> list[tuple]:
         """Sync helper: Retrieve all embeddings from database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, text, embedding FROM embeddings")
             return cursor.fetchall()
@@ -474,7 +476,7 @@ class SemanticRetriever:
 
     def get_stats(self) -> dict:
         """Get embedding statistics."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("SELECT COUNT(*) FROM embeddings")

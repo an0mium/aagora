@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from aragora.config import DB_PERSONAS_PATH, DB_TIMEOUT_SECONDS
+from aragora.insights.database import InsightsDatabase
 
 
 @dataclass
@@ -123,12 +124,13 @@ class FlipDetector:
         similarity_threshold: float = 0.6,
     ):
         self.db_path = Path(db_path)
+        self.db = InsightsDatabase(db_path)
         self.similarity_threshold = similarity_threshold
         self._init_tables()
 
     def _init_tables(self) -> None:
         """Create flips and positions tables if not exist."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS detected_flips (
                     id TEXT PRIMARY KEY,
@@ -250,7 +252,7 @@ class FlipDetector:
         Scans positions marked as reversed in the position ledger
         and classifies them.
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             conn.row_factory = sqlite3.Row
 
             # Get positions marked as reversed
@@ -318,7 +320,7 @@ class FlipDetector:
         if not flips:
             return
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO detected_flips
@@ -352,7 +354,7 @@ class FlipDetector:
 
     def get_agent_consistency(self, agent_name: str) -> AgentConsistencyScore:
         """Get consistency score and metrics for an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             # Count total positions
             cursor = conn.execute(
                 "SELECT COUNT(*) FROM positions WHERE agent_name = ?", (agent_name,)
@@ -418,7 +420,7 @@ class FlipDetector:
         # Create placeholders for SQL IN clause
         placeholders = ",".join("?" * len(agent_names))
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             # Batch query 1: Count positions per agent
             cursor = conn.execute(
                 f"SELECT agent_name, COUNT(*) FROM positions WHERE agent_name IN ({placeholders}) GROUP BY agent_name",
@@ -484,7 +486,7 @@ class FlipDetector:
 
     def get_recent_flips(self, limit: int = 20) -> list[FlipEvent]:
         """Get recent flips across all agents."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 """
@@ -518,7 +520,7 @@ class FlipDetector:
 
     def get_flip_summary(self) -> dict:
         """Get summary of all flips for dashboard display."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             # Total flips
             cursor = conn.execute("SELECT COUNT(*) FROM detected_flips")
             row = cursor.fetchone()

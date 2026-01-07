@@ -20,6 +20,7 @@ from typing import Optional, TYPE_CHECKING
 import hashlib
 
 from aragora.config import DB_MEMORY_PATH, DB_TIMEOUT_SECONDS
+from aragora.memory.database import MemoryDatabase
 from aragora.utils.json_helpers import safe_json_loads
 
 if TYPE_CHECKING:
@@ -102,6 +103,7 @@ class MemoryStream:
     ):
         global _embedding_provider_ref
         self.db_path = Path(db_path)
+        self.db = MemoryDatabase(db_path)
         self.embedding_provider = embedding_provider
         # Set module-level reference for cached embedding function
         if embedding_provider is not None:
@@ -110,7 +112,7 @@ class MemoryStream:
 
     def _init_db(self) -> None:
         """Initialize database schema."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -179,7 +181,7 @@ class MemoryStream:
         memory_id = self._generate_id(agent_name, content)
         created_at = datetime.now().isoformat()
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -209,8 +211,6 @@ class MemoryStream:
                 """,
                 (agent_name,),
             )
-
-            conn.commit()
 
         return Memory(
             id=memory_id,
@@ -256,7 +256,7 @@ class MemoryStream:
         Returns:
             List of RetrievedMemory objects sorted by score
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             sql = """
@@ -348,7 +348,7 @@ class MemoryStream:
 
     def get_recent(self, agent_name: str, limit: int = 20) -> list[Memory]:
         """Get most recent memories for an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -380,7 +380,7 @@ class MemoryStream:
 
     def should_reflect(self, agent_name: str, threshold: int = 10) -> bool:
         """Check if agent should perform reflection."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -393,7 +393,7 @@ class MemoryStream:
 
     def mark_reflected(self, agent_name: str) -> None:
         """Mark that agent has performed reflection."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -479,7 +479,7 @@ Format each insight on a new line starting with "INSIGHT:"
 
     def get_stats(self, agent_name: str) -> dict:
         """Get memory statistics for an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(

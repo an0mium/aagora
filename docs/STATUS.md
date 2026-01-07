@@ -1,6 +1,6 @@
 # Aragora Project Status
 
-*Last updated: January 6, 2026 (22:00 UTC)*
+*Last updated: January 7, 2026 (12:00 UTC)*
 
 ## Current State
 
@@ -37,6 +37,23 @@
 | `anthropic-api` | Claude Opus 4.5 | Anthropic |
 | `openai-api` | GPT 5.2 | OpenAI |
 | `deepseek-r1` | DeepSeek V3.2 | OpenRouter |
+
+### Recent Changes (2026-01-07)
+- **Database Consolidation**: Implemented full migration system for 22→4 databases
+  - Created unified schemas in `aragora/persistence/schemas/` (core.sql, analytics.sql, memory.sql, agents.sql)
+  - Added `db_config.py` for centralized database path management
+  - Migration script with dry-run, rollback, and verification: `scripts/migrate_databases.py`
+- **Type Annotations**: Added mypy configuration and Protocol definitions
+  - `aragora/protocols.py` with 8 Protocol definitions (StorageBackend, MemoryBackend, EloBackend, etc.)
+  - Enhanced mypy config in pyproject.toml with per-module strict settings
+- **Performance**: Added LRU caching to ELO system
+  - `aragora/utils/cache.py` with TTLCache, lru_cache_with_ttl decorator
+  - Cached leaderboards and ratings with automatic invalidation
+- **Memory Backend**: Extracted TierManager for configurable memory tiers
+  - `aragora/memory/tier_manager.py` with tier configuration and transition metrics
+  - ContinuumMemory now uses TierManager for promotion/demotion decisions
+- **Stream Architecture**: Extracted ServerBase for common server functionality
+  - `aragora/server/stream/server_base.py` with rate limiting, state caching, client management
 
 ### Recent Changes (2026-01-06)
 - Extracted `SecurityBarrier` and `TelemetryVerifier` to `debate/security_barrier.py` (213 lines)

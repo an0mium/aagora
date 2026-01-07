@@ -121,63 +121,63 @@ class ArenaFactory:
                 logger.debug("ArgumentCartographer not available")
         return self._argument_cartographer_cls
 
-    def create_position_tracker(self, **kwargs):
+    def create_position_tracker(self, **kwargs: Any) -> Optional[Any]:
         """Create a PositionTracker instance."""
         cls = self._get_position_tracker_cls()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_calibration_tracker(self, **kwargs):
+    def create_calibration_tracker(self, **kwargs: Any) -> Optional[Any]:
         """Create a CalibrationTracker instance."""
         cls = self._get_calibration_tracker_cls()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_belief_network(self, **kwargs):
+    def create_belief_network(self, **kwargs: Any) -> Optional[Any]:
         """Create a BeliefNetwork instance."""
         cls, _ = self._get_belief_classes()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_belief_analyzer(self, **kwargs):
+    def create_belief_analyzer(self, **kwargs: Any) -> Optional[Any]:
         """Create a BeliefPropagationAnalyzer instance."""
         _, cls = self._get_belief_classes()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_citation_extractor(self, **kwargs):
+    def create_citation_extractor(self, **kwargs: Any) -> Optional[Any]:
         """Create a CitationExtractor instance."""
         cls = self._get_citation_extractor_cls()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_insight_extractor(self, **kwargs):
+    def create_insight_extractor(self, **kwargs: Any) -> Optional[Any]:
         """Create an InsightExtractor instance."""
         cls, _ = self._get_insight_classes()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_insight_store(self, **kwargs):
+    def create_insight_store(self, **kwargs: Any) -> Optional[Any]:
         """Create an InsightStore instance."""
         _, cls = self._get_insight_classes()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_critique_store(self, **kwargs):
+    def create_critique_store(self, **kwargs: Any) -> Optional[Any]:
         """Create a CritiqueStore instance."""
         cls = self._get_critique_store_cls()
         if cls:
             return cls(**kwargs)
         return None
 
-    def create_argument_cartographer(self, **kwargs):
+    def create_argument_cartographer(self, **kwargs: Any) -> Optional[Any]:
         """Create an ArgumentCartographer instance."""
         cls = self._get_argument_cartographer_cls()
         if cls:
@@ -220,7 +220,7 @@ class ArenaFactory:
         circuit_breaker: Optional[CircuitBreaker] = None,
         initial_messages: Optional[list] = None,
         trending_topic: Optional[Any] = None,
-    ):
+    ) -> "Arena":
         """
         Create an Arena instance with injected dependencies.
 
@@ -295,8 +295,8 @@ def get_arena_factory() -> ArenaFactory:
 def create_arena(
     environment: Environment,
     agents: list[Agent],
-    **kwargs,
-):
+    **kwargs: Any,
+) -> "Arena":
     """
     Convenience function to create an Arena with the default factory.
 

@@ -149,18 +149,22 @@ class OpenRouterRateLimiter:
             }
 
 
-# Global rate limiter instance (shared across all OpenRouterAgent instances)
-_openrouter_limiter: Optional[OpenRouterRateLimiter] = None
+# Use ServiceRegistry for rate limiter singleton management
 _openrouter_limiter_lock = threading.Lock()
 
 
 def get_openrouter_limiter() -> OpenRouterRateLimiter:
-    """Get or create the global OpenRouter rate limiter."""
-    global _openrouter_limiter
+    """Get or create the global OpenRouter rate limiter.
+
+    Uses ServiceRegistry for centralized singleton management.
+    """
+    from aragora.services import ServiceRegistry
+
     with _openrouter_limiter_lock:
-        if _openrouter_limiter is None:
-            _openrouter_limiter = OpenRouterRateLimiter()
-        return _openrouter_limiter
+        registry = ServiceRegistry.get()
+        if not registry.has(OpenRouterRateLimiter):
+            registry.register(OpenRouterRateLimiter, OpenRouterRateLimiter())
+        return registry.resolve(OpenRouterRateLimiter)
 
 
 def set_openrouter_tier(tier: str) -> None:
@@ -168,9 +172,11 @@ def set_openrouter_tier(tier: str) -> None:
 
     Valid tiers: free, basic, standard, premium, unlimited
     """
-    global _openrouter_limiter
+    from aragora.services import ServiceRegistry
+
     with _openrouter_limiter_lock:
-        _openrouter_limiter = OpenRouterRateLimiter(tier=tier)
+        registry = ServiceRegistry.get()
+        registry.register(OpenRouterRateLimiter, OpenRouterRateLimiter(tier=tier))
 
 
 __all__ = [

@@ -162,7 +162,8 @@ class GenesisHandler(BaseHandler):
                     return error_response(f"Unknown event type: {event_type}", 400)
 
             # Get all recent events
-            with sqlite3.connect(ledger_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            ledger = GenesisLedger(ledger_path)
+            with ledger.db.connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT event_id, event_type, timestamp, parent_event_id, content_hash, data

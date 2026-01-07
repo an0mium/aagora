@@ -22,7 +22,13 @@ from .base import (
     get_int_param,
     ttl_cache,
 )
-from aragora.config import DB_TIMEOUT_SECONDS
+from aragora.config import (
+    DB_TIMEOUT_SECONDS,
+    CACHE_TTL_REPLAYS_LIST,
+    CACHE_TTL_LEARNING_EVOLUTION,
+    CACHE_TTL_META_LEARNING,
+)
+from aragora.memory.database import MemoryDatabase
 from aragora.server.validation import validate_replay_id
 
 logger = logging.getLogger(__name__)
@@ -78,7 +84,7 @@ class ReplaysHandler(BaseHandler):
 
         return None
 
-    @ttl_cache(ttl_seconds=120, key_prefix="replays_list", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_REPLAYS_LIST, key_prefix="replays_list", skip_first=True)
     def _list_replays(self, nomic_dir: Optional[Path]) -> HandlerResult:
         """List available replay directories."""
         if not nomic_dir:
@@ -175,7 +181,7 @@ class ReplaysHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "get_replay"), 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="learning_evolution", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LEARNING_EVOLUTION, key_prefix="learning_evolution", skip_first=True)
     def _get_learning_evolution(
         self, nomic_dir: Optional[Path], limit: int
     ) -> HandlerResult:
@@ -188,7 +194,8 @@ class ReplaysHandler(BaseHandler):
             if not db_path.exists():
                 return json_response({"patterns": [], "count": 0})
 
-            with sqlite3.connect(str(db_path), timeout=DB_TIMEOUT_SECONDS) as conn:
+            db = MemoryDatabase(str(db_path))
+            with db.connection() as conn:
                 conn.row_factory = sqlite3.Row
 
                 # Get recent patterns
@@ -211,7 +218,7 @@ class ReplaysHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "learning_evolution"), 500)
 
-    @ttl_cache(ttl_seconds=60, key_prefix="meta_learning_stats", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_META_LEARNING, key_prefix="meta_learning_stats", skip_first=True)
     def _get_meta_learning_stats(
         self, nomic_dir: Optional[Path], limit: int
     ) -> HandlerResult:
@@ -237,7 +244,8 @@ class ReplaysHandler(BaseHandler):
                     "efficiency_log": [],
                 })
 
-            with sqlite3.connect(str(db_path), timeout=DB_TIMEOUT_SECONDS) as conn:
+            db = MemoryDatabase(str(db_path))
+            with db.connection() as conn:
                 conn.row_factory = sqlite3.Row
 
                 # Get current hyperparameters (most recent)

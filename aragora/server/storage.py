@@ -16,6 +16,7 @@ from typing import Optional, TYPE_CHECKING, Generator
 import logging
 
 from aragora.storage.schema import get_wal_connection, DB_TIMEOUT
+from aragora.insights.database import InsightsDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ class DebateStorage:
 
     def __init__(self, db_path: str = "aragora_debates.db"):
         self.db_path = Path(db_path)
+        self.db = InsightsDatabase(db_path)
         self._init_db()
 
     @contextmanager
@@ -105,11 +107,8 @@ class DebateStorage:
         per operation for thread safety - SQLite connections cannot be
         safely shared across threads.
         """
-        conn = get_wal_connection(self.db_path, timeout=DB_TIMEOUT)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         """Initialize database schema."""

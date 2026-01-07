@@ -3,9 +3,14 @@ Request router for dispatching HTTP requests to handlers.
 
 Provides a centralized routing mechanism that:
 - Registers handlers by path patterns
-- Dispatches requests to appropriate handlers
+- Dispatches requests to appropriate handlers with O(1) caching
 - Handles method routing (GET, POST, PUT, DELETE)
 - Supports path parameters (e.g., /api/debates/{id})
+
+Performance optimizations:
+- Exact route lookup: O(1) via dict
+- Prefix route lookup: O(n) on prefix routes, but cached
+- Dispatch cache: LRU-style cache for frequent paths
 """
 
 import logging
@@ -18,6 +23,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default cache size for dispatch results
+DEFAULT_DISPATCH_CACHE_SIZE = 1000
+
 
 @dataclass
 class Route:
@@ -27,6 +35,10 @@ class Route:
     handler: "BaseHandler"
     methods: set[str] = field(default_factory=lambda: {"GET"})
     name: str = ""
+    # Original path string for exact matching optimization
+    path_str: str = ""
+    # Whether this is a simple exact match (no params)
+    is_exact: bool = False
 
     def matches(self, path: str, method: str) -> tuple[bool, dict[str, str]]:
         """Check if route matches path and method.
@@ -35,6 +47,12 @@ class Route:
             Tuple of (matches, path_params)
         """
         if method not in self.methods:
+            return False, {}
+
+        # Fast path for exact matches
+        if self.is_exact:
+            if path == self.path_str:
+                return True, {}
             return False, {}
 
         match = self.pattern.match(path)
@@ -48,6 +66,11 @@ class RequestRouter:
 
     Routes requests based on URL path patterns to registered handlers.
 
+    Performance features:
+    - O(1) exact path lookup via dict
+    - Dispatch result caching for frequent paths
+    - Sorted prefix routes for most-specific matching
+
     Usage:
         router = RequestRouter()
 
@@ -59,10 +82,22 @@ class RequestRouter:
         result = router.dispatch("GET", "/api/debates", {}, http_handler)
     """
 
-    def __init__(self):
-        """Initialize the router."""
+    def __init__(self, cache_size: int = DEFAULT_DISPATCH_CACHE_SIZE):
+        """Initialize the router.
+
+        Args:
+            cache_size: Maximum number of dispatch results to cache
+        """
         self._routes: list[Route] = []
         self._handlers: list["BaseHandler"] = []
+        # O(1) lookup for exact routes (path -> list of routes by method)
+        self._exact_routes: dict[str, dict[str, Route]] = {}
+        # Dispatch cache: (method, path) -> (handler, path_params)
+        self._dispatch_cache: dict[tuple[str, str], tuple["BaseHandler", dict]] = {}
+        self._cache_size = cache_size
+        # Statistics
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     def register(self, handler: "BaseHandler") -> None:
         """Register a handler with its routes.
@@ -78,6 +113,9 @@ class RequestRouter:
             return
 
         for route_path in routes:
+            # Check if this is an exact route (no params)
+            is_exact = "{" not in route_path
+
             # Convert path pattern to regex
             # Support {param} syntax for path parameters
             pattern_str = re.sub(r"\{(\w+)\}", r"(?P<\1>[^/]+)", route_path)
@@ -97,8 +135,20 @@ class RequestRouter:
                 handler=handler,
                 methods=methods,
                 name=handler.__class__.__name__,
+                path_str=route_path,
+                is_exact=is_exact,
             )
             self._routes.append(route)
+
+            # Index exact routes for O(1) lookup
+            if is_exact:
+                if route_path not in self._exact_routes:
+                    self._exact_routes[route_path] = {}
+                for method in methods:
+                    self._exact_routes[route_path][method] = route
+
+        # Clear cache when routes change
+        self._dispatch_cache.clear()
 
     def dispatch(
         self,
@@ -109,6 +159,9 @@ class RequestRouter:
     ) -> Optional["HandlerResult"]:
         """Dispatch a request to the appropriate handler.
 
+        Uses cached results when available for O(1) lookup on frequently
+        accessed paths.
+
         Args:
             method: HTTP method (GET, POST, etc.)
             path: Request path
@@ -118,32 +171,73 @@ class RequestRouter:
         Returns:
             HandlerResult if handled, None otherwise
         """
-        # First check explicit routes
+        # Check cache first
+        cache_key = (method, path)
+        if cache_key in self._dispatch_cache:
+            self._cache_hits += 1
+            handler, path_params = self._dispatch_cache[cache_key]
+            return self._invoke_handler(
+                handler,
+                method,
+                path,
+                query_params,
+                path_params,
+                http_handler,
+            )
+
+        self._cache_misses += 1
+
+        # Find handler and cache result
+        handler, path_params = self._find_handler(method, path)
+        if handler is not None:
+            # Cache the result (with size limit)
+            if len(self._dispatch_cache) < self._cache_size:
+                self._dispatch_cache[cache_key] = (handler, path_params)
+            return self._invoke_handler(
+                handler,
+                method,
+                path,
+                query_params,
+                path_params,
+                http_handler,
+            )
+
+        return None
+
+    def _find_handler(
+        self,
+        method: str,
+        path: str,
+    ) -> tuple[Optional["BaseHandler"], dict[str, str]]:
+        """Find handler for a request without caching.
+
+        Args:
+            method: HTTP method
+            path: Request path
+
+        Returns:
+            Tuple of (handler, path_params) or (None, {}) if not found
+        """
+        # O(1) exact route lookup first
+        if path in self._exact_routes:
+            route_by_method = self._exact_routes[path]
+            if method in route_by_method:
+                return route_by_method[method].handler, {}
+
+        # O(n) pattern route matching
         for route in self._routes:
+            if route.is_exact:
+                continue  # Already checked above
             matches, path_params = route.matches(path, method)
             if matches:
-                return self._invoke_handler(
-                    route.handler,
-                    method,
-                    path,
-                    query_params,
-                    path_params,
-                    http_handler,
-                )
+                return route.handler, path_params
 
         # Fall back to can_handle check for handlers without explicit routes
         for handler in self._handlers:
             if hasattr(handler, "can_handle") and handler.can_handle(path):
-                return self._invoke_handler(
-                    handler,
-                    method,
-                    path,
-                    query_params,
-                    {},
-                    http_handler,
-                )
+                return handler, {}
 
-        return None
+        return None, {}
 
     def _invoke_handler(
         self,
@@ -210,13 +304,37 @@ class RequestRouter:
         Returns:
             Handler instance or None
         """
-        for route in self._routes:
-            matches, _ = route.matches(path, method)
-            if matches:
-                return route.handler
+        handler, _ = self._find_handler(method, path)
+        return handler
 
-        for handler in self._handlers:
-            if hasattr(handler, "can_handle") and handler.can_handle(path):
-                return handler
+    def clear_cache(self) -> int:
+        """Clear the dispatch cache.
 
-        return None
+        Returns:
+            Number of entries cleared
+        """
+        count = len(self._dispatch_cache)
+        self._dispatch_cache.clear()
+        return count
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get router statistics for monitoring.
+
+        Returns:
+            Dict with cache hits, misses, and route counts
+        """
+        total_requests = self._cache_hits + self._cache_misses
+        return {
+            "exact_routes": len(self._exact_routes),
+            "pattern_routes": sum(1 for r in self._routes if not r.is_exact),
+            "total_routes": len(self._routes),
+            "handlers": len(self._handlers),
+            "cache_size": len(self._dispatch_cache),
+            "cache_max_size": self._cache_size,
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "cache_hit_rate": self._cache_hits / total_requests if total_requests > 0 else 0.0,
+        }
+
+
+__all__ = ["RequestRouter", "Route", "DEFAULT_DISPATCH_CACHE_SIZE"]

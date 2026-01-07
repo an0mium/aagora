@@ -18,6 +18,7 @@ import sqlite3
 
 from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.core import Agent, DebateResult, Critique
+from aragora.evolution.database import EvolutionDatabase
 from aragora.memory.store import CritiqueStore, Pattern
 
 logger = logging.getLogger(__name__)
@@ -63,13 +64,14 @@ class PromptEvolver:
         strategy: EvolutionStrategy = EvolutionStrategy.APPEND,
     ):
         self.db_path = Path(db_path)
+        self.db = EvolutionDatabase(db_path)
         self.critique_store = critique_store
         self.strategy = strategy
         self._init_db()
 
     def _init_db(self):
         """Initialize evolution database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             # Prompt versions table
@@ -170,7 +172,7 @@ class PromptEvolver:
 
     def store_patterns(self, patterns: list[dict]):
         """Store extracted patterns in database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             for pattern in patterns:
@@ -190,7 +192,7 @@ class PromptEvolver:
         limit: int = 10,
     ) -> list[dict]:
         """Get most effective patterns."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             if pattern_type:
@@ -229,7 +231,7 @@ class PromptEvolver:
 
     def get_prompt_version(self, agent_name: str, version: int | None = None) -> Optional[PromptVersion]:
         """Get a specific prompt version or the latest."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             if version is not None:
@@ -270,7 +272,7 @@ class PromptEvolver:
 
     def save_prompt_version(self, agent_name: str, prompt: str, metadata: dict = None) -> int:
         """Save a new prompt version."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             # Get next version number
@@ -485,7 +487,7 @@ Return ONLY the refined prompt, no explanations."""
         agent.set_system_prompt(new_prompt)
 
         # Record evolution history
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -506,7 +508,7 @@ Return ONLY the refined prompt, no explanations."""
 
     def get_evolution_history(self, agent_name: str, limit: int = 10) -> list[dict]:
         """Get evolution history for an agent."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -540,7 +542,7 @@ Return ONLY the refined prompt, no explanations."""
         debate_result: DebateResult,
     ):
         """Update performance metrics for a prompt version."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             # Get current stats

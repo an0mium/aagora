@@ -156,7 +156,7 @@ class MemoryManager:
                     self.continuum_memory.add(
                         id=f"evidence_{hashlib.sha256(content.encode()).hexdigest()[:10]}",
                         content=f"[Evidence:{domain}] {content} (Source: {source})",
-                        tier="medium",
+                        tier=MemoryTier.MEDIUM,
                         importance=min(0.7, relevance + 0.2),
                         metadata={
                             "task": task[:100],

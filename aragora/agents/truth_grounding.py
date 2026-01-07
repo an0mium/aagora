@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
+from aragora.insights.database import InsightsDatabase
+
 # Database connection timeout in seconds
 DB_TIMEOUT_SECONDS = 30
 
@@ -48,16 +50,14 @@ class PositionTracker:
 
     def __init__(self, db_path: str = "aragora_positions.db"):
         self.db_path = Path(db_path)
+        self.db = InsightsDatabase(db_path)
         self._init_db()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self):
         """Initialize database schema."""
@@ -408,7 +408,7 @@ class TruthGroundedLaboratory:
         min_accuracy: float = 0.6,
     ) -> list[TruthGroundedPersona]:
         """Get agents that have demonstrated reliable accuracy."""
-        with sqlite3.connect(self.position_tracker.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.position_tracker.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -436,7 +436,7 @@ class TruthGroundedLaboratory:
 
     def get_all_personas(self, limit: int = 50) -> list[TruthGroundedPersona]:
         """Get all agents with position history."""
-        with sqlite3.connect(self.position_tracker.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.position_tracker.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -454,7 +454,7 @@ class TruthGroundedLaboratory:
 
     def get_debate_summary(self, debate_id: str) -> dict:
         """Get summary of positions and outcome for a debate."""
-        with sqlite3.connect(self.position_tracker.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.position_tracker.db.connection() as conn:
             cursor = conn.cursor()
 
             # Get outcome

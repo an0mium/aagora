@@ -133,7 +133,7 @@ class HumanNotifier:
         self.config = config
         self._handlers: dict[str, Callable] = {}
 
-    def register_handler(self, channel: str, handler: Callable):
+    def register_handler(self, channel: str, handler: Callable) -> None:
         """Register a notification handler for a channel."""
         self._handlers[channel] = handler
 
@@ -444,11 +444,11 @@ class BreakpointManager:
 
 
 # Decorator for marking critical decision points
-def critical_decision(reason: str = ""):
+def critical_decision(reason: str = "") -> Callable[[Callable], Callable]:
     """Decorator to mark a debate point as requiring human review."""
-    def decorator(func):
-        func._aragora_critical = True
-        func._aragora_critical_reason = reason
+    def decorator(func: Callable) -> Callable:
+        func._aragora_critical = True  # type: ignore[attr-defined]
+        func._aragora_critical_reason = reason  # type: ignore[attr-defined]
         return func
     return decorator
 
@@ -458,7 +458,7 @@ def breakpoint(
     trigger: str = "low_confidence",
     threshold: float = 0.6,
     message: str = "",
-):
+) -> Callable[[Callable], Callable]:
     """
     Mark a breakpoint condition in debate flow.
 
@@ -467,10 +467,10 @@ def breakpoint(
         async def human_tiebreaker(state: DebateState) -> Guidance:
             return await get_human_input(state.summary, state.open_questions)
     """
-    def decorator(func):
-        func._aragora_breakpoint = True
-        func._aragora_breakpoint_trigger = trigger
-        func._aragora_breakpoint_threshold = threshold
-        func._aragora_breakpoint_message = message
+    def decorator(func: Callable) -> Callable:
+        func._aragora_breakpoint = True  # type: ignore[attr-defined]
+        func._aragora_breakpoint_trigger = trigger  # type: ignore[attr-defined]
+        func._aragora_breakpoint_threshold = threshold  # type: ignore[attr-defined]
+        func._aragora_breakpoint_message = message  # type: ignore[attr-defined]
         return func
     return decorator

@@ -22,6 +22,7 @@ from .base import (
     json_response,
     error_response,
     get_int_param,
+    require_storage,
     validate_debate_id,
 )
 
@@ -55,6 +56,20 @@ class DebatesHandler(BaseHandler):
     # Allowed export formats and tables for input validation
     ALLOWED_EXPORT_FORMATS = {"json", "csv", "html"}
     ALLOWED_EXPORT_TABLES = {"summary", "messages", "critiques", "votes"}
+
+    # Route dispatch table: (suffix, handler_method_name, needs_debate_id, extra_params)
+    # extra_params is a callable that extracts additional params from (path, query_params)
+    SUFFIX_ROUTES = [
+        ("/impasse", "_get_impasse", True, None),
+        ("/convergence", "_get_convergence", True, None),
+        ("/citations", "_get_citations", True, None),
+        ("/messages", "_get_debate_messages", True, lambda p, q: {
+            "limit": get_int_param(q, 'limit', 50),
+            "offset": get_int_param(q, 'offset', 0),
+        }),
+        ("/meta-critique", "_get_meta_critique", True, None),
+        ("/graph/stats", "_get_graph_stats", True, None),
+    ]
 
     def _check_auth(self, handler) -> Optional[HandlerResult]:
         """Check authentication for sensitive endpoints.
@@ -99,6 +114,47 @@ class DebatesHandler(BaseHandler):
                 return True
         return False
 
+    def _dispatch_suffix_route(
+        self, path: str, query_params: dict, handler
+    ) -> Optional[HandlerResult]:
+        """Dispatch routes based on path suffix using SUFFIX_ROUTES table.
+
+        Returns:
+            HandlerResult if a route matched, None otherwise.
+        """
+        for suffix, method_name, needs_id, extra_params_fn in self.SUFFIX_ROUTES:
+            if not path.endswith(suffix):
+                continue
+
+            # Extract debate_id if needed
+            if needs_id:
+                debate_id, err = self._extract_debate_id(path)
+                if err:
+                    return error_response(err, 400)
+                if not debate_id:
+                    continue
+
+            # Get handler method
+            method = getattr(self, method_name, None)
+            if not method:
+                continue
+
+            # Build arguments
+            if needs_id:
+                if extra_params_fn:
+                    extra = extra_params_fn(path, query_params)
+                    # Methods like _get_debate_messages don't take handler
+                    if method_name == "_get_debate_messages":
+                        return method(debate_id, **extra)
+                    return method(handler, debate_id, **extra)
+                else:
+                    # Methods like _get_meta_critique only take debate_id
+                    if method_name in ("_get_meta_critique", "_get_graph_stats"):
+                        return method(debate_id)
+                    return method(handler, debate_id)
+
+        return None
+
     def can_handle(self, path: str) -> bool:
         """Check if this handler can process the given path."""
         if path == "/api/debates":
@@ -113,77 +169,28 @@ class DebatesHandler(BaseHandler):
         return False
 
     def handle(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
-        """
-        Route debate requests to appropriate handler methods.
-
-        Note: This delegates to the unified server's existing methods
-        to maintain backward compatibility.
-        """
+        """Route debate requests to appropriate handler methods."""
         # Check authentication for protected endpoints
         if self._requires_auth(path):
             auth_error = self._check_auth(handler)
             if auth_error:
                 return auth_error
 
+        # Exact path matches
         if path == "/api/debates":
-            limit = get_int_param(query_params, 'limit', 20)
-            limit = min(limit, 100)  # Cap at 100
+            limit = min(get_int_param(query_params, 'limit', 20), 100)
             return self._list_debates(handler, limit)
 
         if path.startswith("/api/debates/slug/"):
             slug = path.split("/")[-1]
             return self._get_debate_by_slug(handler, slug)
 
-        if path.endswith("/impasse"):
-            debate_id, err = self._extract_debate_id(path)
-            if err:
-                return error_response(err, 400)
-            if debate_id:
-                return self._get_impasse(handler, debate_id)
+        # Dispatch suffix-based routes (impasse, convergence, citations, messages, etc.)
+        result = self._dispatch_suffix_route(path, query_params, handler)
+        if result:
+            return result
 
-        if path.endswith("/convergence"):
-            debate_id, err = self._extract_debate_id(path)
-            if err:
-                return error_response(err, 400)
-            if debate_id:
-                return self._get_convergence(handler, debate_id)
-
-        if path.endswith("/citations"):
-            debate_id, err = self._extract_debate_id(path)
-            if err:
-                return error_response(err, 400)
-            if debate_id:
-                return self._get_citations(handler, debate_id)
-
-        if path.endswith("/messages"):
-            debate_id, err = self._extract_debate_id(path)
-            if err:
-                return error_response(err, 400)
-            if debate_id:
-                limit = get_int_param(query_params, 'limit', 50)
-                offset = get_int_param(query_params, 'offset', 0)
-                return self._get_debate_messages(debate_id, limit, offset)
-
-        if path.endswith("/meta-critique"):
-            # Handle both /api/debates/{id}/meta-critique and /api/debate/{id}/meta-critique
-            parts = path.split("/")
-            if len(parts) >= 4:
-                debate_id = parts[3]
-                is_valid, err = validate_debate_id(debate_id)
-                if not is_valid:
-                    return error_response(err, 400)
-                return self._get_meta_critique(debate_id)
-
-        if path.endswith("/graph/stats"):
-            # Handle both /api/debates/{id}/graph/stats and /api/debate/{id}/graph/stats
-            parts = path.split("/")
-            if len(parts) >= 5:
-                debate_id = parts[3]
-                is_valid, err = validate_debate_id(debate_id)
-                if not is_valid:
-                    return error_response(err, 400)
-                return self._get_graph_stats(debate_id)
-
+        # Export route (special handling for format/table validation)
         if "/export/" in path:
             parts = path.split("/")
             if len(parts) >= 6:
@@ -231,24 +238,20 @@ class DebatesHandler(BaseHandler):
 
         return debate_id, None
 
+    @require_storage
     def _list_debates(self, handler, limit: int) -> HandlerResult:
         """List recent debates."""
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debates = storage.list_debates(limit=limit)
             return json_response({"debates": debates, "count": len(debates)})
         except Exception as e:
             return error_response(f"Failed to list debates: {e}", 500)
 
+    @require_storage
     def _get_debate_by_slug(self, handler, slug: str) -> HandlerResult:
         """Get a debate by slug."""
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debate = storage.get_debate(slug)
             if debate:
@@ -257,12 +260,10 @@ class DebatesHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get debate: {e}", 500)
 
+    @require_storage
     def _get_impasse(self, handler, debate_id: str) -> HandlerResult:
         """Detect impasse in a debate."""
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debate = storage.get_debate(debate_id)
             if not debate:
@@ -289,12 +290,10 @@ class DebatesHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Impasse detection failed: {e}", 500)
 
+    @require_storage
     def _get_convergence(self, handler, debate_id: str) -> HandlerResult:
         """Get convergence status for a debate."""
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debate = storage.get_debate(debate_id)
             if not debate:
@@ -310,6 +309,7 @@ class DebatesHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Convergence check failed: {e}", 500)
 
+    @require_storage
     def _export_debate(self, handler, debate_id: str, format: str, table: str) -> HandlerResult:
         """Export debate in specified format."""
         valid_formats = {"json", "csv", "html"}
@@ -317,9 +317,6 @@ class DebatesHandler(BaseHandler):
             return error_response(f"Invalid format: {format}. Valid: {valid_formats}", 400)
 
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debate = storage.get_debate(debate_id)
             if not debate:
@@ -578,6 +575,7 @@ class DebatesHandler(BaseHandler):
             headers={"Content-Disposition": f'attachment; filename="debate-{debate_id}.html"'},
         )
 
+    @require_storage
     def _get_citations(self, handler, debate_id: str) -> HandlerResult:
         """Get evidence citations for a debate.
 
@@ -590,9 +588,6 @@ class DebatesHandler(BaseHandler):
         import json as json_module
 
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debate = storage.get_debate(debate_id)
             if not debate:
@@ -639,6 +634,7 @@ class DebatesHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get citations: {e}", 500)
 
+    @require_storage
     def _get_debate_messages(self, debate_id: str, limit: int = 50, offset: int = 0) -> HandlerResult:
         """Get paginated message history for a debate.
 
@@ -651,9 +647,6 @@ class DebatesHandler(BaseHandler):
             Paginated list of messages with metadata
         """
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         # Clamp limit
         limit = min(max(1, limit), 200)
         offset = max(0, offset)
@@ -856,6 +849,7 @@ class DebatesHandler(BaseHandler):
 
         return None
 
+    @require_storage
     def _fork_debate(self, handler, debate_id: str) -> HandlerResult:
         """Create a counterfactual fork of a debate at a specific branch point.
 
@@ -884,9 +878,6 @@ class DebatesHandler(BaseHandler):
 
         # Get the original debate
         storage = self.get_storage()
-        if not storage:
-            return error_response("Storage not available", 503)
-
         try:
             debate = storage.get_debate(debate_id)
             if not debate:

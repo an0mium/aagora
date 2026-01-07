@@ -38,6 +38,8 @@ dependencies = [
     "aiohttp>=3.9",
     "websockets>=12.0",
     "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -110,6 +112,8 @@ filterwarnings = [
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 ignore_missing_imports = true
 exclude = [
     "tests/",
@@ -118,6 +122,35 @@ exclude = [
     ".venv/",
     "node_modules/",
 ]
-# Start non-strict, enable incrementally
+# Start non-strict globally, enable per-module
 check_untyped_defs = false
 disallow_untyped_defs = false
+
+# Strict settings for core modules (enable incrementally)
+[[tool.mypy.overrides]]
+module = [
+    "aragora.core",
+    "aragora.config",
+    "aragora.persistence.db_config",
+    "aragora.persistence.models",
+    "aragora.server.validation",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+# Moderate settings for server handlers
+[[tool.mypy.overrides]]
+module = "aragora.server.handlers.*"
+check_untyped_defs = true
+
+# Allow untyped for complex modules (can be tightened later)
+[[tool.mypy.overrides]]
+module = [
+    "aragora.debate.orchestrator",
+    "aragora.agents.api_agents",
+    "aragora.agents.cli_agents",
+    "aragora.memory.continuum",
+]
+disallow_untyped_defs = false
+check_untyped_defs = false

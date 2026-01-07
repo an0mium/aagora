@@ -97,6 +97,73 @@ class Arena:
         trending_topic=None,  # Optional TrendingTopic to seed debate context
         evidence_collector=None,  # Optional EvidenceCollector for auto-collecting evidence
     ):
+        # Initialize core configuration
+        self._init_core(
+            environment=environment,
+            agents=agents,
+            protocol=protocol,
+            memory=memory,
+            event_hooks=event_hooks,
+            event_emitter=event_emitter,
+            spectator=spectator,
+            debate_embeddings=debate_embeddings,
+            insight_store=insight_store,
+            recorder=recorder,
+            agent_weights=agent_weights,
+            loop_id=loop_id,
+            strict_loop_scoping=strict_loop_scoping,
+            circuit_breaker=circuit_breaker,
+            initial_messages=initial_messages,
+            trending_topic=trending_topic,
+            evidence_collector=evidence_collector,
+        )
+
+        # Initialize tracking subsystems
+        self._init_trackers(
+            position_tracker=position_tracker,
+            position_ledger=position_ledger,
+            elo_system=elo_system,
+            persona_manager=persona_manager,
+            dissent_retriever=dissent_retriever,
+            flip_detector=flip_detector,
+            calibration_tracker=calibration_tracker,
+            continuum_memory=continuum_memory,
+            relationship_tracker=relationship_tracker,
+            moment_detector=moment_detector,
+        )
+
+        # Initialize user participation and roles
+        self._init_user_participation()
+        self._init_roles_and_stances()
+
+        # Initialize convergence detection and caches
+        self._init_convergence()
+        self._init_caches()
+
+        # Initialize phase classes for orchestrator decomposition
+        self._init_phases()
+
+    def _init_core(
+        self,
+        environment: Environment,
+        agents: list[Agent],
+        protocol: DebateProtocol | None,
+        memory,
+        event_hooks: dict | None,
+        event_emitter,
+        spectator: SpectatorStream | None,
+        debate_embeddings,
+        insight_store,
+        recorder,
+        agent_weights: dict[str, float] | None,
+        loop_id: str,
+        strict_loop_scoping: bool,
+        circuit_breaker: CircuitBreaker | None,
+        initial_messages: list | None,
+        trending_topic,
+        evidence_collector,
+    ) -> None:
+        """Initialize core Arena configuration."""
         self.env = environment
         self.agents = agents
         self.protocol = protocol or DebateProtocol()
@@ -107,66 +174,88 @@ class Arena:
         self.debate_embeddings = debate_embeddings
         self.insight_store = insight_store
         self.recorder = recorder
-        self.agent_weights = agent_weights or {}  # Reliability weights from capability probing
-        self.position_tracker = position_tracker  # Truth-grounded persona tracking
-        self.position_ledger = position_ledger  # Grounded persona position ledger
-        self.elo_system = elo_system  # For relationship tracking
-        self.persona_manager = persona_manager  # For agent specialization context
-        self.dissent_retriever = dissent_retriever  # For historical minority views in debates
-        self.flip_detector = flip_detector  # For detecting position reversals
-        self.calibration_tracker = calibration_tracker  # For prediction accuracy tracking
-        self.continuum_memory = continuum_memory  # For cross-debate learning
-        self.relationship_tracker = relationship_tracker  # For agent relationship metrics
-        self.moment_detector = moment_detector  # For detecting significant moments
-
-        # Auto-initialize MomentDetector when elo_system available but no detector provided
-        if self.moment_detector is None and self.elo_system:
-            try:
-                from aragora.agents.grounded import MomentDetector as MD
-                self.moment_detector = MD(
-                    elo_system=self.elo_system,
-                    position_ledger=self.position_ledger,
-                    relationship_tracker=self.relationship_tracker,
-                )
-                logger.debug("Auto-initialized MomentDetector for significant moment detection")
-            except ImportError:
-                pass  # MomentDetector not available
-            except Exception as e:
-                logger.debug("MomentDetector auto-init failed: %s", e)
-
-        self.loop_id = loop_id  # Loop ID for scoping events
-        self.strict_loop_scoping = strict_loop_scoping  # Enforce loop_id on all events
+        self.agent_weights = agent_weights or {}
+        self.loop_id = loop_id
+        self.strict_loop_scoping = strict_loop_scoping
         self.circuit_breaker = circuit_breaker or CircuitBreaker()
-        self.initial_messages = initial_messages or []  # Fork debate initial context
-        self.trending_topic = trending_topic  # Optional trending topic to seed context
-        self.evidence_collector = evidence_collector  # Optional evidence auto-collection
+        self.initial_messages = initial_messages or []
+        self.trending_topic = trending_topic
+        self.evidence_collector = evidence_collector
 
         # ArgumentCartographer for debate graph visualization
         AC = OptionalImports.get_argument_cartographer()
         self.cartographer = AC() if AC else None
+
+    def _init_trackers(
+        self,
+        position_tracker,
+        position_ledger,
+        elo_system,
+        persona_manager,
+        dissent_retriever,
+        flip_detector,
+        calibration_tracker,
+        continuum_memory,
+        relationship_tracker,
+        moment_detector,
+    ) -> None:
+        """Initialize tracking subsystems for positions, relationships, and learning."""
+        self.position_tracker = position_tracker
+        self.position_ledger = position_ledger
+        self.elo_system = elo_system
+        self.persona_manager = persona_manager
+        self.dissent_retriever = dissent_retriever
+        self.flip_detector = flip_detector
+        self.calibration_tracker = calibration_tracker
+        self.continuum_memory = continuum_memory
+        self.relationship_tracker = relationship_tracker
+        self.moment_detector = moment_detector
+
+        # Auto-initialize MomentDetector when elo_system available but no detector provided
+        if self.moment_detector is None and self.elo_system:
+            self._auto_init_moment_detector()
 
         # Auto-upgrade to ELO-ranked judge selection when elo_system is available
         # Only upgrade from default "random" - don't override explicit user choice
         if self.elo_system and self.protocol.judge_selection == "random":
             self.protocol.judge_selection = "elo_ranked"
 
+    def _auto_init_moment_detector(self) -> None:
+        """Auto-initialize MomentDetector when elo_system is available."""
+        try:
+            from aragora.agents.grounded import MomentDetector as MD
+            self.moment_detector = MD(
+                elo_system=self.elo_system,
+                position_ledger=self.position_ledger,
+                relationship_tracker=self.relationship_tracker,
+            )
+            logger.debug("Auto-initialized MomentDetector for significant moment detection")
+        except ImportError:
+            pass  # MomentDetector not available
+        except Exception as e:
+            logger.debug("MomentDetector auto-init failed: %s", e)
+
+    def _init_user_participation(self) -> None:
+        """Initialize user participation tracking and event subscription."""
         # User participation tracking (thread-safe mailbox pattern)
         self._user_event_queue: queue.Queue = queue.Queue(maxsize=USER_EVENT_QUEUE_SIZE)
         # Use deque with maxlen for O(1) bounded queue operations
         self.user_votes: deque[dict] = deque(maxlen=USER_EVENT_QUEUE_SIZE)
         self.user_suggestions: deque[dict] = deque(maxlen=USER_EVENT_QUEUE_SIZE)
 
+        # Subscribe to user participation events if emitter provided
+        if self.event_emitter:
+            from aragora.server.stream import StreamEventType
+            self.event_emitter.subscribe(self._handle_user_event)
+
+    def _init_roles_and_stances(self) -> None:
+        """Initialize cognitive role rotation and agent stances."""
         # Cognitive role rotation (Heavy3-inspired)
         self.role_rotator: Optional[RoleRotator] = None
         self.current_role_assignments: dict[str, RoleAssignment] = {}
         if self.protocol.role_rotation:
             config = self.protocol.role_rotation_config or RoleRotationConfig()
             self.role_rotator = RoleRotator(config)
-
-        # Subscribe to user participation events if emitter provided
-        if event_emitter:
-            from aragora.server.stream import StreamEventType
-            event_emitter.subscribe(self._handle_user_event)
 
         # Assign roles if not already set
         self._assign_roles()
@@ -177,7 +266,8 @@ class Arena:
         # Apply agreement intensity guidance to all agents
         self._apply_agreement_intensity()
 
-        # Initialize convergence detector if enabled
+    def _init_convergence(self) -> None:
+        """Initialize convergence detection if enabled."""
         self.convergence_detector = None
         if self.protocol.convergence_detection:
             self.convergence_detector = ConvergenceDetector(
@@ -189,6 +279,8 @@ class Arena:
         # Track responses for convergence detection
         self._previous_round_responses: dict[str, str] = {}
 
+    def _init_caches(self) -> None:
+        """Initialize caches for computed values."""
         # Cache for historical context (computed once per debate)
         self._historical_context_cache: str = ""
 
@@ -200,19 +292,21 @@ class Arena:
 
         # Cache for continuum memory context (retrieved once per debate)
         self._continuum_context_cache: str = ""
-        self._continuum_retrieved_ids: list = []  # Track retrieved memory IDs for outcome updates
+        self._continuum_retrieved_ids: list = []
 
         # Cached similarity backend for vote grouping (avoids recreating per call)
         self._similarity_backend = None
 
+        # Cache for debate domain (computed once per debate)
+        self._debate_domain_cache: Optional[str] = None
+
+    def _init_phases(self) -> None:
+        """Initialize phase classes for orchestrator decomposition."""
         # Voting phase (handles vote grouping, weighted counting, consensus detection)
         self.voting_phase = VotingPhase(
             protocol=self.protocol,
             similarity_backend=None,  # Lazily initialized
         )
-
-        # Cache for debate domain (computed once per debate)
-        self._debate_domain_cache: Optional[str] = None
 
         # Citation extraction (Heavy3-inspired evidence grounding)
         self.citation_extractor = None
@@ -242,10 +336,6 @@ class Arena:
             spectator=self.spectator,
             loop_id=self.loop_id,
         )
-
-        # =====================================================================
-        # Initialize Phase Classes for Orchestrator Decomposition
-        # =====================================================================
 
         # Phase 0: Context Initialization
         self.context_initializer = ContextInitializer(

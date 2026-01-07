@@ -50,29 +50,47 @@ class AuditRequestParser:
     """Parse and validate audit request JSON bodies."""
 
     @staticmethod
-    def parse_capability_probe(handler, read_json_fn) -> tuple[Optional[dict], Optional[HandlerResult]]:
-        """Parse capability probe request.
-
-        Returns:
-            Tuple of (parsed_data, error_response). If error_response is not None,
-            return it immediately. Otherwise use parsed_data.
-        """
+    def _read_json(handler, read_json_fn) -> tuple[Optional[dict], Optional[HandlerResult]]:
+        """Read and validate JSON body."""
         data = read_json_fn(handler)
         if data is None:
             return None, error_response("Invalid JSON body", 400)
+        return data, None
 
-        agent_name = data.get('agent_name', '').strip()
-        if not agent_name:
-            return None, error_response("Missing required field: agent_name", 400)
+    @staticmethod
+    def _require_field(data: dict, field: str, validator=None) -> tuple[Optional[str], Optional[HandlerResult]]:
+        """Extract and validate a required string field."""
+        value = data.get(field, '').strip()
+        if not value:
+            return None, error_response(f"Missing required field: {field}", 400)
+        if validator:
+            is_valid, err = validator(value)
+            if not is_valid:
+                return None, error_response(err, 400)
+        return value, None
 
-        is_valid, err = validate_agent_name(agent_name)
-        if not is_valid:
-            return None, error_response(err, 400)
-
+    @staticmethod
+    def _parse_int(data: dict, field: str, default: int, max_val: int) -> tuple[int, Optional[HandlerResult]]:
+        """Parse and clamp an integer field."""
         try:
-            probes_per_type = min(int(data.get('probes_per_type', 3)), 10)
+            return min(int(data.get(field, default)), max_val), None
         except (ValueError, TypeError):
-            return None, error_response("probes_per_type must be an integer", 400)
+            return 0, error_response(f"{field} must be an integer", 400)
+
+    @staticmethod
+    def parse_capability_probe(handler, read_json_fn) -> tuple[Optional[dict], Optional[HandlerResult]]:
+        """Parse capability probe request."""
+        data, err = AuditRequestParser._read_json(handler, read_json_fn)
+        if err:
+            return None, err
+
+        agent_name, err = AuditRequestParser._require_field(data, 'agent_name', validate_agent_name)
+        if err:
+            return None, err
+
+        probes_per_type, err = AuditRequestParser._parse_int(data, 'probes_per_type', 3, 10)
+        if err:
+            return None, err
 
         return {
             'agent_name': agent_name,
@@ -85,26 +103,27 @@ class AuditRequestParser:
 
     @staticmethod
     def parse_deep_audit(handler, read_json_fn) -> tuple[Optional[dict], Optional[HandlerResult]]:
-        """Parse deep audit request.
+        """Parse deep audit request."""
+        data, err = AuditRequestParser._read_json(handler, read_json_fn)
+        if err:
+            return None, err
 
-        Returns:
-            Tuple of (parsed_data, error_response).
-        """
-        data = read_json_fn(handler)
-        if data is None:
-            return None, error_response("Invalid JSON body", 400)
-
-        task = data.get('task', '').strip()
-        if not task:
-            return None, error_response("Missing required field: task", 400)
+        task, err = AuditRequestParser._require_field(data, 'task')
+        if err:
+            return None, err
 
         config_data = data.get('config', {})
+        rounds, err = AuditRequestParser._parse_int(config_data, 'rounds', 6, 10)
+        if err:
+            return None, err
+        cross_exam, err = AuditRequestParser._parse_int(config_data, 'cross_examination_depth', 3, 10)
+        if err:
+            return None, err
+
         try:
-            rounds = min(int(config_data.get('rounds', 6)), 10)
-            cross_examination_depth = min(int(config_data.get('cross_examination_depth', 3)), 10)
             risk_threshold = float(config_data.get('risk_threshold', 0.7))
-        except (ValueError, TypeError) as e:
-            return None, error_response(f"Invalid config parameter: {e}", 400)
+        except (ValueError, TypeError):
+            return None, error_response("risk_threshold must be a number", 400)
 
         return {
             'task': task,
@@ -113,7 +132,7 @@ class AuditRequestParser:
             'model_type': data.get('model_type', 'anthropic-api'),
             'audit_type': config_data.get('audit_type', ''),
             'rounds': rounds,
-            'cross_examination_depth': cross_examination_depth,
+            'cross_examination_depth': cross_exam,
             'risk_threshold': risk_threshold,
             'enable_research': config_data.get('enable_research', True),
         }, None

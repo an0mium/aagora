@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.connectors.base import BaseConnector, Evidence
-from aragora.resilience import CircuitBreaker, get_circuit_breaker
+from aragora.resilience import CircuitBreaker
 
 logger = logging.getLogger(__name__)
 from aragora.reasoning.provenance import ProvenanceManager, SourceType
@@ -135,11 +135,11 @@ class WebConnector(BaseConnector):
         self.cache_dir.mkdir(exist_ok=True)
 
         # Circuit breaker for graceful failure handling
+        # Use provided circuit breaker or create a new local instance
         if circuit_breaker is not None:
             self._circuit_breaker = circuit_breaker
         elif enable_circuit_breaker:
-            self._circuit_breaker = get_circuit_breaker(
-                "web_connector",
+            self._circuit_breaker = CircuitBreaker(
                 failure_threshold=5,  # Higher threshold for web - transient errors common
                 cooldown_seconds=30.0,  # Shorter cooldown - web may recover quickly
             )

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Generator, Optional
 
 from aragora.config import DB_CALIBRATION_PATH
+from aragora.ranking.calibration_database import CalibrationDatabase
 from aragora.storage.schema import SchemaManager
 
 # Database connection timeout in seconds
@@ -119,16 +120,14 @@ class CalibrationTracker:
 
     def __init__(self, db_path: str = DB_CALIBRATION_PATH):
         self.db_path = Path(db_path)
+        self.db = CalibrationDatabase(db_path)
         self._init_db()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         """Initialize database tables using SchemaManager."""

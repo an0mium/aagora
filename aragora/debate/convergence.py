@@ -341,15 +341,21 @@ class ConvergenceDetector:
             backend = SentenceTransformerBackend()
             logger.info("Using SentenceTransformerBackend (best accuracy)")
             return backend
-        except (ImportError, RuntimeError, Exception) as e:
+        except ImportError as e:
             logger.debug(f"sentence-transformers not available: {e}")
+        except RuntimeError as e:
+            # RuntimeError can occur from transformers/Keras compatibility issues
+            logger.debug(f"sentence-transformers failed to initialize: {e}")
+        except OSError as e:
+            # OSError can occur when model files are corrupted or missing
+            logger.debug(f"sentence-transformers model error: {e}")
 
         # Try TF-IDF (good)
         try:
             backend = TFIDFBackend()
             logger.info("Using TFIDFBackend (good accuracy)")
             return backend
-        except (ImportError, RuntimeError, Exception) as e:
+        except ImportError as e:
             logger.debug(f"scikit-learn not available: {e}")
 
         # Fallback to Jaccard (always available)
@@ -435,7 +441,7 @@ class ConvergenceDetector:
             consecutive_stable_rounds=self.consecutive_stable_count,
         )
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the consecutive stable count."""
         self.consecutive_stable_count = 0
 
@@ -462,12 +468,16 @@ def get_similarity_backend(preferred: str = "auto") -> SimilarityBackend:
     # Auto-select best available
     try:
         return SentenceTransformerBackend()
-    except (ImportError, RuntimeError, Exception):
-        pass
+    except ImportError:
+        logger.debug("sentence-transformers not available for auto-select")
+    except RuntimeError as e:
+        logger.debug(f"sentence-transformers failed: {e}")
+    except OSError as e:
+        logger.debug(f"sentence-transformers model error: {e}")
 
     try:
         return TFIDFBackend()
-    except (ImportError, RuntimeError, Exception):
-        pass
+    except ImportError:
+        logger.debug("scikit-learn not available for auto-select")
 
     return JaccardBackend()

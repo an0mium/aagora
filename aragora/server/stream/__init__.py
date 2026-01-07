@@ -10,6 +10,7 @@ Main components:
 - state_manager: Debate and loop state management (DebateStateManager)
 - arena_hooks: Arena integration hooks (create_arena_hooks)
 - broadcaster: Client management and broadcasting utilities (WebSocketBroadcaster)
+- server_base: Common server functionality (ServerBase, ServerConfig)
 - servers: WebSocket and HTTP server classes (DebateStreamServer, AiohttpUnifiedServer)
 """
 
@@ -47,6 +48,10 @@ from .broadcaster import (
     DebateStateCache,
     LoopRegistry,
     WebSocketBroadcaster,
+)
+from .server_base import (
+    ServerBase,
+    ServerConfig,
 )
 from .servers import (
     DebateStreamServer,
@@ -103,6 +108,9 @@ __all__ = [
     "DebateStateCache",
     "LoopRegistry",
     "WebSocketBroadcaster",
+    # Server base
+    "ServerBase",
+    "ServerConfig",
     # Servers
     "DebateStreamServer",
     "AiohttpUnifiedServer",

@@ -14,6 +14,7 @@ from aragora.agents.api_agents.common import (
     Critique,
     get_api_key,
     _sanitize_error_message,
+    iter_chunks_with_timeout,
 )
 from aragora.agents.api_agents.rate_limiter import get_openrouter_limiter
 from aragora.agents.registry import AgentRegistry
@@ -245,7 +246,8 @@ class OpenRouterAgent(APIAgent):
 
                         # OpenRouter uses SSE format (OpenAI-compatible)
                         buffer = ""
-                        async for chunk in response.content.iter_any():
+                        # Use timeout wrapper to prevent hanging on stalled streams
+                        async for chunk in iter_chunks_with_timeout(response.content):
                             buffer += chunk.decode('utf-8', errors='ignore')
 
                             while '\n' in buffer:

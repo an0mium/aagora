@@ -6,13 +6,9 @@ import aiohttp
 import asyncio
 import json
 import logging
-import os
-from typing import TYPE_CHECKING, AsyncGenerator
+from typing import AsyncGenerator
 
 from aragora.agents.api_agents.base import APIAgent
-
-if TYPE_CHECKING:
-    from aragora.agents.api_agents.openrouter import OpenRouterAgent
 from aragora.agents.api_agents.common import (
     Message,
     Critique,
@@ -23,7 +19,9 @@ from aragora.agents.api_agents.common import (
     get_api_key,
     _sanitize_error_message,
     MAX_STREAM_BUFFER_SIZE,
+    iter_chunks_with_timeout,
 )
+from aragora.agents.fallback import QuotaFallbackMixin
 from aragora.agents.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
@@ -36,7 +34,7 @@ logger = logging.getLogger(__name__)
     env_vars="GEMINI_API_KEY or GOOGLE_API_KEY",
     accepts_api_key=True,
 )
-class GeminiAgent(APIAgent):
+class GeminiAgent(QuotaFallbackMixin, APIAgent):
     """Agent that uses Google Gemini API directly (not CLI).
 
     Note: The gemini CLI sends massive folder context by default and
@@ -44,9 +42,11 @@ class GeminiAgent(APIAgent):
 
     Supports automatic fallback to OpenRouter when Google API returns
     rate limit/quota errors.
+
+    Uses QuotaFallbackMixin for shared quota detection and fallback logic.
     """
 
-    # Model mapping from Gemini to OpenRouter format
+    # Model mapping from Gemini to OpenRouter format (used by QuotaFallbackMixin)
     OPENROUTER_MODEL_MAP = {
         "gemini-3-pro-preview": "google/gemini-2.0-flash-001",
         "gemini-3-pro": "google/gemini-2.0-flash-001",
@@ -57,6 +57,7 @@ class GeminiAgent(APIAgent):
         "gemini-1.5-flash": "google/gemini-flash-1.5",
         "gemini-pro": "google/gemini-pro",
     }
+    DEFAULT_FALLBACK_MODEL = "google/gemini-2.0-flash-001"
 
     def __init__(
         self,
@@ -77,48 +78,7 @@ class GeminiAgent(APIAgent):
         )
         self.agent_type = "gemini"
         self.enable_fallback = enable_fallback
-        self._fallback_agent = None  # Lazy-loaded OpenRouter fallback
-
-    def _get_fallback_agent(self) -> "OpenRouterAgent":
-        """Get or create the OpenRouter fallback agent for Gemini models."""
-        if self._fallback_agent is None:
-            # Lazy import to avoid circular dependency
-            from aragora.agents.api_agents.openrouter import OpenRouterAgent
-
-            # Map the model to OpenRouter format
-            openrouter_model = self.OPENROUTER_MODEL_MAP.get(
-                self.model, "google/gemini-2.0-flash-001"
-            )
-
-            self._fallback_agent = OpenRouterAgent(
-                name=f"{self.name}_fallback",
-                model=openrouter_model,
-                role=self.role,
-                system_prompt=self.system_prompt,
-                timeout=self.timeout,
-            )
-            logger.info(f"Created OpenRouter fallback agent with model {openrouter_model}")
-        return self._fallback_agent
-
-    def _is_gemini_quota_error(self, status_code: int, error_text: str) -> bool:
-        """Check if the error is a rate limit/quota error from Gemini."""
-        # 429 is rate limit, 403 can be quota exceeded
-        if status_code in (429, 403):
-            return True
-        # Check for quota-related messages in any error code
-        quota_keywords = [
-            "quota",
-            "rate limit",
-            "rate_limit",
-            "resource exhausted",
-            "resource_exhausted",
-            "too many requests",
-            "billing",
-            "exceeded",
-            "limit exceeded",
-        ]
-        error_lower = error_text.lower()
-        return any(kw in error_lower for kw in quota_keywords)
+        self._fallback_agent = None  # Cached by QuotaFallbackMixin
 
     @handle_agent_errors(
         max_retries=3,
@@ -163,21 +123,10 @@ class GeminiAgent(APIAgent):
                     sanitized = _sanitize_error_message(error_text)
 
                     # Check if this is a quota/rate limit error and fallback is enabled
-                    if self.enable_fallback and self._is_gemini_quota_error(
-                        response.status, error_text
-                    ):
-                        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-                        if openrouter_key:
-                            logger.warning(
-                                f"Gemini API quota/rate limit error (status {response.status}), "
-                                f"falling back to OpenRouter for {self.name}"
-                            )
-                            fallback = self._get_fallback_agent()
-                            return await fallback.generate(prompt, context)
-                        else:
-                            logger.warning(
-                                "Gemini quota exceeded but OPENROUTER_API_KEY not set - cannot fallback"
-                            )
+                    if self.is_quota_error(response.status, error_text):
+                        result = await self.fallback_generate(prompt, context, response.status)
+                        if result is not None:
+                            return result
 
                     raise RuntimeError(f"Gemini API error {response.status}: {sanitized}")
 
@@ -259,7 +208,8 @@ class GeminiAgent(APIAgent):
                 # Gemini streams as JSON array chunks
                 buffer = b""
                 try:
-                    async for chunk in response.content.iter_any():
+                    # Use timeout wrapper to prevent hanging on stalled streams
+                    async for chunk in iter_chunks_with_timeout(response.content):
                         buffer += chunk
                         # Prevent unbounded buffer growth (DoS protection)
                         if len(buffer) > MAX_STREAM_BUFFER_SIZE:

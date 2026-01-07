@@ -16,7 +16,17 @@ import logging
 import sqlite3
 from typing import Optional
 
-from aragora.config import DB_TIMEOUT_SECONDS
+from contextlib import contextmanager
+
+from aragora.config import (
+    DB_TIMEOUT_SECONDS,
+    CACHE_TTL_CONSENSUS_SIMILAR,
+    CACHE_TTL_CONSENSUS_SETTLED,
+    CACHE_TTL_CONSENSUS_STATS,
+    CACHE_TTL_RECENT_DISSENTS,
+    CACHE_TTL_CONTRARIAN_VIEWS,
+    CACHE_TTL_RISK_WARNINGS,
+)
 from .base import (
     BaseHandler,
     HandlerResult,
@@ -28,6 +38,16 @@ from .base import (
     ttl_cache,
 )
 from aragora.utils.optional_imports import try_import
+
+
+@contextmanager
+def _get_connection(db_path: str):
+    """Get a database connection with proper cleanup."""
+    conn = sqlite3.connect(db_path, timeout=DB_TIMEOUT_SECONDS)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +145,7 @@ class ConsensusHandler(BaseHandler):
 
         return None
 
-    @ttl_cache(ttl_seconds=240, key_prefix="consensus_similar", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_CONSENSUS_SIMILAR, key_prefix="consensus_similar", skip_first=True)
     def _get_similar_debates(self, topic: str, limit: int) -> HandlerResult:
         """Find debates similar to a topic."""
         if not CONSENSUS_MEMORY_AVAILABLE:
@@ -157,7 +177,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "similar_topics"), 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="consensus_settled", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_CONSENSUS_SETTLED, key_prefix="consensus_settled", skip_first=True)
     def _get_settled_topics(self, min_confidence: float, limit: int) -> HandlerResult:
         """Get high-confidence settled topics."""
         if not CONSENSUS_MEMORY_AVAILABLE:
@@ -165,7 +185,7 @@ class ConsensusHandler(BaseHandler):
 
         try:
             memory = ConsensusMemory()
-            with sqlite3.connect(memory.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with _get_connection(memory.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT topic, conclusion, confidence, strength, timestamp
@@ -193,7 +213,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "settled_topics"), 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="consensus_stats", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_CONSENSUS_STATS, key_prefix="consensus_stats", skip_first=True)
     def _get_consensus_stats(self) -> HandlerResult:
         """Get consensus memory statistics."""
         if not CONSENSUS_MEMORY_AVAILABLE:
@@ -203,7 +223,7 @@ class ConsensusHandler(BaseHandler):
             memory = ConsensusMemory()
             raw_stats = memory.get_statistics()
 
-            with sqlite3.connect(memory.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with _get_connection(memory.db_path) as conn:
                 cursor = conn.cursor()
                 # Combined query for better performance
                 cursor.execute("""
@@ -228,7 +248,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "consensus_stats"), 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="recent_dissents", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_RECENT_DISSENTS, key_prefix="recent_dissents", skip_first=True)
     def _get_recent_dissents(
         self, topic: Optional[str], domain: Optional[str], limit: int
     ) -> HandlerResult:
@@ -239,7 +259,7 @@ class ConsensusHandler(BaseHandler):
         try:
             memory = ConsensusMemory()
 
-            with sqlite3.connect(memory.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with _get_connection(memory.db_path) as conn:
                 cursor = conn.cursor()
                 query = """
                     SELECT d.data, c.topic, c.conclusion
@@ -274,7 +294,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "recent_dissents"), 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="contrarian_views", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_CONTRARIAN_VIEWS, key_prefix="contrarian_views", skip_first=True)
     def _get_contrarian_views(
         self, topic: Optional[str], domain: Optional[str], limit: int
     ) -> HandlerResult:
@@ -289,7 +309,7 @@ class ConsensusHandler(BaseHandler):
                 retriever = DissentRetriever(memory)
                 records = retriever.find_contrarian_views(topic, domain=domain, limit=limit)
             else:
-                with sqlite3.connect(memory.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+                with _get_connection(memory.db_path) as conn:
                     cursor = conn.cursor()
                     query = """
                         SELECT data FROM dissent
@@ -323,7 +343,7 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "contrarian_views"), 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="risk_warnings", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_RISK_WARNINGS, key_prefix="risk_warnings", skip_first=True)
     def _get_risk_warnings(
         self, topic: Optional[str], domain: Optional[str], limit: int
     ) -> HandlerResult:
@@ -338,7 +358,7 @@ class ConsensusHandler(BaseHandler):
                 retriever = DissentRetriever(memory)
                 records = retriever.find_risk_warnings(topic, domain=domain, limit=limit)
             else:
-                with sqlite3.connect(memory.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+                with _get_connection(memory.db_path) as conn:
                     cursor = conn.cursor()
                     query = """
                         SELECT data FROM dissent

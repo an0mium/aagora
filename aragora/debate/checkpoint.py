@@ -834,22 +834,22 @@ class CheckpointWebhook:
             "on_intervention": [],
         }
 
-    def on_checkpoint(self, handler: Callable):
+    def on_checkpoint(self, handler: Callable) -> Callable:
         """Register checkpoint creation handler."""
         self.handlers["on_checkpoint"].append(handler)
         return handler
 
-    def on_resume(self, handler: Callable):
+    def on_resume(self, handler: Callable) -> Callable:
         """Register resume handler."""
         self.handlers["on_resume"].append(handler)
         return handler
 
-    def on_intervention(self, handler: Callable):
+    def on_intervention(self, handler: Callable) -> Callable:
         """Register intervention handler."""
         self.handlers["on_intervention"].append(handler)
         return handler
 
-    async def emit(self, event: str, data: dict):
+    async def emit(self, event: str, data: dict) -> None:
         """Emit event to all handlers."""
         for handler in self.handlers.get(event, []):
             try:

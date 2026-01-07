@@ -4,15 +4,14 @@ Base class for API-based agents.
 
 from aragora.agents.base import CritiqueMixin
 from aragora.core import Agent, Message
-from aragora.resilience import CircuitBreaker, get_circuit_breaker
+from aragora.resilience import CircuitBreaker
 
 
 class APIAgent(CritiqueMixin, Agent):
     """Base class for API-based agents.
 
     Includes circuit breaker protection for graceful failure handling.
-    The circuit breaker is shared across instances with the same name
-    via the global registry.
+    Supports dependency injection of circuit breaker for better testability.
     """
 
     def __init__(
@@ -33,12 +32,12 @@ class APIAgent(CritiqueMixin, Agent):
         self.agent_type = "api"  # Default for API agents
         self.enable_circuit_breaker = enable_circuit_breaker
 
-        # Use provided circuit breaker or get from global registry
+        # Use provided circuit breaker or create a new local instance
+        # This avoids global state and improves testability
         if circuit_breaker is not None:
             self._circuit_breaker = circuit_breaker
         elif enable_circuit_breaker:
-            self._circuit_breaker = get_circuit_breaker(
-                f"agent_{name}",
+            self._circuit_breaker = CircuitBreaker(
                 failure_threshold=3,
                 cooldown_seconds=60.0,
             )

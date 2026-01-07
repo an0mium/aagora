@@ -2,10 +2,19 @@
 Base utilities for creating agents.
 """
 
+from __future__ import annotations
+
 import re
-from typing import Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 from aragora.core import Critique, Message
+
+if TYPE_CHECKING:
+    from aragora.agents.api_agents import APIAgent
+    from aragora.agents.cli_agents import CLIAgent
+
+    # Type alias for agent instances
+    Agent = Union[APIAgent, CLIAgent]
 
 
 # Context window limits (in characters, ~4 chars per token)
@@ -27,7 +36,7 @@ class CritiqueMixin:
         self,
         context: list[Message] | None = None,
         truncate: bool = False,
-        sanitize_fn=None,
+        sanitize_fn: Any = None,
     ) -> str:
         """Build context from previous messages.
 
@@ -163,7 +172,7 @@ def create_agent(
     role: str = "proposer",
     model: str | None = None,
     api_key: str | None = None,
-):
+) -> "Agent":
     """
     Factory function to create agents by type.
 
@@ -178,7 +187,7 @@ def create_agent(
         api_key: API key for API-based agents (optional, uses env vars)
 
     Returns:
-        Agent instance
+        Agent instance (either CLIAgent or APIAgent)
 
     Raises:
         ValueError: If model_type is not registered
@@ -197,10 +206,11 @@ def create_agent(
     )
 
 
-def list_available_agents() -> dict:
+def list_available_agents() -> dict[str, dict[str, Any]]:
     """List all available agent types and their requirements.
 
-    Returns data from the AgentRegistry.
+    Returns:
+        Dict mapping agent type names to their specifications
     """
     from aragora.agents.registry import AgentRegistry, register_all_agents
 

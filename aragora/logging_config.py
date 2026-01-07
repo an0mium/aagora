@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 from contextvars import ContextVar
@@ -257,13 +258,14 @@ def clear_context() -> None:
     _log_context.set({})
 
 
-# Logger cache
+# Logger cache (thread-safe)
 _loggers: Dict[str, StructuredLogger] = {}
+_loggers_lock = threading.Lock()
 
 
 def get_logger(name: str) -> StructuredLogger:
     """
-    Get or create a structured logger by name.
+    Get or create a structured logger by name (thread-safe).
 
     Args:
         name: Logger name (typically __name__)
@@ -271,9 +273,10 @@ def get_logger(name: str) -> StructuredLogger:
     Returns:
         StructuredLogger instance
     """
-    if name not in _loggers:
-        _loggers[name] = StructuredLogger(name)
-    return _loggers[name]
+    with _loggers_lock:
+        if name not in _loggers:
+            _loggers[name] = StructuredLogger(name)
+        return _loggers[name]
 
 
 def configure_logging(

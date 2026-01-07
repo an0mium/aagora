@@ -18,53 +18,9 @@ from typing import Optional
 from aragora.export.artifact import DebateArtifact
 
 
-class StaticHTMLExporter:
-    """Generates self-contained HTML debate viewers."""
-
-    def __init__(self, artifact: DebateArtifact):
-        self.artifact = artifact
-
-    def generate(self) -> str:
-        """Generate the complete HTML document."""
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>aragora Debate: {self._escape(self.artifact.task[:50])}...</title>
-    {self._generate_styles()}
-</head>
-<body>
-    <div id="app">
-        {self._generate_header()}
-        {self._generate_task_section()}
-        {self._generate_tabs()}
-        <div id="tab-content">
-            {self._generate_graph_view()}
-            {self._generate_timeline_view()}
-            {self._generate_provenance_view()}
-            {self._generate_verification_view()}
-        </div>
-        {self._generate_stats()}
-        {self._generate_footer()}
-    </div>
-    {self._generate_scripts()}
-</body>
-</html>"""
-
-    def _escape(self, text: str) -> str:
-        """Escape HTML special characters."""
-        return (text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&#39;"))
-
-    def _generate_styles(self) -> str:
-        """Generate embedded CSS."""
-        return """<style>
-:root {
+# Embedded CSS styles for the HTML viewer
+# Extracted from _generate_styles() for better organization and maintainability
+_STYLES_CSS = """:root {
     --primary: #6366f1;
     --primary-dark: #4f46e5;
     --secondary: #8b5cf6;
@@ -547,8 +503,55 @@ footer a {
     .stats {
         grid-template-columns: repeat(2, 1fr);
     }
-}
-</style>"""
+}"""
+
+
+class StaticHTMLExporter:
+    """Generates self-contained HTML debate viewers."""
+
+    def __init__(self, artifact: DebateArtifact):
+        self.artifact = artifact
+
+    def generate(self) -> str:
+        """Generate the complete HTML document."""
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>aragora Debate: {self._escape(self.artifact.task[:50])}...</title>
+    {self._generate_styles()}
+</head>
+<body>
+    <div id="app">
+        {self._generate_header()}
+        {self._generate_task_section()}
+        {self._generate_tabs()}
+        <div id="tab-content">
+            {self._generate_graph_view()}
+            {self._generate_timeline_view()}
+            {self._generate_provenance_view()}
+            {self._generate_verification_view()}
+        </div>
+        {self._generate_stats()}
+        {self._generate_footer()}
+    </div>
+    {self._generate_scripts()}
+</body>
+</html>"""
+
+    def _escape(self, text: str) -> str:
+        """Escape HTML special characters."""
+        return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
+
+    def _generate_styles(self) -> str:
+        """Generate embedded CSS from module-level constant."""
+        return f"<style>{_STYLES_CSS}</style>"
 
     def _generate_header(self) -> str:
         """Generate header section."""

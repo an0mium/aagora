@@ -462,13 +462,14 @@ class DatabaseManager:
                     conn.execute("SELECT 1")
                     self._pool_stats["hits"] += 1
                     return conn
-                except sqlite3.Error:
+                except sqlite3.Error as e:
                     # Connection is broken, discard and try next
+                    logger.debug(f"Pooled connection validation failed, discarding: {e}")
                     self._pool_stats["closed"] += 1
                     try:
                         conn.close()
-                    except Exception:
-                        pass
+                    except sqlite3.Error as close_err:
+                        logger.debug(f"Error closing broken pooled connection: {close_err}")
 
             # No valid pooled connections, create new one
             self._pool_stats["misses"] += 1
@@ -495,8 +496,8 @@ class DatabaseManager:
         self._pool_stats["closed"] += 1
         try:
             conn.close()
-        except Exception as e:
-            logger.debug(f"Error closing connection: {e}")
+        except sqlite3.Error as e:
+            logger.debug(f"Error closing excess pooled connection: {e}")
 
     def pool_stats(self) -> dict[str, int]:
         """Get connection pool statistics.
@@ -731,7 +732,7 @@ class DatabaseManager:
                 try:
                     self._conn.close()
                     logger.debug(f"Closed connection to {self.db_path}")
-                except Exception as e:
+                except sqlite3.Error as e:
                     logger.warning(f"Error closing connection to {self.db_path}: {e}")
                 finally:
                     self._conn = None
@@ -742,7 +743,7 @@ class DatabaseManager:
             for conn in self._pool:
                 try:
                     conn.close()
-                except Exception as e:
+                except sqlite3.Error as e:
                     logger.debug(f"Error closing pooled connection: {e}")
             self._pool.clear()
             if pool_size > 0:
@@ -1054,7 +1055,7 @@ class ConnectionPool:
             for conn in self._idle:
                 try:
                     conn.close()
-                except Exception as e:
+                except sqlite3.Error as e:
                     logger.warning(f"Error closing pooled connection: {e}")
 
             self._idle.clear()

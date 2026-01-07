@@ -187,21 +187,21 @@ class SimpleMetrics:
     histograms: Dict[str, list] = field(default_factory=dict)
     info: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
-    def inc_counter(self, name: str, labels: Dict[str, str] | None = None, value: float = 1):
+    def inc_counter(self, name: str, labels: Dict[str, str] | None = None, value: float = 1) -> None:
         key = self._make_key(name, labels)
         self.counters[key] = self.counters.get(key, 0) + value
 
-    def set_gauge(self, name: str, value: float, labels: Dict[str, str] | None = None):
+    def set_gauge(self, name: str, value: float, labels: Dict[str, str] | None = None) -> None:
         key = self._make_key(name, labels)
         self.gauges[key] = value
 
-    def observe_histogram(self, name: str, value: float, labels: Dict[str, str] | None = None):
+    def observe_histogram(self, name: str, value: float, labels: Dict[str, str] | None = None) -> None:
         key = self._make_key(name, labels)
         if key not in self.histograms:
             self.histograms[key] = []
         self.histograms[key].append(value)
 
-    def set_info(self, name: str, info: Dict[str, str]):
+    def set_info(self, name: str, info: Dict[str, str]) -> None:
         self.info[name] = info
 
     def _make_key(self, name: str, labels: Dict[str, str] | None = None) -> str:
@@ -271,7 +271,7 @@ def record_debate_completed(
     rounds_used: int,
     outcome: str,  # "consensus", "no_consensus", "error", "timeout"
     agent_count: int,
-):
+) -> None:
     """Record a completed debate."""
     if PROMETHEUS_AVAILABLE:
         DEBATE_DURATION.labels(outcome=outcome, agent_count=str(agent_count)).observe(duration_seconds)
@@ -286,7 +286,7 @@ def record_debate_completed(
         _simple_metrics.inc_counter("aragora_debates_total", {"outcome": outcome})
 
 
-def record_tokens_used(model: str, input_tokens: int, output_tokens: int):
+def record_tokens_used(model: str, input_tokens: int, output_tokens: int) -> None:
     """Record token usage."""
     if PROMETHEUS_AVAILABLE:
         DEBATE_TOKENS.labels(model=model, direction="input").inc(input_tokens)
@@ -304,7 +304,7 @@ def record_tokens_used(model: str, input_tokens: int, output_tokens: int):
         )
 
 
-def record_agent_generation(agent_type: str, model: str, duration_seconds: float):
+def record_agent_generation(agent_type: str, model: str, duration_seconds: float) -> None:
     """Record agent generation time."""
     if PROMETHEUS_AVAILABLE:
         AGENT_GENERATION_DURATION.labels(agent_type=agent_type, model=model).observe(duration_seconds)
@@ -316,7 +316,7 @@ def record_agent_generation(agent_type: str, model: str, duration_seconds: float
         )
 
 
-def record_agent_failure(agent_type: str, error_type: str):
+def record_agent_failure(agent_type: str, error_type: str) -> None:
     """Record an agent failure."""
     if PROMETHEUS_AVAILABLE:
         AGENT_FAILURES.labels(agent_type=agent_type, error_type=error_type).inc()
@@ -327,7 +327,7 @@ def record_agent_failure(agent_type: str, error_type: str):
         )
 
 
-def set_circuit_breaker_state(agent_type: str, state: int):
+def set_circuit_breaker_state(agent_type: str, state: int) -> None:
     """Set circuit breaker state (0=closed, 1=open, 2=half-open)."""
     if PROMETHEUS_AVAILABLE:
         AGENT_CIRCUIT_BREAKER.labels(agent_type=agent_type).set(state)
@@ -339,7 +339,7 @@ def set_circuit_breaker_state(agent_type: str, state: int):
         )
 
 
-def record_http_request(method: str, endpoint: str, status: int, duration_seconds: float):
+def record_http_request(method: str, endpoint: str, status: int, duration_seconds: float) -> None:
     """Record an HTTP request."""
     if PROMETHEUS_AVAILABLE:
         HTTP_REQUEST_DURATION.labels(
@@ -360,7 +360,7 @@ def record_http_request(method: str, endpoint: str, status: int, duration_second
         )
 
 
-def set_websocket_connections(count: int):
+def set_websocket_connections(count: int) -> None:
     """Set active WebSocket connection count."""
     if PROMETHEUS_AVAILABLE:
         WEBSOCKET_CONNECTIONS.set(count)
@@ -368,7 +368,7 @@ def set_websocket_connections(count: int):
         _simple_metrics.set_gauge("aragora_websocket_connections_active", count)
 
 
-def record_websocket_message(direction: str, message_type: str):
+def record_websocket_message(direction: str, message_type: str) -> None:
     """Record a WebSocket message."""
     if PROMETHEUS_AVAILABLE:
         WEBSOCKET_MESSAGES.labels(direction=direction, message_type=message_type).inc()
@@ -379,7 +379,7 @@ def record_websocket_message(direction: str, message_type: str):
         )
 
 
-def record_rate_limit_hit(limit_type: str):
+def record_rate_limit_hit(limit_type: str) -> None:
     """Record a rate limit hit."""
     if PROMETHEUS_AVAILABLE:
         RATE_LIMIT_HITS.labels(limit_type=limit_type).inc()
@@ -387,7 +387,7 @@ def record_rate_limit_hit(limit_type: str):
         _simple_metrics.inc_counter("aragora_rate_limit_hits_total", {"limit_type": limit_type})
 
 
-def set_rate_limit_tokens_tracked(count: int):
+def set_rate_limit_tokens_tracked(count: int) -> None:
     """Set number of tokens being tracked for rate limiting."""
     if PROMETHEUS_AVAILABLE:
         RATE_LIMIT_TOKENS_TRACKED.set(count)
@@ -395,7 +395,7 @@ def set_rate_limit_tokens_tracked(count: int):
         _simple_metrics.set_gauge("aragora_rate_limit_tokens_tracked", count)
 
 
-def set_cache_size(cache_name: str, size: int):
+def set_cache_size(cache_name: str, size: int) -> None:
     """Set cache size."""
     if PROMETHEUS_AVAILABLE:
         CACHE_SIZE.labels(cache_name=cache_name).set(size)
@@ -403,7 +403,7 @@ def set_cache_size(cache_name: str, size: int):
         _simple_metrics.set_gauge("aragora_cache_size_entries", size, {"cache_name": cache_name})
 
 
-def record_cache_hit(cache_name: str):
+def record_cache_hit(cache_name: str) -> None:
     """Record a cache hit."""
     if PROMETHEUS_AVAILABLE:
         CACHE_HITS.labels(cache_name=cache_name).inc()
@@ -411,7 +411,7 @@ def record_cache_hit(cache_name: str):
         _simple_metrics.inc_counter("aragora_cache_hits_total", {"cache_name": cache_name})
 
 
-def record_cache_miss(cache_name: str):
+def record_cache_miss(cache_name: str) -> None:
     """Record a cache miss."""
     if PROMETHEUS_AVAILABLE:
         CACHE_MISSES.labels(cache_name=cache_name).inc()
@@ -419,7 +419,7 @@ def record_cache_miss(cache_name: str):
         _simple_metrics.inc_counter("aragora_cache_misses_total", {"cache_name": cache_name})
 
 
-def set_server_info(version: str, python_version: str, start_time: float):
+def set_server_info(version: str, python_version: str, start_time: float) -> None:
     """Set server information."""
     if PROMETHEUS_AVAILABLE:
         ARAGORA_INFO.info({
@@ -435,7 +435,7 @@ def set_server_info(version: str, python_version: str, start_time: float):
         })
 
 
-def record_db_query(operation: str, table: str, duration_seconds: float):
+def record_db_query(operation: str, table: str, duration_seconds: float) -> None:
     """Record a database query.
 
     Args:
@@ -458,7 +458,7 @@ def record_db_query(operation: str, table: str, duration_seconds: float):
         )
 
 
-def record_db_error(error_type: str, operation: str):
+def record_db_error(error_type: str, operation: str) -> None:
     """Record a database error.
 
     Args:
@@ -474,7 +474,7 @@ def record_db_error(error_type: str, operation: str):
         )
 
 
-def set_db_pool_size(active: int, idle: int):
+def set_db_pool_size(active: int, idle: int) -> None:
     """Set database connection pool sizes.
 
     Args:

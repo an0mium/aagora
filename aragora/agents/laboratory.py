@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Generator, Optional
 
 from aragora.config import DB_LAB_PATH
+from aragora.insights.database import InsightsDatabase
 from aragora.agents.personas import (
     Persona,
     PersonaManager,
@@ -124,16 +125,14 @@ class PersonaLaboratory:
     ):
         self.persona_manager = persona_manager
         self.db_path = Path(db_path)
+        self.db = InsightsDatabase(db_path)
         self._init_db()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self):
         """Initialize laboratory database schema."""

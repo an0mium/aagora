@@ -42,7 +42,7 @@ class PromptBuilder:
         persona_manager: Optional["PersonaManager"] = None,
         flip_detector: Optional["FlipDetector"] = None,
         evidence_pack: Optional["EvidencePack"] = None,
-    ):
+    ) -> None:
         """Initialize prompt builder with debate context.
 
         Args:

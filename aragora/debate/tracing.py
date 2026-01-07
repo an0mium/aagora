@@ -17,12 +17,13 @@ Usage:
 import asyncio
 import contextvars
 import logging
+import threading
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 # Use structured logging if available
 try:
@@ -199,8 +200,8 @@ class Tracer:
         name: str,
         parent: Optional[Span] = None,
         trace_id: Optional[str] = None,
-        **attributes,
-    ):
+        **attributes: Any,
+    ) -> Generator[Span, None, None]:
         """
         Create a span context manager.
 
@@ -335,14 +336,14 @@ def get_debate_id() -> Optional[str]:
     return get_debate_context().get("debate_id")
 
 
-def with_debate_context(debate_id: str):
+def with_debate_context(debate_id: str) -> Callable[[Callable], Callable]:
     """Decorator to set debate context for a function."""
-    def decorator(func: Callable):
-        async def async_wrapper(*args, **kwargs):
+    def decorator(func: Callable) -> Callable:
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             set_debate_context(debate_id)
             return await func(*args, **kwargs)
 
-        def sync_wrapper(*args, **kwargs):
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             set_debate_context(debate_id)
             return func(*args, **kwargs)
 
@@ -355,10 +356,10 @@ def with_debate_context(debate_id: str):
 # Convenience decorators for common operations
 
 
-def trace_agent_call(operation: str):
+def trace_agent_call(operation: str) -> Callable[[Callable], Callable]:
     """Decorator for tracing agent calls (proposal, critique, vote, etc.)."""
-    def decorator(func: Callable):
-        async def async_wrapper(self, agent, *args, **kwargs):
+    def decorator(func: Callable) -> Callable:
+        async def async_wrapper(self: Any, agent: Any, *args: Any, **kwargs: Any) -> Any:
             tracer = get_tracer()
             with tracer.span(
                 f"agent.{operation}",
@@ -375,7 +376,7 @@ def trace_agent_call(operation: str):
                     span.set_attribute("success", False)
                     raise
 
-        def sync_wrapper(self, agent, *args, **kwargs):
+        def sync_wrapper(self: Any, agent: Any, *args: Any, **kwargs: Any) -> Any:
             tracer = get_tracer()
             with tracer.span(
                 f"agent.{operation}",
@@ -398,13 +399,13 @@ def trace_agent_call(operation: str):
     return decorator
 
 
-def trace_round(round_num: int):
+def trace_round(round_num: int) -> Generator[Span, None, None]:
     """Context manager for tracing a debate round."""
     tracer = get_tracer()
     return tracer.span("debate.round", round_number=round_num)
 
 
-def trace_phase(phase: str, round_num: int):
+def trace_phase(phase: str, round_num: int) -> Generator[Span, None, None]:
     """Context manager for tracing a debate phase (proposal, critique, etc.)."""
     tracer = get_tracer()
     return tracer.span(f"debate.phase.{phase}", round_number=round_num, phase=phase)
@@ -456,20 +457,23 @@ class DebateMetrics:
         }
 
 
-# Metrics storage
+# Metrics storage (thread-safe)
 _debate_metrics: Dict[str, DebateMetrics] = {}
+_debate_metrics_lock = threading.Lock()
 
 
 def get_metrics(debate_id: str) -> DebateMetrics:
-    """Get or create metrics for a debate."""
-    if debate_id not in _debate_metrics:
-        _debate_metrics[debate_id] = DebateMetrics(debate_id=debate_id)
-    return _debate_metrics[debate_id]
+    """Get or create metrics for a debate (thread-safe)."""
+    with _debate_metrics_lock:
+        if debate_id not in _debate_metrics:
+            _debate_metrics[debate_id] = DebateMetrics(debate_id=debate_id)
+        return _debate_metrics[debate_id]
 
 
 def clear_metrics(debate_id: Optional[str] = None) -> None:
-    """Clear metrics for a debate or all debates."""
-    if debate_id:
-        _debate_metrics.pop(debate_id, None)
-    else:
-        _debate_metrics.clear()
+    """Clear metrics for a debate or all debates (thread-safe)."""
+    with _debate_metrics_lock:
+        if debate_id:
+            _debate_metrics.pop(debate_id, None)
+        else:
+            _debate_metrics.clear()

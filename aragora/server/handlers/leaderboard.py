@@ -10,7 +10,16 @@ This reduces frontend latency by 80% (1 request instead of 6).
 import logging
 from typing import Optional
 
-from aragora.config import DB_PERSONAS_PATH
+from aragora.config import (
+    DB_PERSONAS_PATH,
+    CACHE_TTL_LB_RANKINGS,
+    CACHE_TTL_LB_MATCHES,
+    CACHE_TTL_LB_REPUTATION,
+    CACHE_TTL_LB_TEAMS,
+    CACHE_TTL_LB_STATS,
+    CACHE_TTL_LB_INTROSPECTION,
+)
+from aragora.persistence.db_config import DatabaseType, get_db_path
 
 logger = logging.getLogger(__name__)
 from .base import (
@@ -117,7 +126,7 @@ class LeaderboardViewHandler(BaseHandler):
             }
         })
 
-    @ttl_cache(ttl_seconds=300, key_prefix="lb_rankings", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LB_RANKINGS, key_prefix="lb_rankings", skip_first=True)
     def _fetch_rankings(self, limit: int, domain: Optional[str]) -> dict:
         """Fetch agent rankings with consistency scores."""
         elo = self.get_elo_system()
@@ -136,7 +145,7 @@ class LeaderboardViewHandler(BaseHandler):
             from aragora.insights.flip_detector import FlipDetector
             nomic_dir = self.get_nomic_dir()
             if nomic_dir:
-                detector = FlipDetector(str(nomic_dir / "grounded_positions.db"))
+                detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
                 agent_names = []
                 for agent in rankings:
                     name = agent.get("name") if isinstance(agent, dict) else getattr(agent, "name", None)
@@ -179,7 +188,7 @@ class LeaderboardViewHandler(BaseHandler):
 
         return {"agents": enhanced, "count": len(enhanced)}
 
-    @ttl_cache(ttl_seconds=120, key_prefix="lb_matches", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LB_MATCHES, key_prefix="lb_matches", skip_first=True)
     def _fetch_matches(self, limit: int, loop_id: Optional[str]) -> dict:
         """Fetch recent matches."""
         elo = self.get_elo_system()
@@ -193,7 +202,7 @@ class LeaderboardViewHandler(BaseHandler):
 
         return {"matches": matches, "count": len(matches)}
 
-    @ttl_cache(ttl_seconds=300, key_prefix="lb_reputation", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LB_REPUTATION, key_prefix="lb_reputation", skip_first=True)
     def _fetch_reputations(self) -> dict:
         """Fetch all agent reputations."""
         try:
@@ -202,8 +211,10 @@ class LeaderboardViewHandler(BaseHandler):
             return {"reputations": [], "count": 0}
 
         nomic_dir = self.get_nomic_dir()
-        db_path = nomic_dir / "debates.db" if nomic_dir else None
-        if not db_path or not db_path.exists():
+        if not nomic_dir:
+            return {"reputations": [], "count": 0}
+        db_path = get_db_path(DatabaseType.AGORA_MEMORY, nomic_dir)
+        if not db_path.exists():
             return {"reputations": [], "count": 0}
 
         store = CritiqueStore(str(db_path))
@@ -224,7 +235,7 @@ class LeaderboardViewHandler(BaseHandler):
             "count": len(reputations),
         }
 
-    @ttl_cache(ttl_seconds=600, key_prefix="lb_teams", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LB_TEAMS, key_prefix="lb_teams", skip_first=True)
     def _fetch_teams(self, min_debates: int, limit: int) -> dict:
         """Fetch best team combinations."""
         try:
@@ -238,7 +249,7 @@ class LeaderboardViewHandler(BaseHandler):
 
         return {"combinations": combinations, "count": len(combinations)}
 
-    @ttl_cache(ttl_seconds=900, key_prefix="lb_stats", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LB_STATS, key_prefix="lb_stats", skip_first=True)
     def _fetch_stats(self) -> dict:
         """Fetch ranking statistics."""
         elo = self.get_elo_system()
@@ -261,7 +272,7 @@ class LeaderboardViewHandler(BaseHandler):
             "trending_down": stats.get("trending_down", []),
         }
 
-    @ttl_cache(ttl_seconds=600, key_prefix="lb_introspection", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_LB_INTROSPECTION, key_prefix="lb_introspection", skip_first=True)
     def _fetch_introspection(self) -> dict:
         """Fetch agent introspection data."""
         try:
@@ -275,11 +286,12 @@ class LeaderboardViewHandler(BaseHandler):
         # Get known agents from reputation store
         agents = []
         memory = None
-        db_path = nomic_dir / "debates.db" if nomic_dir else None
-        if db_path and db_path.exists():
-            memory = CritiqueStore(str(db_path))
-            reputations = memory.get_all_reputations()
-            agents = [r.agent_name for r in reputations]
+        if nomic_dir:
+            db_path = get_db_path(DatabaseType.AGORA_MEMORY, nomic_dir)
+            if db_path.exists():
+                memory = CritiqueStore(str(db_path))
+                reputations = memory.get_all_reputations()
+                agents = [r.agent_name for r in reputations]
 
         if not agents:
             agents = ["gemini", "claude", "codex", "grok", "deepseek"]
@@ -288,9 +300,10 @@ class LeaderboardViewHandler(BaseHandler):
         persona_manager = None
         try:
             from aragora.agents.personas import PersonaManager
-            persona_db = nomic_dir / DB_PERSONAS_PATH if nomic_dir else None
-            if persona_db and persona_db.exists():
-                persona_manager = PersonaManager(str(persona_db))
+            if nomic_dir:
+                persona_db = get_db_path(DatabaseType.PERSONAS, nomic_dir)
+                if persona_db.exists():
+                    persona_manager = PersonaManager(str(persona_db))
         except ImportError:
             pass
 

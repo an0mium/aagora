@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Generator, Optional
 
 from aragora.agents.personas import EXPERTISE_DOMAINS, PERSONALITY_TRAITS
+from aragora.genesis.database import GenesisDatabase
 from aragora.genesis.genome import AgentGenome, GenomeStore, generate_genome_id
 
 # Database connection timeout in seconds
@@ -351,6 +352,7 @@ class PopulationManager:
                  max_population_size: int = 8):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = GenesisDatabase(db_path)
         self.max_population_size = max_population_size
         self.genome_store = GenomeStore(db_path)
         self.breeder = GenomeBreeder()
@@ -359,11 +361,8 @@ class PopulationManager:
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self) -> None:
         """Initialize population tables."""

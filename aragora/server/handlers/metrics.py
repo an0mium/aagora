@@ -10,6 +10,7 @@ Endpoints:
 
 import os
 import platform
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,17 +26,19 @@ from ..prometheus import (
 )
 
 
-# Request tracking for metrics
+# Request tracking for metrics (thread-safe)
 _request_counts: dict[str, int] = {}
 _error_counts: dict[str, int] = {}
+_metrics_lock = threading.Lock()
 _start_time = time.time()
 
 
 def track_request(endpoint: str, is_error: bool = False):
-    """Track a request for metrics."""
-    _request_counts[endpoint] = _request_counts.get(endpoint, 0) + 1
-    if is_error:
-        _error_counts[endpoint] = _error_counts.get(endpoint, 0) + 1
+    """Track a request for metrics (thread-safe)."""
+    with _metrics_lock:
+        _request_counts[endpoint] = _request_counts.get(endpoint, 0) + 1
+        if is_error:
+            _error_counts[endpoint] = _error_counts.get(endpoint, 0) + 1
 
 
 class MetricsHandler(BaseHandler):
@@ -103,14 +106,18 @@ class MetricsHandler(BaseHandler):
         try:
             uptime = time.time() - _start_time
 
-            # Calculate request rates
-            total_requests = sum(_request_counts.values())
-            total_errors = sum(_error_counts.values())
+            # Calculate request rates (thread-safe snapshot)
+            with _metrics_lock:
+                total_requests = sum(_request_counts.values())
+                total_errors = sum(_error_counts.values())
+                # Take snapshot of counts for sorting
+                counts_snapshot = list(_request_counts.items())
+
             error_rate = total_errors / total_requests if total_requests > 0 else 0.0
 
             # Top endpoints by request count
             top_endpoints = sorted(
-                _request_counts.items(),
+                counts_snapshot,
                 key=lambda x: x[1],
                 reverse=True
             )[:10]

@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Any, Generator, Optional
 
 from aragora.utils.json_helpers import safe_json_loads
+from aragora.insights.database import InsightsDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -281,16 +282,14 @@ class MetadataStore:
 
     def __init__(self, db_path: str = "aragora_metadata.db"):
         self.db_path = db_path
+        self.db = InsightsDatabase(db_path)
         self._init_db()
 
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self):
         with self._get_connection() as conn:

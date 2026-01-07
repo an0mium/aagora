@@ -18,7 +18,7 @@ from .base import (
     get_int_param,
     ttl_cache,
 )
-from aragora.config import DB_TIMEOUT_SECONDS
+from aragora.config import DB_TIMEOUT_SECONDS, CACHE_TTL_DASHBOARD_DEBATES
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class DashboardHandler(BaseHandler):
             return self._get_debates_dashboard(domain, min(limit, 50), hours)
         return None
 
-    @ttl_cache(ttl_seconds=600, key_prefix="dashboard_debates", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_DASHBOARD_DEBATES, key_prefix="dashboard_debates", skip_first=True)
     def _get_debates_dashboard(
         self, domain: Optional[str], limit: int, hours: int
     ) -> HandlerResult:
@@ -239,8 +239,7 @@ class DashboardHandler(BaseHandler):
         }
 
         try:
-            import sqlite3
-            with sqlite3.connect(storage.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with storage.db.connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT
@@ -275,10 +274,9 @@ class DashboardHandler(BaseHandler):
         }
 
         try:
-            import sqlite3
             cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
 
-            with sqlite3.connect(storage.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with storage.db.connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT
@@ -485,9 +483,7 @@ class DashboardHandler(BaseHandler):
             insights["domains"] = list(stats.get("by_domain", {}).keys())
 
             # Get high confidence count from DB
-            import sqlite3
-
-            with sqlite3.connect(memory.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            with memory.db.connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT COUNT(*) FROM consensus WHERE confidence >= 0.7"

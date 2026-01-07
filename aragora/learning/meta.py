@@ -22,6 +22,7 @@ from typing import Any, Dict, Generator, List, Optional
 import math
 
 from aragora.config import DB_MEMORY_PATH
+from aragora.memory.database import MemoryDatabase
 from aragora.utils.json_helpers import safe_json_loads
 
 # Database connection timeout in seconds
@@ -135,6 +136,7 @@ class MetaLearner:
 
     def __init__(self, db_path: str = DB_MEMORY_PATH):
         self.db_path = Path(db_path)
+        self.db = MemoryDatabase(db_path)
         self._init_db()
         self.state = self._load_state()
         self.metrics_history: List[LearningMetrics] = []
@@ -142,11 +144,8 @@ class MetaLearner:
     @contextmanager
     def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with guaranteed cleanup."""
-        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS)
-        try:
+        with self.db.connection() as conn:
             yield conn
-        finally:
-            conn.close()
 
     def _init_db(self):
         """Initialize meta-learning tables."""

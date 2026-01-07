@@ -16,6 +16,7 @@ from enum import Enum
 import random
 
 from aragora.config import DB_TIMEOUT_SECONDS
+from aragora.debate.traces_database import TracesDatabase
 
 
 class EventType(Enum):
@@ -140,7 +141,7 @@ class DebateTrace:
 
         return trace
 
-    def save(self, path: Path):
+    def save(self, path: Path) -> None:
         """Save trace to file."""
         path.write_text(self.to_json())
 
@@ -175,6 +176,7 @@ class DebateTracer:
         self.agents = agents
         self.random_seed = random_seed or random.randint(0, 2**32 - 1)
         self.db_path = Path(db_path)
+        self.db = TracesDatabase(db_path)
 
         # Seed random for determinism
         random.seed(self.random_seed)
@@ -196,7 +198,7 @@ class DebateTracer:
 
     def _init_db(self):
         """Initialize trace database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -262,7 +264,7 @@ class DebateTracer:
         self.trace.events.append(event)
         return event
 
-    def start_round(self, round_num: int):
+    def start_round(self, round_num: int) -> None:
         """Mark start of a new round."""
         self._current_round = round_num
         event = self.record(
@@ -271,7 +273,7 @@ class DebateTracer:
         )
         self._event_stack.append(event.event_id)
 
-    def end_round(self):
+    def end_round(self) -> None:
         """Mark end of current round."""
         if self._event_stack:
             self._event_stack.pop()
@@ -280,7 +282,7 @@ class DebateTracer:
             {"round": self._current_round},
         )
 
-    def record_proposal(self, agent: str, content: str, confidence: float = 0.0):
+    def record_proposal(self, agent: str, content: str, confidence: float = 0.0) -> None:
         """Record an agent's proposal."""
         self.record(
             EventType.AGENT_PROPOSAL,
@@ -295,7 +297,7 @@ class DebateTracer:
         issues: list[str],
         severity: float,
         suggestions: list[str],
-    ):
+    ) -> None:
         """Record a critique."""
         self.record(
             EventType.AGENT_CRITIQUE,
@@ -308,7 +310,7 @@ class DebateTracer:
             agent=agent,
         )
 
-    def record_synthesis(self, agent: str, content: str, incorporated: list[str]):
+    def record_synthesis(self, agent: str, content: str, incorporated: list[str]) -> None:
         """Record a synthesis."""
         self.record(
             EventType.AGENT_SYNTHESIS,
@@ -316,7 +318,7 @@ class DebateTracer:
             agent=agent,
         )
 
-    def record_consensus(self, reached: bool, confidence: float, votes: dict[str, bool]):
+    def record_consensus(self, reached: bool, confidence: float, votes: dict[str, bool]) -> None:
         """Record consensus check result."""
         self.record(
             EventType.CONSENSUS_CHECK,
@@ -332,7 +334,7 @@ class DebateTracer:
         )
         return event.event_id
 
-    def record_tool_result(self, agent: str, tool: str, result: Any, call_event_id: str):
+    def record_tool_result(self, agent: str, tool: str, result: Any, call_event_id: str) -> None:
         """Record tool call result."""
         self.record(
             EventType.TOOL_RESULT,
@@ -341,7 +343,7 @@ class DebateTracer:
             metadata={"call_event_id": call_event_id},
         )
 
-    def record_error(self, error: str, agent: Optional[str] = None):
+    def record_error(self, error: str, agent: Optional[str] = None) -> None:
         """Record an error."""
         self.record(
             EventType.ERROR,
@@ -366,7 +368,7 @@ class DebateTracer:
 
     def _save_trace(self):
         """Save trace to database."""
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
@@ -465,7 +467,8 @@ class DebateReplayer:
     @classmethod
     def from_database(cls, trace_id: str, db_path: str = "aragora_traces.db") -> "DebateReplayer":
         """Load replayer from database."""
-        with sqlite3.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        db = TracesDatabase(db_path)
+        with db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT trace_json FROM traces WHERE trace_id = ?", (trace_id,))
             row = cursor.fetchone()
@@ -475,7 +478,7 @@ class DebateReplayer:
 
         return cls(DebateTrace.from_json(row[0]))
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset replay position to start."""
         self._position = 0
         random.seed(self.trace.random_seed)
@@ -645,7 +648,8 @@ class DebateReplayer:
 
 def list_traces(db_path: str = "aragora_traces.db", limit: int = 20) -> list[dict]:
     """List recent traces from database."""
-    with sqlite3.connect(db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+    db = TracesDatabase(db_path)
+    with db.connection() as conn:
         cursor = conn.cursor()
 
         cursor.execute("""

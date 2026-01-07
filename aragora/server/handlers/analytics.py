@@ -12,7 +12,13 @@ Endpoints:
 import logging
 from typing import Optional
 
-from aragora.config import DB_INSIGHTS_PATH
+from aragora.config import (
+    DB_INSIGHTS_PATH,
+    CACHE_TTL_ANALYTICS,
+    CACHE_TTL_ANALYTICS_RANKING,
+    CACHE_TTL_ANALYTICS_DEBATES,
+    CACHE_TTL_ANALYTICS_MEMORY,
+)
 
 logger = logging.getLogger(__name__)
 from .base import BaseHandler, HandlerResult, json_response, error_response, get_int_param, ttl_cache
@@ -53,7 +59,7 @@ class AnalyticsHandler(BaseHandler):
 
         return None
 
-    @ttl_cache(ttl_seconds=600, key_prefix="analytics_disagreement", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS, key_prefix="analytics_disagreement", skip_first=True)
     def _get_disagreement_stats(self) -> HandlerResult:
         """Get statistics about debate disagreements."""
         storage = self.get_storage()
@@ -86,7 +92,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get disagreement stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="analytics_roles", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS, key_prefix="analytics_roles", skip_first=True)
     def _get_role_rotation_stats(self) -> HandlerResult:
         """Get statistics about cognitive role rotation."""
         storage = self.get_storage()
@@ -112,7 +118,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get role rotation stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=600, key_prefix="analytics_early_stop", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS, key_prefix="analytics_early_stop", skip_first=True)
     def _get_early_stop_stats(self) -> HandlerResult:
         """Get statistics about early debate stopping."""
         storage = self.get_storage()
@@ -147,7 +153,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get early stop stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="analytics_ranking", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS_RANKING, key_prefix="analytics_ranking", skip_first=True)
     def _get_ranking_stats(self) -> HandlerResult:
         """Get ranking system statistics."""
         elo = self.get_elo_system()
@@ -172,7 +178,7 @@ class AnalyticsHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get ranking stats: {e}", 500)
 
-    @ttl_cache(ttl_seconds=300, key_prefix="analytics_debates", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS_DEBATES, key_prefix="analytics_debates", skip_first=True)
     def _get_cached_debates(self, limit: int = 100) -> list:
         """Cached helper for retrieving debates."""
         storage = self.get_storage()
@@ -184,7 +190,7 @@ class AnalyticsHandler(BaseHandler):
             logger.warning("Failed to list debates for analytics: %s: %s", type(e).__name__, e)
             return []
 
-    @ttl_cache(ttl_seconds=1800, key_prefix="analytics_memory", skip_first=True)
+    @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS_MEMORY, key_prefix="analytics_memory", skip_first=True)
     def _get_memory_stats(self) -> HandlerResult:
         """Get memory system statistics."""
         try:

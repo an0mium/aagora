@@ -51,22 +51,59 @@ class QuotaFallbackMixin:
     The mixin expects the following attributes on the class:
         - name: str - Agent name for logging
         - enable_fallback: bool - Whether fallback is enabled
-        - fallback_model: str - Model to use with OpenRouter fallback
         - model: str - Current model name
-        - max_tokens: int - Max tokens setting
         - timeout: int - Timeout setting
+        - role: str - Agent role (optional, defaults to "proposer")
+        - system_prompt: str - System prompt (optional)
+
+    Class attributes that can be overridden:
+        - OPENROUTER_MODEL_MAP: dict[str, str] - Maps provider models to OpenRouter models
+        - DEFAULT_FALLBACK_MODEL: str - Default model if no mapping found
 
     Usage:
         class MyAgent(APIAgent, QuotaFallbackMixin):
+            OPENROUTER_MODEL_MAP = {
+                "gpt-4o": "openai/gpt-4o",
+                "gpt-4": "openai/gpt-4",
+            }
+            DEFAULT_FALLBACK_MODEL = "openai/gpt-4o"
+
             async def generate(self, prompt, context):
                 # ... make API call ...
                 if self.is_quota_error(status, error_text):
                     result = await self.fallback_generate(prompt, context)
                     if result is not None:
                         return result
-                    # No fallback available, raise error
-                    raise RuntimeError(...)
+                    raise RuntimeError("Quota exceeded and fallback unavailable")
     """
+
+    # Override these in subclasses for provider-specific model mappings
+    OPENROUTER_MODEL_MAP: dict[str, str] = {}
+    DEFAULT_FALLBACK_MODEL: str = "anthropic/claude-sonnet-4"
+
+    # Instance-level cached fallback agent (set by _get_cached_fallback_agent)
+    _fallback_agent: Optional["OpenRouterAgent"] = None
+
+    def _get_cached_fallback_agent(self) -> Optional["OpenRouterAgent"]:
+        """Get or create a cached OpenRouter fallback agent.
+
+        Unlike _get_openrouter_fallback(), this caches the agent for reuse.
+        """
+        if self._fallback_agent is None:
+            self._fallback_agent = self._get_openrouter_fallback()
+            if self._fallback_agent:
+                name = getattr(self, 'name', 'unknown')
+                logger.info(f"[{name}] Created OpenRouter fallback agent with model {self._fallback_agent.model}")
+        return self._fallback_agent
+
+    def get_fallback_model(self) -> str:
+        """Get the OpenRouter model for fallback based on current model.
+
+        Uses the class's OPENROUTER_MODEL_MAP to find a matching model,
+        falling back to DEFAULT_FALLBACK_MODEL if no match is found.
+        """
+        model = getattr(self, 'model', '')
+        return self.OPENROUTER_MODEL_MAP.get(model, self.DEFAULT_FALLBACK_MODEL)
 
     def is_quota_error(self, status_code: int, error_text: str) -> bool:
         """Check if an error indicates quota/rate limit issues.
@@ -110,29 +147,38 @@ class QuotaFallbackMixin:
         # Lazy import to avoid circular dependency
         from .api_agents import OpenRouterAgent
 
-        # Use the configured fallback model or derive from current model
-        fallback_model = getattr(self, 'fallback_model', None)
-        if not fallback_model:
-            # Try to map current model to an OpenRouter equivalent
-            model = getattr(self, 'model', 'gpt-4')
-            fallback_model = f"openai/{model}"
+        # Use the class's model mapping to get the fallback model
+        fallback_model = self.get_fallback_model()
 
-        return OpenRouterAgent(
+        # Get agent attributes with sensible defaults
+        name = getattr(self, 'name', 'fallback')
+        role = getattr(self, 'role', 'proposer')
+        timeout = getattr(self, 'timeout', 120)
+        system_prompt = getattr(self, 'system_prompt', None)
+
+        agent = OpenRouterAgent(
+            name=f"{name}_fallback",
             model=fallback_model,
-            max_tokens=getattr(self, 'max_tokens', 4096),
-            timeout=getattr(self, 'timeout', 120),
+            role=role,
+            timeout=timeout,
         )
+        if system_prompt:
+            agent.system_prompt = system_prompt
+
+        return agent
 
     async def fallback_generate(
         self,
         prompt: str,
         context: Optional[list] = None,
+        status_code: Optional[int] = None,
     ) -> Optional[str]:
         """Attempt to generate using OpenRouter fallback.
 
         Args:
             prompt: The prompt to send
             context: Optional conversation context
+            status_code: Optional HTTP status code that triggered the fallback
 
         Returns:
             Generated response string if fallback succeeded, None otherwise
@@ -140,7 +186,7 @@ class QuotaFallbackMixin:
         if not getattr(self, 'enable_fallback', True):
             return None
 
-        fallback = self._get_openrouter_fallback()
+        fallback = self._get_cached_fallback_agent()
         if not fallback:
             name = getattr(self, 'name', 'unknown')
             logger.warning(
@@ -149,8 +195,9 @@ class QuotaFallbackMixin:
             return None
 
         name = getattr(self, 'name', 'unknown')
+        status_info = f" (status {status_code})" if status_code else ""
         logger.warning(
-            f"API quota/rate limit error for {name}, falling back to OpenRouter"
+            f"API quota/rate limit error{status_info} for {name}, falling back to OpenRouter"
         )
         return await fallback.generate(prompt, context)
 
@@ -158,12 +205,14 @@ class QuotaFallbackMixin:
         self,
         prompt: str,
         context: Optional[list] = None,
+        status_code: Optional[int] = None,
     ):
         """Attempt to stream using OpenRouter fallback.
 
         Args:
             prompt: The prompt to send
             context: Optional conversation context
+            status_code: Optional HTTP status code that triggered the fallback
 
         Yields:
             Content tokens from fallback stream, or nothing if fallback unavailable
@@ -171,7 +220,7 @@ class QuotaFallbackMixin:
         if not getattr(self, 'enable_fallback', True):
             return
 
-        fallback = self._get_openrouter_fallback()
+        fallback = self._get_cached_fallback_agent()
         if not fallback:
             name = getattr(self, 'name', 'unknown')
             logger.warning(
@@ -180,8 +229,9 @@ class QuotaFallbackMixin:
             return
 
         name = getattr(self, 'name', 'unknown')
+        status_info = f" (status {status_code})" if status_code else ""
         logger.warning(
-            f"API quota/rate limit error for {name}, falling back to OpenRouter streaming"
+            f"API quota/rate limit error{status_info} for {name}, falling back to OpenRouter streaming"
         )
         async for token in fallback.generate_stream(prompt, context):
             yield token

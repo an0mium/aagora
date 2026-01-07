@@ -19,6 +19,7 @@ from aragora.config import (
     DB_TIMEOUT_SECONDS,
     ELO_CALIBRATION_MIN_COUNT,
 )
+from aragora.ranking.calibration_database import CalibrationDatabase
 
 if TYPE_CHECKING:
     from aragora.ranking.elo import EloSystem, AgentRating
@@ -81,6 +82,7 @@ class CalibrationEngine:
             elo_system: Optional EloSystem for updating agent calibration stats
         """
         self.db_path = Path(db_path)
+        self.db = CalibrationDatabase(db_path)
         self.elo_system = elo_system
 
     def record_winner_prediction(
@@ -101,7 +103,7 @@ class CalibrationEngine:
         """
         confidence = min(1.0, max(0.0, confidence))
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -131,7 +133,7 @@ class CalibrationEngine:
         Returns:
             Dict of predictor_agent -> brier_score for this prediction
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -212,7 +214,7 @@ class CalibrationEngine:
         Returns:
             List of CalibrationPrediction objects
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -283,6 +285,7 @@ class DomainCalibrationEngine:
             elo_system: Optional EloSystem for updating overall calibration stats
         """
         self.db_path = Path(db_path)
+        self.db = CalibrationDatabase(db_path)
         self.elo_system = elo_system
 
     @staticmethod
@@ -321,7 +324,7 @@ class DomainCalibrationEngine:
         bucket_key = self.get_bucket_key(confidence)
         now = datetime.now().isoformat()
 
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
 
             # Update domain calibration
@@ -381,7 +384,7 @@ class DomainCalibrationEngine:
         Returns:
             Dict with total, correct, accuracy, brier_score, and per-domain breakdown
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             if domain:
                 cursor.execute(
@@ -443,7 +446,7 @@ class DomainCalibrationEngine:
         Returns:
             List of BucketStats for each confidence bucket
         """
-        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+        with self.db.connection() as conn:
             cursor = conn.cursor()
             if domain:
                 cursor.execute(
