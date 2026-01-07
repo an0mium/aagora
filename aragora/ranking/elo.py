@@ -242,6 +242,7 @@ class EloSystem:
                 CREATE INDEX IF NOT EXISTS idx_matches_created ON matches(created_at);
                 CREATE INDEX IF NOT EXISTS idx_matches_domain ON matches(domain);
                 CREATE INDEX IF NOT EXISTS idx_domain_cal_agent ON domain_calibration(agent_name);
+                CREATE INDEX IF NOT EXISTS idx_domain_cal_agent_domain ON domain_calibration(agent_name, domain);
                 CREATE INDEX IF NOT EXISTS idx_relationships_a ON agent_relationships(agent_a);
                 CREATE INDEX IF NOT EXISTS idx_relationships_b ON agent_relationships(agent_b);
                 CREATE INDEX IF NOT EXISTS idx_calibration_pred_tournament ON calibration_predictions(tournament_id);
@@ -348,6 +349,58 @@ class EloSystem:
                 result[name] = AgentRating(agent_name=name)
 
         return result
+
+    def list_agents(self) -> list[str]:
+        """Get list of all known agent names.
+
+        Returns:
+            List of agent names that have ratings recorded.
+        """
+        with self._db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT agent_name FROM ratings ORDER BY elo DESC")
+            return [row[0] for row in cursor.fetchall()]
+
+    def get_all_ratings(self) -> list[AgentRating]:
+        """Get all agent ratings in a single query (batch optimization).
+
+        More efficient than calling get_rating() for each agent.
+
+        Returns:
+            List of all AgentRating objects, sorted by ELO descending.
+        """
+        with self._db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT agent_name, elo, domain_elos, wins, losses, draws,
+                       debates_count, critiques_accepted, critiques_total,
+                       calibration_correct, calibration_total, calibration_brier_sum,
+                       updated_at
+                FROM ratings
+                ORDER BY elo DESC
+                """
+            )
+            rows = cursor.fetchall()
+
+        return [
+            AgentRating(
+                agent_name=row[0],
+                elo=row[1],
+                domain_elos=safe_json_loads(row[2], {}),
+                wins=row[3],
+                losses=row[4],
+                draws=row[5],
+                debates_count=row[6],
+                critiques_accepted=row[7],
+                critiques_total=row[8],
+                calibration_correct=row[9] or 0,
+                calibration_total=row[10] or 0,
+                calibration_brier_sum=row[11] or 0.0,
+                updated_at=row[12],
+            )
+            for row in rows
+        ]
 
     def _save_rating(self, rating: AgentRating) -> None:
         """Save rating to database."""

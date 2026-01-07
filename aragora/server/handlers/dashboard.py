@@ -392,25 +392,21 @@ class DashboardHandler(BaseHandler):
         try:
             elo = self.get_elo_system()
             if elo:
-                # Get all ratings
-                all_ratings = []
-                for name in elo.list_agents():
-                    rating = elo.get_rating(name)
-                    if rating:
-                        all_ratings.append(
-                            {
-                                "name": name,
-                                "elo": rating.elo,
-                                "wins": rating.wins,
-                                "losses": rating.losses,
-                                "draws": rating.draws,
-                                "win_rate": rating.win_rate,
-                                "debates_count": rating.debates_count,
-                            }
-                        )
-
-                # Sort by ELO
-                all_ratings.sort(key=lambda x: x["elo"], reverse=True)
+                # Get all ratings in a single batch query (N+1 optimization)
+                ratings = elo.get_all_ratings() if hasattr(elo, 'get_all_ratings') else []
+                all_ratings = [
+                    {
+                        "name": rating.agent_name,
+                        "elo": rating.elo,
+                        "wins": rating.wins,
+                        "losses": rating.losses,
+                        "draws": rating.draws,
+                        "win_rate": rating.win_rate,
+                        "debates_count": rating.debates_count,
+                    }
+                    for rating in ratings
+                ]
+                # Already sorted by ELO descending from get_all_ratings()
 
                 performance["top_performers"] = all_ratings[:limit]
                 performance["total_agents"] = len(all_ratings)
