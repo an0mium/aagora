@@ -1231,47 +1231,228 @@ class UnifiedHandler(BaseHTTPRequestHandler):
     # NOTE: Insights methods moved to handlers/insights.py (InsightsHandler)
     # NOTE: _run_capability_probe moved to handlers/probes.py (ProbesHandler)
 
+    # =========================================================================
+    # Deep Audit Helper Methods (extracted from _run_deep_audit for clarity)
+    # =========================================================================
+
+    def _parse_audit_config(self, config_data: dict) -> "DeepAuditConfig":
+        """Parse audit configuration from request data.
+
+        Returns:
+            DeepAuditConfig instance
+        """
+        from aragora.modes.deep_audit import (
+            DeepAuditConfig,
+            STRATEGY_AUDIT,
+            CONTRACT_AUDIT,
+            CODE_ARCHITECTURE_AUDIT,
+        )
+
+        audit_type = config_data.get('audit_type', '')
+        if audit_type == 'strategy':
+            return STRATEGY_AUDIT
+        elif audit_type == 'contract':
+            return CONTRACT_AUDIT
+        elif audit_type == 'code_architecture':
+            return CODE_ARCHITECTURE_AUDIT
+        else:
+            return DeepAuditConfig(
+                rounds=min(_safe_int(config_data.get('rounds', 6), 6), 10),
+                enable_research=config_data.get('enable_research', True),
+                cross_examination_depth=min(_safe_int(config_data.get('cross_examination_depth', 3), 3), 10),
+                risk_threshold=_safe_float(config_data.get('risk_threshold', 0.7), 0.7),
+            )
+
+    def _create_audit_agents(self, agent_names: list, model_type: str) -> list:
+        """Create agents for deep audit.
+
+        Args:
+            agent_names: List of agent names
+            model_type: Agent model type
+
+        Returns:
+            List of created agents
+        """
+        if not agent_names:
+            agent_names = ['Claude-Analyst', 'Claude-Skeptic', 'Claude-Synthesizer']
+
+        agents = []
+        for name in agent_names[:5]:  # Limit to 5 agents
+            is_valid, _ = validate_id(name, "agent name")
+            if not is_valid:
+                continue
+            try:
+                agent = create_agent(model_type, name=name, role="proposer")
+                agents.append(agent)
+            except Exception as e:
+                logger.debug(f"Failed to create audit agent {name}: {e}")
+        return agents
+
+    def _calculate_audit_elo(self, verdict, audit_id: str) -> dict:
+        """Calculate ELO adjustments based on audit findings.
+
+        Args:
+            verdict: Audit verdict with findings
+            audit_id: Audit session ID
+
+        Returns:
+            Dict of agent_name -> ELO adjustment
+        """
+        elo_adjustments = {}
+        if not self.elo_system:
+            return elo_adjustments
+
+        # Agents who identified issues get ELO boost
+        for finding in verdict.findings:
+            for agent_name in finding.agents_agree:
+                elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) + 2
+            for agent_name in finding.agents_disagree:
+                elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) - 1
+
+        # Record adjustments
+        for agent_name, adjustment in elo_adjustments.items():
+            try:
+                if adjustment > 0:
+                    self.elo_system.record_redteam_result(
+                        agent_name=agent_name,
+                        robustness_score=1.0,
+                        successful_attacks=0,
+                        total_attacks=1,
+                        critical_vulnerabilities=0,
+                        session_id=audit_id
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to record audit ELO result for {agent_name}: {e}")
+
+        return elo_adjustments
+
+    def _save_audit_to_disk(
+        self, audit_id: str, task: str, context: str, agents: list,
+        verdict, config, duration_ms: float, elo_adjustments: dict
+    ) -> None:
+        """Save audit results to .nomic/audits/ directory.
+
+        Args:
+            audit_id: Unique audit ID
+            task: Audit task
+            context: Task context
+            agents: List of agents
+            verdict: Audit verdict
+            config: Audit configuration
+            duration_ms: Duration in milliseconds
+            elo_adjustments: ELO adjustments dict
+        """
+        if not self.nomic_dir:
+            return
+
+        try:
+            from datetime import datetime
+            audits_dir = self.nomic_dir / "audits"
+            audits_dir.mkdir(parents=True, exist_ok=True)
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            audit_file = audits_dir / f"{date_str}_{audit_id}.json"
+            audit_file.write_text(json.dumps({
+                "audit_id": audit_id,
+                "task": task,
+                "context": context[:1000],
+                "agents": [a.name for a in agents],
+                "recommendation": verdict.recommendation,
+                "confidence": verdict.confidence,
+                "unanimous_issues": verdict.unanimous_issues,
+                "split_opinions": verdict.split_opinions,
+                "risk_areas": verdict.risk_areas,
+                "findings": [
+                    {
+                        "category": f.category,
+                        "summary": f.summary,
+                        "details": f.details,
+                        "agents_agree": f.agents_agree,
+                        "agents_disagree": f.agents_disagree,
+                        "confidence": f.confidence,
+                        "severity": f.severity,
+                        "citations": f.citations,
+                    }
+                    for f in verdict.findings
+                ],
+                "cross_examination_notes": verdict.cross_examination_notes,
+                "citations": verdict.citations,
+                "config": {
+                    "rounds": config.rounds,
+                    "enable_research": config.enable_research,
+                    "cross_examination_depth": config.cross_examination_depth,
+                    "risk_threshold": config.risk_threshold,
+                },
+                "duration_ms": duration_ms,
+                "elo_adjustments": elo_adjustments,
+                "created_at": datetime.now().isoformat(),
+            }, indent=2, default=str))
+        except Exception as e:
+            logger.warning("Audit storage failed for %s (non-fatal): %s: %s", audit_id, type(e).__name__, e)
+
+    def _build_audit_response(
+        self, audit_id: str, task: str, agents: list, verdict, config,
+        duration_ms: float, elo_adjustments: dict
+    ) -> dict:
+        """Build audit response dictionary.
+
+        Args:
+            audit_id: Unique audit ID
+            task: Audit task
+            agents: List of agents
+            verdict: Audit verdict
+            config: Audit configuration
+            duration_ms: Duration in milliseconds
+            elo_adjustments: ELO adjustments dict
+
+        Returns:
+            Response dictionary
+        """
+        return {
+            "audit_id": audit_id,
+            "task": task,
+            "recommendation": verdict.recommendation,
+            "confidence": verdict.confidence,
+            "unanimous_issues": verdict.unanimous_issues,
+            "split_opinions": verdict.split_opinions,
+            "risk_areas": verdict.risk_areas,
+            "findings": [
+                {
+                    "category": f.category,
+                    "summary": f.summary,
+                    "details": f.details[:500],
+                    "agents_agree": f.agents_agree,
+                    "agents_disagree": f.agents_disagree,
+                    "confidence": f.confidence,
+                    "severity": f.severity,
+                }
+                for f in verdict.findings
+            ],
+            "cross_examination_notes": verdict.cross_examination_notes[:2000],
+            "citations": verdict.citations[:20],
+            "rounds_completed": config.rounds,
+            "duration_ms": round(duration_ms, 1),
+            "agents": [a.name for a in agents],
+            "elo_adjustments": elo_adjustments,
+            "summary": {
+                "unanimous_count": len(verdict.unanimous_issues),
+                "split_count": len(verdict.split_opinions),
+                "risk_count": len(verdict.risk_areas),
+                "findings_count": len(verdict.findings),
+                "high_severity_count": sum(1 for f in verdict.findings if f.severity >= 0.7),
+            }
+        }
+
     def _run_deep_audit(self) -> None:
         """Run a deep audit (Heavy3-inspired intensive multi-round debate protocol).
 
-        POST body:
-            task: The question/decision to audit (required)
-            context: Additional context/documents (optional)
-            agent_names: List of agent names to participate (optional, default: all available)
-            model_type: Agent model type (optional, default: anthropic-api)
-            config: Optional configuration object:
-                rounds: Number of rounds (default: 6)
-                enable_research: Enable web research (default: True)
-                cross_examination_depth: Questions per finding (default: 3)
-                risk_threshold: Severity threshold for findings (default: 0.7)
-                audit_type: Pre-configured type: strategy, contract, code_architecture (optional)
-
-        Returns:
-            audit_id: Unique audit report ID
-            task: The audited question
-            recommendation: Final verdict recommendation
-            confidence: Confidence in the recommendation
-            unanimous_issues: Issues all agents agreed on
-            split_opinions: Issues with disagreement
-            risk_areas: Identified risk areas
-            findings: Detailed findings list
-            cross_examination_notes: Synthesizer cross-examination notes
-            rounds_completed: Number of rounds completed
-            duration_ms: Total audit duration
-            agents: Participating agents
-            elo_adjustments: ELO changes per agent
+        Uses helper methods for config parsing, agent creation, ELO calculation,
+        storage, and response building.
         """
         if not self._check_rate_limit():
             return
 
         try:
-            from aragora.modes.deep_audit import (
-                DeepAuditOrchestrator,
-                DeepAuditConfig,
-                STRATEGY_AUDIT,
-                CONTRACT_AUDIT,
-                CODE_ARCHITECTURE_AUDIT,
-            )
+            from aragora.modes.deep_audit import DeepAuditOrchestrator
         except ImportError:
             self._send_json({
                 "error": "Deep audit module not available",
@@ -1288,7 +1469,7 @@ class UnifiedHandler(BaseHTTPRequestHandler):
 
         content_length = self._validate_content_length()
         if content_length is None:
-            return  # Error already sent
+            return
 
         try:
             body = self.rfile.read(content_length)
@@ -1300,42 +1481,11 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 return
 
             context = data.get('context', '')
-            agent_names = data.get('agent_names', [])
-            model_type = data.get('model_type', 'anthropic-api')
-            config_data = data.get('config', {})
-
-            # Use pre-configured audit type if specified
-            audit_type = config_data.get('audit_type', '')
-            if audit_type == 'strategy':
-                config = STRATEGY_AUDIT
-            elif audit_type == 'contract':
-                config = CONTRACT_AUDIT
-            elif audit_type == 'code_architecture':
-                config = CODE_ARCHITECTURE_AUDIT
-            else:
-                # Build custom config
-                config = DeepAuditConfig(
-                    rounds=min(_safe_int(config_data.get('rounds', 6), 6), 10),
-                    enable_research=config_data.get('enable_research', True),
-                    cross_examination_depth=min(_safe_int(config_data.get('cross_examination_depth', 3), 3), 10),
-                    risk_threshold=_safe_float(config_data.get('risk_threshold', 0.7), 0.7),
-                )
-
-            # Create agents for the audit
-            if not agent_names:
-                # Default to 3 agents with different models
-                agent_names = ['Claude-Analyst', 'Claude-Skeptic', 'Claude-Synthesizer']
-
-            agents = []
-            for name in agent_names[:5]:  # Limit to 5 agents
-                is_valid, _ = validate_id(name, "agent name")
-                if not is_valid:
-                    continue
-                try:
-                    agent = create_agent(model_type, name=name, role="proposer")
-                    agents.append(agent)
-                except Exception as e:
-                    logger.debug(f"Failed to create audit agent {name}: {e}")
+            config = self._parse_audit_config(data.get('config', {}))
+            agents = self._create_audit_agents(
+                data.get('agent_names', []),
+                data.get('model_type', 'anthropic-api')
+            )
 
             if len(agents) < 2:
                 self._send_json({
@@ -1344,22 +1494,18 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                 }, status=400)
                 return
 
-            # Get stream hooks for real-time updates
+            # Setup and emit start event
             audit_hooks = None
             if hasattr(self.server, 'stream_server') and self.server.stream_server:
                 from .nomic_stream import create_nomic_hooks
                 audit_hooks = create_nomic_hooks(self.server.stream_server.emitter)
 
             audit_id = f"audit-{uuid.uuid4().hex[:8]}"
-            import time
             start_time = time.time()
 
-            # Emit audit start event
             if audit_hooks and 'on_audit_start' in audit_hooks:
                 audit_hooks['on_audit_start'](
-                    audit_id=audit_id,
-                    task=task,
-                    agents=[a.name for a in agents],
+                    audit_id=audit_id, task=task, agents=[a.name for a in agents],
                     config={
                         "rounds": config.rounds,
                         "enable_research": config.enable_research,
@@ -1368,57 +1514,21 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                     }
                 )
 
-            # Create orchestrator and run audit
+            # Execute audit
             orchestrator = DeepAuditOrchestrator(agents, config)
-
-            import asyncio
-
-            async def run_audit():
-                return await orchestrator.run(task, context)
-
-            # Execute in event loop
-            # Use asyncio.run() for proper event loop lifecycle management
             try:
-                verdict = asyncio.run(run_audit())
+                verdict = asyncio.run(orchestrator.run(task, context))
             except Exception as e:
-                self._send_json({
-                    "error": f"Deep audit execution failed: {str(e)}"
-                }, status=500)
+                self._send_json({"error": f"Deep audit execution failed: {str(e)}"}, status=500)
                 return
 
-            end_time = time.time()
-            duration_ms = (end_time - start_time) * 1000
+            duration_ms = (time.time() - start_time) * 1000
+            elo_adjustments = self._calculate_audit_elo(verdict, audit_id)
 
-            # Calculate ELO adjustments based on findings contribution
-            elo_adjustments = {}
-            if self.elo_system:
-                # Agents who identified issues get ELO boost
-                for finding in verdict.findings:
-                    for agent_name in finding.agents_agree:
-                        elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) + 2
-                    for agent_name in finding.agents_disagree:
-                        elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) - 1
-
-                # Record adjustments
-                for agent_name, adjustment in elo_adjustments.items():
-                    try:
-                        if adjustment > 0:
-                            self.elo_system.record_redteam_result(
-                                agent_name=agent_name,
-                                robustness_score=1.0,
-                                successful_attacks=0,
-                                total_attacks=1,
-                                critical_vulnerabilities=0,
-                                session_id=audit_id
-                            )
-                    except Exception as e:
-                        logger.warning(f"Failed to record audit ELO result for {agent_name}: {e}")
-
-            # Emit audit verdict event
+            # Emit verdict event
             if audit_hooks and 'on_audit_verdict' in audit_hooks:
                 audit_hooks['on_audit_verdict'](
-                    audit_id=audit_id,
-                    task=task,
+                    audit_id=audit_id, task=task,
                     recommendation=verdict.recommendation[:2000],
                     confidence=verdict.confidence,
                     unanimous_issues=verdict.unanimous_issues[:10],
@@ -1430,87 +1540,13 @@ class UnifiedHandler(BaseHTTPRequestHandler):
                     elo_adjustments=elo_adjustments,
                 )
 
-            # Save results to .nomic/audits/
-            if self.nomic_dir:
-                try:
-                    from datetime import datetime
-                    audits_dir = self.nomic_dir / "audits"
-                    audits_dir.mkdir(parents=True, exist_ok=True)
-                    date_str = datetime.now().strftime("%Y-%m-%d")
-                    audit_file = audits_dir / f"{date_str}_{audit_id}.json"
-                    audit_file.write_text(json.dumps({
-                        "audit_id": audit_id,
-                        "task": task,
-                        "context": context[:1000],
-                        "agents": [a.name for a in agents],
-                        "recommendation": verdict.recommendation,
-                        "confidence": verdict.confidence,
-                        "unanimous_issues": verdict.unanimous_issues,
-                        "split_opinions": verdict.split_opinions,
-                        "risk_areas": verdict.risk_areas,
-                        "findings": [
-                            {
-                                "category": f.category,
-                                "summary": f.summary,
-                                "details": f.details,
-                                "agents_agree": f.agents_agree,
-                                "agents_disagree": f.agents_disagree,
-                                "confidence": f.confidence,
-                                "severity": f.severity,
-                                "citations": f.citations,
-                            }
-                            for f in verdict.findings
-                        ],
-                        "cross_examination_notes": verdict.cross_examination_notes,
-                        "citations": verdict.citations,
-                        "config": {
-                            "rounds": config.rounds,
-                            "enable_research": config.enable_research,
-                            "cross_examination_depth": config.cross_examination_depth,
-                            "risk_threshold": config.risk_threshold,
-                        },
-                        "duration_ms": duration_ms,
-                        "elo_adjustments": elo_adjustments,
-                        "created_at": datetime.now().isoformat(),
-                    }, indent=2, default=str))
-                except Exception as e:
-                    logger.warning("Audit storage failed for %s (non-fatal): %s: %s", audit_id, type(e).__name__, e)
-
-            # Build response
-            self._send_json({
-                "audit_id": audit_id,
-                "task": task,
-                "recommendation": verdict.recommendation,
-                "confidence": verdict.confidence,
-                "unanimous_issues": verdict.unanimous_issues,
-                "split_opinions": verdict.split_opinions,
-                "risk_areas": verdict.risk_areas,
-                "findings": [
-                    {
-                        "category": f.category,
-                        "summary": f.summary,
-                        "details": f.details[:500],
-                        "agents_agree": f.agents_agree,
-                        "agents_disagree": f.agents_disagree,
-                        "confidence": f.confidence,
-                        "severity": f.severity,
-                    }
-                    for f in verdict.findings
-                ],
-                "cross_examination_notes": verdict.cross_examination_notes[:2000],
-                "citations": verdict.citations[:20],
-                "rounds_completed": config.rounds,
-                "duration_ms": round(duration_ms, 1),
-                "agents": [a.name for a in agents],
-                "elo_adjustments": elo_adjustments,
-                "summary": {
-                    "unanimous_count": len(verdict.unanimous_issues),
-                    "split_count": len(verdict.split_opinions),
-                    "risk_count": len(verdict.risk_areas),
-                    "findings_count": len(verdict.findings),
-                    "high_severity_count": sum(1 for f in verdict.findings if f.severity >= 0.7),
-                }
-            })
+            # Save and respond
+            self._save_audit_to_disk(
+                audit_id, task, context, agents, verdict, config, duration_ms, elo_adjustments
+            )
+            self._send_json(self._build_audit_response(
+                audit_id, task, agents, verdict, config, duration_ms, elo_adjustments
+            ))
 
         except json.JSONDecodeError:
             self._send_json({"error": "Invalid JSON body"}, status=400)
@@ -1857,9 +1893,9 @@ class UnifiedHandler(BaseHTTPRequestHandler):
         except (IOError, OSError) as e:
             logger.error(f"File read error: {e}")
             self.send_error(500, "Failed to read file")
-        except (BrokenPipeError, ConnectionResetError):
-            # Client disconnected, no response needed
-            pass
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # Client disconnected before response could be sent
+            logger.debug(f"Client disconnected during file serve: {type(e).__name__}")
 
     def _send_json(self, data, status: int = 200) -> None:
         """Send JSON response."""

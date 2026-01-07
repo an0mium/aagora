@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aragora Debate Replay - {{DEBATE_ID}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .verdict-card {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+        }
+
+        .verdict-title {
+            font-size: 2em;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .verdict-content {
+            font-size: 1.2em;
+            line-height: 1.8;
+            margin-bottom: 20px;
+        }
+
+        .evidence-list {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .evidence-item {
+            margin-bottom: 10px;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .evidence-item:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #4CAF50;
+        }
+
+        .timeline {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .timeline-title {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .timeline-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+            gap: 20px;
+        }
+
+        .timeline-bar {
+            flex: 1;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .timeline-progress {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .timeline-markers {
+            position: absolute;
+            top: -5px;
+            left: 0;
+            right: 0;
+            height: 18px;
+        }
+
+        .consensus-marker {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #4CAF50;
+            border-radius: 50%;
+            border: 2px solid white;
+            cursor: pointer;
+            transform: translateX(-50%);
+        }
+
+        .round-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .round-btn:hover {
+            background: #5a67d8;
+        }
+
+        .scene-view {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 300px;
+        }
+
+        .message {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .message-role {
+            font-weight: bold;
+            color: #667eea;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .message-agent {
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .message-timestamp {
+            color: #718096;
+            font-size: 0.8em;
+        }
+
+        .message-content {
+            line-height: 1.6;
+        }
+
+        .consensus-indicator {
+            background: #4CAF50;
+            color: white;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .footer {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Aragora Debate Replay</h1>
+            <p>Interactive timeline of an AI debate</p>
+        </div>
+
+        <div class="verdict-card" id="verdictCard">
+            <div class="verdict-title">Verdict</div>
+            <div class="verdict-content" id="verdictContent"></div>
+            <div class="evidence-list" id="evidenceList"></div>
+        </div>
+
+        <div class="timeline">
+            <div class="timeline-title">Debate Timeline</div>
+            <div class="timeline-controls">
+                <button class="round-btn" id="prevBtn">Previous</button>
+                <div class="timeline-bar" id="timelineBar">
+                    <div class="timeline-progress" id="timelineProgress"></div>
+                    <div class="timeline-markers" id="timelineMarkers"></div>
+                </div>
+                <button class="round-btn" id="nextBtn">Next</button>
+            </div>
+            <div class="scene-view" id="sceneView"></div>
+        </div>
+
+        <div class="footer">
+            <p>Generated by Aragora - Self-improving AI Debate System</p>
+        </div>
+    </div>
+
+    <script>
+        const data = {{DATA}};
+
+        let currentRound = 0;
+        const scenes = data.scenes;
+        const verdict = data.verdict;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            renderVerdict();
+            renderTimelineMarkers();
+            showRound(0);
+            updateControls();
+        });
+
+        // Handle single scene case
+        const hasMultipleScenes = scenes.length > 1;
+        if (!hasMultipleScenes) {
+            // Disable timeline controls for single scene
+            document.getElementById('timelineBar').style.opacity = '0.5';
+            document.getElementById('prevBtn').disabled = true;
+            document.getElementById('nextBtn').disabled = true;
+        }
+
+        function renderVerdict() {
+            const content = document.getElementById('verdictContent');
+            const evidence = document.getElementById('evidenceList');
+
+            let status = verdict.consensus_reached ? '✅ Consensus Reached' : '❌ No Consensus';
+            let confidence = verdict.confidence ? ` (Confidence: ${(verdict.confidence * 100).toFixed(1)}%)` : '';
+
+            // Use textContent for safe content insertion
+            content.innerHTML = `
+                <strong>Status:</strong> ${status}${confidence}<br>
+                <strong>Rounds:</strong> ${verdict.rounds_used}<br>
+                <strong>Duration:</strong> ${Math.round(verdict.duration_seconds)}s<br>
+                <strong>Winner:</strong> ${verdict.winner_label || 'None'}<br><br>
+                <strong>Final Answer:</strong><br>
+                <span>${verdict.final_answer}</span>
+            `;
+
+            if (verdict.evidence && verdict.evidence.length > 0) {
+                evidence.innerHTML = '<h4>Key Evidence:</h4>' +
+                    verdict.evidence.map(item => `<div class="evidence-item">${item}</div>`).join('');
+            }
+        }
+
+        function renderTimelineMarkers() {
+            const markers = document.getElementById('timelineMarkers');
+            const bar = document.getElementById('timelineBar');
+
+            // Guard against single/empty scenes
+            if (scenes.length <= 1) return;
+
+            scenes.forEach((scene, index) => {
+                if (scene.consensus_indicators && scene.consensus_indicators.reached) {
+                    const marker = document.createElement('div');
+                    marker.className = 'consensus-marker';
+                    marker.style.left = `${(index / (scenes.length - 1)) * 100}%`;
+                    marker.title = `Round ${scene.round_number}: ${scene.consensus_indicators.description || 'Consensus reached'}`;
+                    marker.addEventListener('click', () => showRound(index));
+                    markers.appendChild(marker);
+                }
+            });
+        }
+
+        function showRound(roundIndex) {
+            currentRound = roundIndex;
+            const scene = scenes[roundIndex];
+            const view = document.getElementById('sceneView');
+
+            if (!scene) return;
+
+            // Clear previous content
+            view.innerHTML = '';
+
+            // Add round header
+            const header = document.createElement('h3');
+            header.textContent = `Round ${scene.round_number}`;
+            view.appendChild(header);
+
+            // Add consensus indicator if present
+            if (scene.consensus_indicators && scene.consensus_indicators.reached) {
+                const indicator = document.createElement('div');
+                indicator.className = 'consensus-indicator';
+                indicator.textContent = scene.consensus_indicators.description;
+                view.appendChild(indicator);
+            }
+
+            // Add messages safely
+            scene.messages.forEach(msg => {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message';
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'message-header';
+
+                const roleSpan = document.createElement('span');
+                roleSpan.className = 'message-role';
+                roleSpan.textContent = msg.role;
+                headerDiv.appendChild(roleSpan);
+
+                const agentSpan = document.createElement('span');
+                agentSpan.className = 'message-agent';
+                agentSpan.textContent = msg.agent;
+                headerDiv.appendChild(agentSpan);
+
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'message-timestamp';
+                timeSpan.textContent = new Date(msg.timestamp).toLocaleTimeString();
+                headerDiv.appendChild(timeSpan);
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                contentDiv.innerHTML = formatContent(msg.content); // Safe: formatContent escapes
+
+                msgDiv.appendChild(headerDiv);
+                msgDiv.appendChild(contentDiv);
+                view.appendChild(msgDiv);
+            });
+
+            updateProgress();
+        }
+
+        function formatContent(content) {
+            // Escape HTML entities and add line breaks
+            const escaped = content
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#x27;')
+                .replace(/\//g, '&#x2F;');
+            return escaped.replace(/\\n/g, '<br>');
+        }
+
+        function updateProgress() {
+            const progress = document.getElementById('timelineProgress');
+            const percentage = scenes.length <= 1 ? 100 : (currentRound / (scenes.length - 1)) * 100;
+            progress.style.width = `${percentage}%`;
+        }
+
+        function updateControls() {
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+
+            prevBtn.disabled = currentRound === 0;
+            nextBtn.disabled = currentRound === scenes.length - 1;
+
+            prevBtn.onclick = () => showRound(Math.max(0, currentRound - 1));
+            nextBtn.onclick = () => showRound(Math.min(scenes.length - 1, currentRound + 1));
+        }
+
+        // Timeline bar click (guarded for single scene)
+        document.getElementById('timelineBar').addEventListener('click', function(e) {
+            if (scenes.length <= 1) return;
+
+            const rect = this.getBoundingClientRect();
+            const percentage = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const roundIndex = Math.round(percentage * (scenes.length - 1));
+            showRound(roundIndex);
+        });
+
+        // Update controls when round changes
+        const originalShowRound = showRound;
+        showRound = function(roundIndex) {
+            originalShowRound(roundIndex);
+            updateControls();
+        };
+    </script>
+</body>
+</html>
