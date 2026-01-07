@@ -246,45 +246,45 @@ class TestOpenRouterModelMapping:
 
 
 class TestQuotaErrorDetection:
-    """Tests for _is_anthropic_quota_error method."""
+    """Tests for is_quota_error method (from QuotaFallbackMixin)."""
 
     def test_429_is_quota_error(self, agent):
         """Should detect 429 as quota error."""
-        assert agent._is_anthropic_quota_error(429, "rate limit exceeded") is True
+        assert agent.is_quota_error(429, "rate limit exceeded") is True
 
     def test_credit_balance_error(self, agent):
         """Should detect credit balance errors."""
-        assert agent._is_anthropic_quota_error(400, "credit balance is too low") is True
+        assert agent.is_quota_error(400, "credit balance is too low") is True
 
     def test_insufficient_error(self, agent):
         """Should detect insufficient errors."""
-        assert agent._is_anthropic_quota_error(402, "Insufficient credits") is True
+        assert agent.is_quota_error(402, "Insufficient credits") is True
 
     def test_quota_keyword(self, agent):
         """Should detect quota keyword."""
-        assert agent._is_anthropic_quota_error(400, "Quota exceeded for model") is True
+        assert agent.is_quota_error(400, "Quota exceeded for model") is True
 
     def test_billing_keyword(self, agent):
         """Should detect billing keyword."""
-        assert agent._is_anthropic_quota_error(402, "Billing issue detected") is True
+        assert agent.is_quota_error(402, "Billing issue detected") is True
 
     def test_purchase_credits_keyword(self, agent):
         """Should detect purchase credits keyword."""
-        assert agent._is_anthropic_quota_error(402, "Please purchase credits") is True
+        assert agent.is_quota_error(402, "Please purchase credits") is True
 
     def test_rate_limit_keyword(self, agent):
         """Should detect rate_limit keyword."""
-        assert agent._is_anthropic_quota_error(400, "rate_limit_exceeded") is True
+        assert agent.is_quota_error(400, "rate_limit_exceeded") is True
 
     def test_case_insensitive(self, agent):
         """Should detect keywords case-insensitively."""
-        assert agent._is_anthropic_quota_error(400, "CREDIT BALANCE TOO LOW") is True
+        assert agent.is_quota_error(400, "CREDIT BALANCE TOO LOW") is True
 
     def test_regular_error_not_quota(self, agent):
         """Should not flag regular errors as quota errors."""
-        assert agent._is_anthropic_quota_error(400, "Invalid request format") is False
-        assert agent._is_anthropic_quota_error(500, "Internal server error") is False
-        assert agent._is_anthropic_quota_error(404, "Model not found") is False
+        assert agent.is_quota_error(400, "Invalid request format") is False
+        assert agent.is_quota_error(500, "Internal server error") is False
+        assert agent.is_quota_error(404, "Model not found") is False
 
 
 # =============================================================================
@@ -299,7 +299,7 @@ class TestFallbackAgent:
         """Should lazy-create fallback agent on first access."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
             assert agent_with_fallback._fallback_agent is None
-            fallback = agent_with_fallback._get_fallback_agent()
+            fallback = agent_with_fallback._get_cached_fallback_agent()
             assert fallback is not None
             assert agent_with_fallback._fallback_agent is fallback
 
@@ -310,7 +310,7 @@ class TestFallbackAgent:
                 api_key=api_key,
                 model="claude-3-opus-20240229",
             )
-            fallback = agent._get_fallback_agent()
+            fallback = agent._get_cached_fallback_agent()
             assert fallback.model == "anthropic/claude-3-opus"
 
     def test_fallback_inherits_role(self, api_key):
@@ -320,7 +320,7 @@ class TestFallbackAgent:
                 api_key=api_key,
                 role="synthesizer",
             )
-            fallback = agent._get_fallback_agent()
+            fallback = agent._get_cached_fallback_agent()
             assert fallback.role == "synthesizer"
 
     def test_fallback_inherits_timeout(self, api_key):
@@ -330,14 +330,14 @@ class TestFallbackAgent:
                 api_key=api_key,
                 timeout=90,
             )
-            fallback = agent._get_fallback_agent()
+            fallback = agent._get_cached_fallback_agent()
             assert fallback.timeout == 90
 
     def test_reuses_fallback_agent(self, agent_with_fallback):
         """Should reuse same fallback agent instance."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            fallback1 = agent_with_fallback._get_fallback_agent()
-            fallback2 = agent_with_fallback._get_fallback_agent()
+            fallback1 = agent_with_fallback._get_cached_fallback_agent()
+            fallback2 = agent_with_fallback._get_cached_fallback_agent()
             assert fallback1 is fallback2
 
 
@@ -422,20 +422,20 @@ class TestFallbackBehavior:
     def test_quota_error_triggers_fallback_check(self, agent_with_fallback):
         """Should identify quota errors that would trigger fallback."""
         # These should be identified as quota errors
-        assert agent_with_fallback._is_anthropic_quota_error(429, "rate limit") is True
-        assert agent_with_fallback._is_anthropic_quota_error(402, "credit balance") is True
+        assert agent_with_fallback.is_quota_error(429, "rate limit") is True
+        assert agent_with_fallback.is_quota_error(402, "credit balance") is True
 
     def test_non_quota_error_no_fallback(self, agent):
         """Non-quota errors should not trigger fallback."""
-        assert agent._is_anthropic_quota_error(400, "invalid request") is False
-        assert agent._is_anthropic_quota_error(500, "server error") is False
+        assert agent.is_quota_error(400, "invalid request") is False
+        assert agent.is_quota_error(500, "server error") is False
 
     @pytest.mark.asyncio
     async def test_fallback_agent_created_lazily(self, agent_with_fallback):
         """Should create fallback agent only when needed."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
             assert agent_with_fallback._fallback_agent is None
-            fallback = agent_with_fallback._get_fallback_agent()
+            fallback = agent_with_fallback._get_cached_fallback_agent()
             assert fallback is not None
 
 
