@@ -330,6 +330,14 @@ class CritiqueStore:
 
             conn.commit()
 
+        # Invalidate related caches so API returns fresh data
+        try:
+            from aragora.server.handlers.base import invalidate_cache
+            invalidate_cache("memory")
+            invalidate_cache("debates")
+        except ImportError:
+            pass  # Handlers may not be available in all contexts
+
     def store_pattern(self, critique: Critique, successful_fix: str) -> None:
         """Store a successful critique pattern."""
         with self._get_connection() as conn:
@@ -377,6 +385,13 @@ class CritiqueStore:
                 self._update_surprise_score(cursor, pattern_id, is_success=True)
 
             conn.commit()
+
+        # Invalidate related caches so API returns fresh data
+        try:
+            from aragora.server.handlers.base import invalidate_cache
+            invalidate_cache("memory")
+        except ImportError:
+            pass  # Handlers may not be available in all contexts
 
     def _categorize_issue(self, issue: str) -> str:
         """Simple issue categorization."""

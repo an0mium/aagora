@@ -10,7 +10,6 @@ Endpoints:
 
 import json
 import logging
-import re
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -23,7 +22,7 @@ from .base import (
     get_int_param,
     DB_TIMEOUT_SECONDS,
 )
-from aragora.server.validation import SAFE_ID_PATTERN_WITH_DOTS as SAFE_ID_PATTERN
+from aragora.server.validation import validate_genome_id, validate_debate_id
 from aragora.utils.optional_imports import try_import
 
 logger = logging.getLogger(__name__)
@@ -77,8 +76,9 @@ class GenesisHandler(BaseHandler):
             if '..' in path:
                 return error_response("Invalid genome ID", 400)
             genome_id = path.split('/')[-1]
-            if not genome_id or not re.match(SAFE_ID_PATTERN, genome_id):
-                return error_response("Invalid genome ID", 400)
+            is_valid, err = validate_genome_id(genome_id)
+            if not is_valid:
+                return error_response(err, 400)
             return self._get_genome_lineage(nomic_dir, genome_id)
 
         if path.startswith("/api/genesis/tree/"):
@@ -86,8 +86,9 @@ class GenesisHandler(BaseHandler):
             if '..' in path:
                 return error_response("Invalid debate ID", 400)
             debate_id = path.split('/')[-1]
-            if not debate_id or not re.match(SAFE_ID_PATTERN, debate_id):
-                return error_response("Invalid debate ID", 400)
+            is_valid, err = validate_debate_id(debate_id)
+            if not is_valid:
+                return error_response(err, 400)
             return self._get_debate_tree(nomic_dir, debate_id)
 
         return None

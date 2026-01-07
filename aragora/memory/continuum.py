@@ -487,8 +487,11 @@ class ContinuumMemory:
         with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
 
-            # Use BEGIN IMMEDIATE to acquire write lock before reading
-            # This prevents race conditions in read-modify-write operations
+            # Use BEGIN IMMEDIATE to acquire write lock before reading.
+            # This prevents race conditions in read-modify-write operations.
+            # Note: get_wal_connection sets busy_timeout (default 30s) to prevent
+            # indefinite blocking - will raise sqlite3.OperationalError if timeout
+            # exceeded waiting for the lock.
             cursor.execute("BEGIN IMMEDIATE")
 
             try:
@@ -567,8 +570,9 @@ class ContinuumMemory:
                 logger.error(f"Database error updating surprise score: {e}", exc_info=True)
                 cursor.execute("ROLLBACK")
                 raise
-            except Exception:
+            except Exception as e:
                 # Rollback on any exception, then re-raise unchanged
+                logger.warning(f"Non-database exception during surprise update, rolling back: {type(e).__name__}: {e}")
                 cursor.execute("ROLLBACK")
                 raise
 

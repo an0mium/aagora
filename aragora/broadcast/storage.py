@@ -8,6 +8,7 @@ Audio files are stored in .nomic/audio/ with accompanying JSON metadata.
 import json
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,6 +16,37 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Security: Path Traversal Protection
+# =============================================================================
+
+# Pattern for valid debate IDs (alphanumeric, hyphens, underscores only)
+VALID_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+def _validate_debate_id(debate_id: str) -> bool:
+    """Validate a debate ID to prevent path traversal.
+
+    Args:
+        debate_id: The debate ID to validate
+
+    Returns:
+        True if the ID is safe, False otherwise
+    """
+    if not debate_id:
+        return False
+
+    # Must match safe pattern (no path separators, no dots)
+    if not VALID_ID_PATTERN.match(debate_id):
+        return False
+
+    # Reasonable length limit
+    if len(debate_id) > 128:
+        return False
+
+    return True
 
 
 @dataclass
@@ -81,13 +113,56 @@ class AudioFileStore:
         # In-memory cache for metadata
         self._cache: dict[str, AudioMetadata] = {}
 
-    def _audio_path(self, debate_id: str, format: str = "mp3") -> Path:
-        """Get path for an audio file."""
-        return self.storage_dir / f"{debate_id}.{format}"
+    def _audio_path(self, debate_id: str, format: str = "mp3") -> Optional[Path]:
+        """Get path for an audio file.
 
-    def _metadata_path(self, debate_id: str) -> Path:
-        """Get path for metadata JSON file."""
-        return self.storage_dir / f"{debate_id}.json"
+        Args:
+            debate_id: The debate ID
+            format: Audio format extension
+
+        Returns:
+            Path if debate_id is valid, None otherwise (path traversal protection)
+        """
+        if not _validate_debate_id(debate_id):
+            logger.warning(f"Invalid debate ID rejected: {debate_id!r}")
+            return None
+
+        # Validate format as well
+        if not re.match(r'^[a-zA-Z0-9]+$', format):
+            logger.warning(f"Invalid format rejected: {format!r}")
+            return None
+
+        path = self.storage_dir / f"{debate_id}.{format}"
+
+        # Double-check path is within storage directory
+        try:
+            path.resolve().relative_to(self.storage_dir.resolve())
+        except ValueError:
+            logger.warning(f"Path traversal attempt: {debate_id!r}.{format}")
+            return None
+
+        return path
+
+    def _metadata_path(self, debate_id: str) -> Optional[Path]:
+        """Get path for metadata JSON file.
+
+        Returns:
+            Path if debate_id is valid, None otherwise (path traversal protection)
+        """
+        if not _validate_debate_id(debate_id):
+            logger.warning(f"Invalid debate ID rejected: {debate_id!r}")
+            return None
+
+        path = self.storage_dir / f"{debate_id}.json"
+
+        # Double-check path is within storage directory
+        try:
+            path.resolve().relative_to(self.storage_dir.resolve())
+        except ValueError:
+            logger.warning(f"Path traversal attempt: {debate_id!r}")
+            return None
+
+        return path
 
     def save(
         self,
@@ -97,7 +172,7 @@ class AudioFileStore:
         duration_seconds: Optional[int] = None,
         task_summary: Optional[str] = None,
         agents: Optional[list[str]] = None,
-    ) -> Path:
+    ) -> Optional[Path]:
         """
         Save an audio file to the store.
 
@@ -110,9 +185,12 @@ class AudioFileStore:
             agents: List of participating agents
 
         Returns:
-            Path to the stored audio file
+            Path to the stored audio file, or None if debate_id is invalid
         """
         dest_path = self._audio_path(debate_id, format)
+        if dest_path is None:
+            logger.error(f"Cannot save audio: invalid debate_id {debate_id!r}")
+            return None
 
         # Copy audio file to storage
         shutil.copy2(audio_path, dest_path)
@@ -150,7 +228,7 @@ class AudioFileStore:
         duration_seconds: Optional[int] = None,
         task_summary: Optional[str] = None,
         agents: Optional[list[str]] = None,
-    ) -> Path:
+    ) -> Optional[Path]:
         """
         Save audio data directly from bytes.
 
@@ -163,9 +241,12 @@ class AudioFileStore:
             agents: List of participating agents
 
         Returns:
-            Path to the stored audio file
+            Path to the stored audio file, or None if debate_id is invalid
         """
         dest_path = self._audio_path(debate_id, format)
+        if dest_path is None:
+            logger.error(f"Cannot save audio: invalid debate_id {debate_id!r}")
+            return None
 
         # Write audio data
         with open(dest_path, "wb") as f:
@@ -201,12 +282,12 @@ class AudioFileStore:
             debate_id: Debate identifier
 
         Returns:
-            Path to audio file if exists, None otherwise
+            Path to audio file if exists, None otherwise (also None for invalid debate_id)
         """
         # Check common formats
         for ext in ["mp3", "wav", "m4a", "ogg"]:
             path = self._audio_path(debate_id, ext)
-            if path.exists():
+            if path is not None and path.exists():
                 return path
         return None
 
@@ -218,15 +299,15 @@ class AudioFileStore:
             debate_id: Debate identifier
 
         Returns:
-            AudioMetadata if exists, None otherwise
+            AudioMetadata if exists, None otherwise (also None for invalid debate_id)
         """
         # Check cache first
         if debate_id in self._cache:
             return self._cache[debate_id]
 
-        # Load from disk
+        # Load from disk (returns None for invalid IDs - path traversal protection)
         metadata_path = self._metadata_path(debate_id)
-        if not metadata_path.exists():
+        if metadata_path is None or not metadata_path.exists():
             return None
 
         try:
@@ -251,8 +332,13 @@ class AudioFileStore:
             debate_id: Debate identifier
 
         Returns:
-            True if deleted, False if not found
+            True if deleted, False if not found or invalid debate_id
         """
+        # Validate debate_id first (path traversal protection)
+        if not _validate_debate_id(debate_id):
+            logger.warning(f"Cannot delete: invalid debate_id {debate_id!r}")
+            return False
+
         # Remove from cache
         self._cache.pop(debate_id, None)
 
@@ -266,7 +352,7 @@ class AudioFileStore:
 
         # Delete metadata
         metadata_path = self._metadata_path(debate_id)
-        if metadata_path.exists():
+        if metadata_path is not None and metadata_path.exists():
             metadata_path.unlink()
             deleted = True
 

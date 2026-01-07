@@ -2,32 +2,31 @@
 """
 Database Consolidation Migration Script
 
-Migrates from 10+ SQLite databases to 4 consolidated databases:
-- aragora_core.db: Debates, consensus, positions
-- aragora_memory.db: Multi-tier learning, critiques, insights
-- aragora_agents.db: Agent identity, ELO, personas, genomes
-- .nomic/genesis.db: Immutable provenance (unchanged)
+Migrates from 22 SQLite databases to 4 consolidated databases:
+- core.db: Debates, traces, tournaments, embeddings, positions
+- memory.db: Continuum memory, agent memories, consensus, critiques, patterns
+- analytics.db: ELO ratings, calibration, insights, evolution, meta-learning
+- agents.db: Personas, relationships, experiments, genomes, genesis events
 
 Usage:
     python scripts/migrate_databases.py --dry-run
     python scripts/migrate_databases.py --validate
     python scripts/migrate_databases.py --migrate
 
-See docs/DATABASE_CONSOLIDATION.md for full migration strategy.
+The migration uses schema files from aragora/persistence/schemas/*.sql
 """
 
 import argparse
 import hashlib
 import json
 import logging
-import os
 import shutil
 import sqlite3
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logging.basicConfig(
     level=logging.INFO,

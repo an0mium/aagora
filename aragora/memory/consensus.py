@@ -337,6 +337,13 @@ class ConsensusMemory:
             )
             conn.commit()
 
+        # Invalidate related caches so API returns fresh data
+        try:
+            from aragora.server.handlers.base import invalidate_cache
+            invalidate_cache("consensus")
+        except ImportError:
+            pass  # Handlers may not be available in all contexts
+
         return record
 
     def store_dissent(
@@ -402,6 +409,13 @@ class ConsensusMemory:
                 )
 
             conn.commit()
+
+        # Invalidate related caches so API returns fresh data
+        try:
+            from aragora.server.handlers.base import invalidate_cache
+            invalidate_cache("consensus")
+        except ImportError:
+            pass  # Handlers may not be available in all contexts
 
         return record
 

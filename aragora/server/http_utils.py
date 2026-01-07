@@ -6,7 +6,10 @@ used across the unified server.
 """
 
 import asyncio
+import logging
 from typing import Any, Coroutine
+
+logger = logging.getLogger(__name__)
 
 
 # Query parameter whitelist (security: reject unknown params to prevent injection)
@@ -108,8 +111,9 @@ def run_async(coro: Coroutine[Any, Any, Any]) -> Any:
         except RuntimeError:
             # No running loop, safe to use asyncio.run()
             return asyncio.run(coro)
-    except Exception:
-        # Fallback: create new event loop
+    except (RuntimeError, asyncio.InvalidStateError) as e:
+        # Fallback: create new event loop for edge cases
+        logger.debug(f"Creating new event loop after: {type(e).__name__}: {e}")
         return asyncio.run(coro)
 
 

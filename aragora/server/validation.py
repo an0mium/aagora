@@ -492,3 +492,140 @@ def sanitize_id(value: str) -> Optional[str]:
     if SAFE_ID_PATTERN.match(value):
         return value
     return None
+
+
+# =============================================================================
+# Path Segment Validation Functions
+# =============================================================================
+# These functions provide consistent security validation for path segments,
+# preventing path traversal attacks and injection vulnerabilities.
+
+def validate_path_segment(
+    value: str,
+    name: str,
+    pattern: re.Pattern = None,
+) -> Tuple[bool, Optional[str]]:
+    """Validate a path segment against a pattern.
+
+    This is the primary function for validating user-provided path segments
+    like IDs, names, and slugs. It ensures values conform to safe patterns
+    and prevents path traversal or injection attacks.
+
+    Args:
+        value: The value to validate
+        name: Name of the segment for error messages
+        pattern: Regex pattern to match against (defaults to SAFE_ID_PATTERN)
+
+    Returns:
+        Tuple of (is_valid, error_message)
+
+    Example:
+        >>> is_valid, err = validate_path_segment("my-debate-123", "debate_id")
+        >>> if not is_valid:
+        ...     return error_response(400, err)
+    """
+    if pattern is None:
+        pattern = SAFE_ID_PATTERN
+
+    if not value:
+        return False, f"Missing {name}"
+    if not pattern.match(value):
+        return False, f"Invalid {name}: must match pattern {pattern.pattern}"
+    return True, None
+
+
+def validate_id(value: str, name: str = "ID") -> Tuple[bool, Optional[str]]:
+    """Validate a generic ID (alphanumeric with hyphens/underscores, 1-64 chars).
+
+    Args:
+        value: ID to validate
+        name: Name for error messages
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(value, name, SAFE_ID_PATTERN)
+
+
+def validate_agent_name(agent: str) -> Tuple[bool, Optional[str]]:
+    """Validate an agent name (alphanumeric with hyphens/underscores, 1-32 chars).
+
+    Args:
+        agent: Agent name to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(agent, "agent name", SAFE_AGENT_PATTERN)
+
+
+def validate_debate_id(debate_id: str) -> Tuple[bool, Optional[str]]:
+    """Validate a debate ID (alphanumeric with hyphens/underscores, 1-128 chars).
+
+    Args:
+        debate_id: Debate ID to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(debate_id, "debate ID", SAFE_SLUG_PATTERN)
+
+
+def validate_plugin_name(plugin_name: str) -> Tuple[bool, Optional[str]]:
+    """Validate a plugin name.
+
+    Args:
+        plugin_name: Plugin name to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(plugin_name, "plugin name", SAFE_ID_PATTERN)
+
+
+def validate_loop_id(loop_id: str) -> Tuple[bool, Optional[str]]:
+    """Validate a nomic loop ID.
+
+    Args:
+        loop_id: Loop ID to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(loop_id, "loop ID", SAFE_ID_PATTERN)
+
+
+def validate_replay_id(replay_id: str) -> Tuple[bool, Optional[str]]:
+    """Validate a replay ID.
+
+    Args:
+        replay_id: Replay ID to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(replay_id, "replay ID", SAFE_ID_PATTERN)
+
+
+def validate_genome_id(genome_id: str) -> Tuple[bool, Optional[str]]:
+    """Validate a genome ID (supports dots for versioning).
+
+    Args:
+        genome_id: Genome ID to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(genome_id, "genome ID", SAFE_ID_PATTERN_WITH_DOTS)
+
+
+def validate_agent_name_with_version(agent: str) -> Tuple[bool, Optional[str]]:
+    """Validate an agent name that may include version dots (e.g., claude-3.5-sonnet).
+
+    Args:
+        agent: Agent name to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    return validate_path_segment(agent, "agent name", SAFE_ID_PATTERN_WITH_DOTS)

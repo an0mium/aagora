@@ -498,8 +498,9 @@ class DatabaseManager:
             logger.error(f"Database error in DatabaseManager.connection(): {e}", exc_info=True)
             conn.rollback()
             raise
-        except Exception:
+        except Exception as e:
             # Rollback on any exception from user code, then re-raise unchanged
+            logger.warning(f"Non-database exception in DatabaseManager.connection(), rolling back: {type(e).__name__}: {e}")
             conn.rollback()
             raise
 
@@ -521,8 +522,9 @@ class DatabaseManager:
             logger.error(f"Database error in DatabaseManager.transaction(): {e}", exc_info=True)
             conn.execute("ROLLBACK")
             raise
-        except Exception:
+        except Exception as e:
             # Rollback on any exception from user code, then re-raise unchanged
+            logger.warning(f"Non-database exception in transaction context, rolling back: {type(e).__name__}: {e}")
             conn.execute("ROLLBACK")
             raise
 
@@ -547,7 +549,8 @@ class DatabaseManager:
             logger.error(f"Database error in DatabaseManager.fresh_connection(): {e}", exc_info=True)
             conn.rollback()
             raise
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Non-database exception in fresh_connection context, rolling back: {type(e).__name__}: {e}")
             conn.rollback()
             raise
         finally:
@@ -920,8 +923,9 @@ class ConnectionPool:
             logger.error(f"Database error in ConnectionPool.connection(): {e}", exc_info=True)
             conn.rollback()
             raise
-        except Exception:
+        except Exception as e:
             # Rollback on any exception from user code, then re-raise unchanged
+            logger.warning(f"Non-database exception in ConnectionPool.connection(), rolling back: {type(e).__name__}: {e}")
             conn.rollback()
             raise
         finally:

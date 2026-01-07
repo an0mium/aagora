@@ -280,11 +280,24 @@ class TestMyFeatureHandler:
 
 ## Security Considerations
 
-1. **Path traversal protection**: Validate path segments with `SAFE_ID_PATTERN`:
+1. **Path traversal protection**: Use centralized validation functions from `aragora.server.validation`:
    ```python
-   SAFE_ID_PATTERN = r'^[a-zA-Z0-9_-]+$'
-   if not re.match(SAFE_ID_PATTERN, item_id):
-       return error_response("Invalid ID format", 400)
+   from aragora.server.validation import validate_id, validate_debate_id, validate_agent_name
+
+   # For generic IDs
+   is_valid, err = validate_id(item_id, "item ID")
+   if not is_valid:
+       return error_response(err, 400)
+
+   # For debate IDs (longer allowed)
+   is_valid, err = validate_debate_id(debate_id)
+   if not is_valid:
+       return error_response(err, 400)
+
+   # For agent names
+   is_valid, err = validate_agent_name(agent)
+   if not is_valid:
+       return error_response(err, 400)
    ```
 
 2. **Rate limiting**: Applied at the server level before handlers are called

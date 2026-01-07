@@ -8,12 +8,72 @@ Inspired by Heavy3.ai document attachment feature.
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Security: Path Traversal Protection
+# =============================================================================
+
+# Pattern for valid document IDs (alphanumeric, hyphens, underscores only)
+VALID_DOC_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+def _validate_doc_id(doc_id: str) -> bool:
+    """Validate a document ID to prevent path traversal.
+
+    Args:
+        doc_id: The document ID to validate
+
+    Returns:
+        True if the ID is safe, False otherwise
+    """
+    if not doc_id:
+        return False
+
+    # Must match safe pattern (no path separators, no dots at start)
+    if not VALID_DOC_ID_PATTERN.match(doc_id):
+        return False
+
+    # Additional checks
+    if len(doc_id) > 128:  # Reasonable length limit
+        return False
+
+    return True
+
+
+def _safe_path(storage_dir: Path, doc_id: str) -> Optional[Path]:
+    """Construct a safe path for a document, preventing path traversal.
+
+    Args:
+        storage_dir: The base storage directory
+        doc_id: The document ID
+
+    Returns:
+        Safe path if valid, None if the ID is unsafe
+    """
+    if not _validate_doc_id(doc_id):
+        logger.warning(f"Invalid document ID rejected: {doc_id!r}")
+        return None
+
+    # Construct path and verify it's within storage_dir
+    doc_path = (storage_dir / f"{doc_id}.json").resolve()
+    storage_resolved = storage_dir.resolve()
+
+    # Ensure the path is within the storage directory
+    try:
+        doc_path.relative_to(storage_resolved)
+    except ValueError:
+        logger.warning(f"Path traversal attempt detected: {doc_id!r}")
+        return None
+
+    return doc_path
 
 # Optional PDF support
 try:
@@ -190,25 +250,40 @@ class DocumentStore:
         self._cache: dict[str, ParsedDocument] = {}
 
     def add(self, doc: ParsedDocument) -> str:
-        """Store a parsed document and return its ID."""
+        """Store a parsed document and return its ID.
+
+        Raises:
+            ValueError: If the document ID is invalid (path traversal protection)
+        """
+        # Validate document ID for path traversal protection
+        doc_path = _safe_path(self.storage_dir, doc.id)
+        if doc_path is None:
+            raise ValueError(f"Invalid document ID: {doc.id!r}")
+
         # Save to cache
         self._cache[doc.id] = doc
 
-        # Save to disk
-        doc_path = self.storage_dir / f"{doc.id}.json"
+        # Save to disk using validated path
         with open(doc_path, "w") as f:
             json.dump(doc.to_dict(), f, indent=2)
 
         return doc.id
 
     def get(self, doc_id: str) -> Optional[ParsedDocument]:
-        """Retrieve a document by ID."""
+        """Retrieve a document by ID.
+
+        Returns None for invalid document IDs (path traversal protection).
+        """
         # Check cache first
         if doc_id in self._cache:
             return self._cache[doc_id]
 
-        # Load from disk
-        doc_path = self.storage_dir / f"{doc_id}.json"
+        # Validate document ID for path traversal protection
+        doc_path = _safe_path(self.storage_dir, doc_id)
+        if doc_path is None:
+            return None
+
+        # Load from disk using validated path
         if not doc_path.exists():
             return None
 
@@ -252,12 +327,19 @@ class DocumentStore:
         return docs
 
     def delete(self, doc_id: str) -> bool:
-        """Delete a document by ID."""
+        """Delete a document by ID.
+
+        Returns False for invalid document IDs (path traversal protection).
+        """
+        # Validate document ID (path traversal protection)
+        doc_path = _safe_path(self.storage_dir, doc_id)
+        if doc_path is None:
+            return False
+
         # Remove from cache
         self._cache.pop(doc_id, None)
 
-        # Remove from disk
-        doc_path = self.storage_dir / f"{doc_id}.json"
+        # Remove from disk using validated path
         if doc_path.exists():
             doc_path.unlink()
             return True

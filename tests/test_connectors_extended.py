@@ -194,11 +194,11 @@ class TestYouTubeCircuitBreaker:
 
     def test_recovery_after_timeout(self):
         """Should allow recovery attempt after timeout."""
-        breaker = YouTubeCircuitBreaker(failure_threshold=1, recovery_timeout=0)
+        breaker = YouTubeCircuitBreaker(failure_threshold=1, cooldown_seconds=0)
         breaker.record_failure()
 
         assert breaker.is_open is True
-        # With recovery_timeout=0, should immediately allow retry
+        # With cooldown_seconds=0, should immediately allow retry
         assert breaker.can_proceed() is True
 
 
@@ -447,8 +447,8 @@ class TestTwitterCircuitBreaker:
     def test_default_thresholds(self):
         """Should use sensible defaults."""
         breaker = TwitterCircuitBreaker()
-        assert breaker.failure_threshold == 5
-        assert breaker.recovery_timeout == 60
+        assert breaker.failure_threshold == 3  # Default from CircuitBreaker
+        assert breaker.cooldown_seconds == 60.0  # Default cooldown
 
     def test_behavior_matches_youtube_breaker(self):
         """Should behave like YouTube breaker."""
@@ -544,19 +544,20 @@ class TestTwitterPosterConnector:
 
     @pytest.mark.asyncio
     async def test_upload_media_fails_without_credentials(self):
-        """upload_media should fail when not configured."""
+        """upload_media should raise TwitterAuthError when not configured."""
+        from aragora.connectors.twitter_poster import TwitterAuthError
         connector = TwitterPosterConnector()
 
         with tempfile.NamedTemporaryFile(suffix=".png") as f:
             f.write(b"fake image")
             f.flush()
-            result = await connector.upload_media(Path(f.name))
-
-        assert result is None
+            with pytest.raises(TwitterAuthError):
+                await connector.upload_media(Path(f.name))
 
     @pytest.mark.asyncio
     async def test_upload_media_fails_for_missing_file(self):
-        """upload_media should fail for missing file."""
+        """upload_media should raise TwitterMediaError for missing file."""
+        from aragora.connectors.twitter_poster import TwitterMediaError
         connector = TwitterPosterConnector(
             api_key="key",
             api_secret="secret",
@@ -564,13 +565,13 @@ class TestTwitterPosterConnector:
             access_secret="secret",
         )
 
-        result = await connector.upload_media(Path("/nonexistent.png"))
-
-        assert result is None
+        with pytest.raises(TwitterMediaError, match="not found"):
+            await connector.upload_media(Path("/nonexistent.png"))
 
     @pytest.mark.asyncio
     async def test_upload_media_fails_for_oversized_file(self):
-        """upload_media should fail for files exceeding size limit."""
+        """upload_media should raise TwitterMediaError for files exceeding size limit."""
+        from aragora.connectors.twitter_poster import TwitterMediaError
         connector = TwitterPosterConnector(
             api_key="key",
             api_secret="secret",
@@ -582,9 +583,8 @@ class TestTwitterPosterConnector:
             # Write >5MB
             f.write(b"0" * (6 * 1024 * 1024))
             f.flush()
-            result = await connector.upload_media(Path(f.name))
-
-        assert result is None
+            with pytest.raises(TwitterMediaError, match="too large"):
+                await connector.upload_media(Path(f.name))
 
 
 # =============================================================================

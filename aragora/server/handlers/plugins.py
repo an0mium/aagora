@@ -9,7 +9,6 @@ Endpoints:
 
 import asyncio
 import logging
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -21,7 +20,7 @@ from .base import (
     error_response,
     handle_errors,
 )
-from aragora.server.validation import SAFE_ID_PATTERN
+from aragora.server.validation import validate_plugin_name
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +61,9 @@ class PluginsHandler(BaseHandler):
             parts = path.split("/")
             if len(parts) == 4:
                 plugin_name = parts[3]
-                if not plugin_name or not re.match(SAFE_ID_PATTERN, plugin_name):
-                    return error_response("Invalid plugin name", 400)
+                is_valid, err = validate_plugin_name(plugin_name)
+                if not is_valid:
+                    return error_response(err, 400)
                 return self._get_plugin(plugin_name)
 
         return None
@@ -75,8 +75,9 @@ class PluginsHandler(BaseHandler):
             parts = path.split("/")
             if len(parts) == 5:
                 plugin_name = parts[3]
-                if not plugin_name or not re.match(SAFE_ID_PATTERN, plugin_name):
-                    return error_response("Invalid plugin name", 400)
+                is_valid, err = validate_plugin_name(plugin_name)
+                if not is_valid:
+                    return error_response(err, 400)
                 return self._run_plugin(plugin_name, handler)
         return None
 

@@ -11,7 +11,6 @@ Endpoints:
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +22,7 @@ from .base import (
     get_clamped_int_param,
     get_bounded_float_param,
 )
-from aragora.server.validation import SAFE_ID_PATTERN
+from aragora.server.validation import validate_id, validate_debate_id
 from aragora.utils.optional_imports import try_import
 
 logger = logging.getLogger(__name__)
@@ -101,7 +100,9 @@ class BeliefHandler(BaseHandler):
             if len(parts) >= 6:
                 debate_id = parts[3]
                 claim_id = parts[5]
-                if not re.match(SAFE_ID_PATTERN, debate_id) or not re.match(SAFE_ID_PATTERN, claim_id):
+                valid_debate, _ = validate_debate_id(debate_id)
+                valid_claim, _ = validate_id(claim_id, "claim ID")
+                if not valid_debate or not valid_claim:
                     return error_response("Invalid ID format", 400)
                 return self._get_claim_support(nomic_dir, debate_id, claim_id)
             return error_response("Invalid path format", 400)
@@ -119,7 +120,8 @@ class BeliefHandler(BaseHandler):
         parts = path.split('/')
         if len(parts) > segment_index:
             debate_id = parts[segment_index]
-            if re.match(SAFE_ID_PATTERN, debate_id):
+            is_valid, _ = validate_debate_id(debate_id)
+            if is_valid:
                 return debate_id
         return None
 

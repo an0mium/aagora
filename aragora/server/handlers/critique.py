@@ -9,7 +9,6 @@ Endpoints:
 """
 
 import logging
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -21,7 +20,7 @@ from .base import (
     get_clamped_int_param,
     get_bounded_float_param,
 )
-from aragora.server.validation import SAFE_ID_PATTERN_WITH_DOTS as SAFE_ID_PATTERN
+from aragora.server.validation import validate_agent_name_with_version
 from aragora.utils.optional_imports import try_import_class
 
 logger = logging.getLogger(__name__)
@@ -84,7 +83,8 @@ class CritiqueHandler(BaseHandler):
         parts = path.split('/')
         if len(parts) >= 4:
             agent = parts[3]
-            if re.match(SAFE_ID_PATTERN, agent):
+            is_valid, _ = validate_agent_name_with_version(agent)
+            if is_valid:
                 return agent
         return None
 

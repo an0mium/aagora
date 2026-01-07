@@ -23,7 +23,11 @@ from aragora.server.prometheus import record_cache_hit, record_cache_miss
 from aragora.server.validation import SAFE_ID_PATTERN, SAFE_AGENT_PATTERN, SAFE_SLUG_PATTERN
 
 # Re-export DB_TIMEOUT_SECONDS for backwards compatibility
-__all__ = ["DB_TIMEOUT_SECONDS", "require_auth", "error_response", "json_response", "handle_errors", "log_request"]
+__all__ = [
+    "DB_TIMEOUT_SECONDS", "require_auth", "error_response", "json_response",
+    "handle_errors", "log_request", "ttl_cache", "clear_cache", "get_cache_stats",
+    "invalidate_cache", "CACHE_INVALIDATION_MAP",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +193,50 @@ def clear_cache(key_prefix: str | None = None) -> int:
 def get_cache_stats() -> dict:
     """Get cache statistics for monitoring."""
     return _cache.stats
+
+
+# Cache invalidation registry - maps data sources to cache key prefixes
+CACHE_INVALIDATION_MAP: dict[str, list[str]] = {
+    "elo": [
+        "lb_rankings", "lb_matches", "lb_reputation", "lb_stats",
+        "leaderboard", "agent_profile", "agent_h2h", "lb_teams",
+    ],
+    "calibration": [
+        "calibration_lb", "lb_introspection", "agent_flips",
+        "flips_recent", "flips_summary",
+    ],
+    "memory": [
+        "replays_list", "learning_evolution", "meta_learning_stats",
+    ],
+    "consensus": [
+        "consensus_similar", "consensus_settled", "consensus_stats",
+        "recent_dissents", "contrarian_views", "risk_warnings",
+    ],
+    "debates": [
+        "dashboard_debates", "analytics_disagreement", "analytics_roles",
+        "analytics_early_stop", "analytics_ranking", "analytics_debates",
+        "analytics_memory",
+    ],
+}
+
+
+def invalidate_cache(data_source: str) -> int:
+    """Invalidate all caches related to a data source.
+
+    Args:
+        data_source: One of 'elo', 'calibration', 'memory', 'consensus', 'debates'
+
+    Returns:
+        Total number of cache entries cleared.
+    """
+    prefixes = CACHE_INVALIDATION_MAP.get(data_source, [])
+    total = 0
+    for prefix in prefixes:
+        cleared = clear_cache(prefix)
+        total += cleared
+    if total > 0:
+        logger.debug(f"Cache invalidated for '{data_source}': {total} entries cleared")
+    return total
 
 
 @dataclass

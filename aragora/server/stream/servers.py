@@ -134,6 +134,17 @@ class DebateStreamServer:
 
     Supports multiple concurrent nomic loop instances with view switching.
 
+    Lock Hierarchy (acquire in this order to prevent deadlocks):
+    ---------------------------------------------------------------
+    1. _rate_limiters_lock  - Protects _rate_limiters and _rate_limiter_last_access
+    2. _debate_states_lock  - Protects debate_states and _debate_states_last_access
+    3. _active_loops_lock   - Protects active_loops and _active_loops_last_access
+
+    IMPORTANT: Each method should only acquire ONE lock at a time. If multiple
+    locks must be acquired (e.g., in cleanup methods), acquire them sequentially
+    in the order above, releasing each before acquiring the next. Never nest
+    lock acquisitions to prevent deadlocks.
+
     Usage:
         server = DebateStreamServer(port=8765)
         hooks = create_arena_hooks(server.emitter)
@@ -151,28 +162,28 @@ class DebateStreamServer:
         self.current_debate: Optional[dict] = None
         self._emitter = SyncEventEmitter()
         self._running = False
-        # Multi-loop tracking with thread safety and TTL cleanup
-        self.active_loops: dict[str, LoopInstance] = {}  # loop_id -> LoopInstance
-        self._active_loops_lock = threading.Lock()
-        self._active_loops_last_access: dict[str, float] = {}  # loop_id -> last access time
-        self._ACTIVE_LOOPS_TTL = 86400  # 24 hour TTL for stale loops
-        self._MAX_ACTIVE_LOOPS = 1000  # Max concurrent loops
+        # Audience participation - Lock hierarchy level 1 (acquire first)
+        self.audience_inbox = AudienceInbox()
+        self._rate_limiters: dict[str, TokenBucket] = {}  # client_id -> TokenBucket
+        self._rate_limiter_last_access: dict[str, float] = {}  # client_id -> last access time
+        self._rate_limiters_lock = threading.Lock()  # Lock #1 in hierarchy
+        self._rate_limiter_cleanup_counter = 0  # Counter for periodic cleanup
+        self._RATE_LIMITER_TTL = 3600  # 1 hour TTL for rate limiters
+        self._CLEANUP_INTERVAL = 100  # Cleanup every N accesses
 
-        # Debate state caching for late joiner sync with TTL cleanup
+        # Debate state caching for late joiner sync - Lock hierarchy level 2
         self.debate_states: dict[str, dict] = {}  # loop_id -> debate state
-        self._debate_states_lock = threading.Lock()
+        self._debate_states_lock = threading.Lock()  # Lock #2 in hierarchy
         self._debate_states_last_access: dict[str, float] = {}  # loop_id -> last access time
         self._DEBATE_STATES_TTL = 3600  # 1 hour TTL for ended debates
         self._MAX_DEBATE_STATES = 500  # Max cached states
 
-        # Audience participation
-        self.audience_inbox = AudienceInbox()
-        self._rate_limiters: dict[str, TokenBucket] = {}  # client_id -> TokenBucket
-        self._rate_limiter_last_access: dict[str, float] = {}  # client_id -> last access time
-        self._rate_limiters_lock = threading.Lock()
-        self._rate_limiter_cleanup_counter = 0  # Counter for periodic cleanup
-        self._RATE_LIMITER_TTL = 3600  # 1 hour TTL for rate limiters
-        self._CLEANUP_INTERVAL = 100  # Cleanup every N accesses
+        # Multi-loop tracking with thread safety - Lock hierarchy level 3 (acquire last)
+        self.active_loops: dict[str, LoopInstance] = {}  # loop_id -> LoopInstance
+        self._active_loops_lock = threading.Lock()  # Lock #3 in hierarchy
+        self._active_loops_last_access: dict[str, float] = {}  # loop_id -> last access time
+        self._ACTIVE_LOOPS_TTL = 86400  # 24 hour TTL for stale loops
+        self._MAX_ACTIVE_LOOPS = 1000  # Max concurrent loops
 
         # Secure client ID mapping with LRU eviction (cryptographically random, not memory address)
         self._client_ids: OrderedDict[int, str] = OrderedDict()  # websocket id -> secure client_id
@@ -782,6 +793,18 @@ class AiohttpUnifiedServer:
     This is the recommended server for production as it avoids CORS issues with
     separate ports for HTTP and WebSocket.
 
+    Lock Hierarchy (acquire in this order to prevent deadlocks):
+    ---------------------------------------------------------------
+    1. _rate_limiters_lock   - Protects _rate_limiters and _rate_limiter_last_access
+    2. _debate_states_lock   - Protects debate_states and _debate_states_last_access
+    3. _active_loops_lock    - Protects active_loops and _active_loops_last_access
+    4. _cartographers_lock   - Protects cartographers registry
+
+    IMPORTANT: Each method should only acquire ONE lock at a time. If multiple
+    locks must be acquired (e.g., in cleanup methods), acquire them sequentially
+    in the order above, releasing each before acquiring the next. Never nest
+    lock acquisitions to prevent deadlocks.
+
     Usage:
         server = AiohttpUnifiedServer(port=8080, nomic_dir=Path(".nomic"))
         await server.start()
@@ -802,28 +825,32 @@ class AiohttpUnifiedServer:
         self._emitter = SyncEventEmitter()
         self._running = False
 
-        # Multi-loop tracking with TTL cleanup
-        self.active_loops: dict[str, LoopInstance] = {}
-        self._active_loops_lock = threading.Lock()
-        self._active_loops_last_access: dict[str, float] = {}
-        self._ACTIVE_LOOPS_TTL = 86400  # 24 hour TTL for stale loops
-        self._MAX_ACTIVE_LOOPS = 1000  # Max concurrent loops
+        # Audience participation - Lock hierarchy level 1 (acquire first)
+        self.audience_inbox = AudienceInbox()
+        self._rate_limiters: dict[str, TokenBucket] = {}
+        self._rate_limiter_last_access: dict[str, float] = {}
+        self._rate_limiters_lock = threading.Lock()  # Lock #1 in hierarchy
+        self._rate_limiter_cleanup_counter = 0
+        self._RATE_LIMITER_TTL = 3600  # 1 hour TTL
+        self._CLEANUP_INTERVAL = 100  # Cleanup every N accesses
 
-        # Debate state caching with TTL cleanup
+        # Debate state caching - Lock hierarchy level 2
         self.debate_states: dict[str, dict] = {}
-        self._debate_states_lock = threading.Lock()
+        self._debate_states_lock = threading.Lock()  # Lock #2 in hierarchy
         self._debate_states_last_access: dict[str, float] = {}
         self._DEBATE_STATES_TTL = 3600  # 1 hour TTL for ended debates
         self._MAX_DEBATE_STATES = 500  # Max cached states
 
-        # Audience participation
-        self.audience_inbox = AudienceInbox()
-        self._rate_limiters: dict[str, TokenBucket] = {}
-        self._rate_limiter_last_access: dict[str, float] = {}
-        self._rate_limiters_lock = threading.Lock()
-        self._rate_limiter_cleanup_counter = 0
-        self._RATE_LIMITER_TTL = 3600  # 1 hour TTL
-        self._CLEANUP_INTERVAL = 100  # Cleanup every N accesses
+        # Multi-loop tracking - Lock hierarchy level 3
+        self.active_loops: dict[str, LoopInstance] = {}
+        self._active_loops_lock = threading.Lock()  # Lock #3 in hierarchy
+        self._active_loops_last_access: dict[str, float] = {}
+        self._ACTIVE_LOOPS_TTL = 86400  # 24 hour TTL for stale loops
+        self._MAX_ACTIVE_LOOPS = 1000  # Max concurrent loops
+
+        # ArgumentCartographer registry - Lock hierarchy level 4 (acquire last)
+        self.cartographers: Dict[str, Any] = {}
+        self._cartographers_lock = threading.Lock()  # Lock #4 in hierarchy
 
         # Secure client ID mapping with LRU eviction
         self._client_ids: OrderedDict[int, str] = OrderedDict()
@@ -835,10 +862,6 @@ class AiohttpUnifiedServer:
         self.flip_detector = None
         self.persona_manager = None
         self.debate_embeddings = None
-
-        # ArgumentCartographer registry with cleanup on loop unregister
-        self.cartographers: Dict[str, Any] = {}
-        self._cartographers_lock = threading.Lock()
 
         # Subscribe to emitter to maintain debate states
         self._emitter.subscribe(self._update_debate_state)

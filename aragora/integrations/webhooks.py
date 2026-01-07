@@ -327,7 +327,7 @@ class WebhookDispatcher:
         """
         try:
             parsed = urlparse(url)
-        except Exception:
+        except ValueError:
             return False, "Invalid URL format"
 
         # Only allow HTTP/HTTPS

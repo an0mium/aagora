@@ -8,14 +8,13 @@ Endpoints:
 import asyncio
 import json
 import logging
-import re
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from aragora.utils.optional_imports import try_import
-from aragora.server.validation import SAFE_ID_PATTERN
+from aragora.server.validation import validate_agent_name
 from aragora.debate.sanitization import OutputSanitizer
 from .base import (
     BaseHandler,
@@ -117,8 +116,9 @@ class ProbesHandler(BaseHandler):
             return error_response("Missing required field: agent_name", status=400)
 
         # Validate agent name
-        if not re.match(SAFE_ID_PATTERN, agent_name):
-            return error_response("Invalid agent_name format", status=400)
+        is_valid, err = validate_agent_name(agent_name)
+        if not is_valid:
+            return error_response(err, status=400)
 
         probe_type_strs = body.get('probe_types', [
             'contradiction', 'hallucination', 'sycophancy', 'persistence'

@@ -52,8 +52,9 @@ def save_progress(progress: ImplementProgress, repo_path: Path) -> None:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise
-    except Exception:
-        # Clean up temp file on any other error, then re-raise
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        # Clean up temp file on serialization errors, then re-raise
+        logger.error(f"Serialization error saving checkpoint: {type(e).__name__}: {e}")
         if os.path.exists(temp_path):
             os.unlink(temp_path)
         raise

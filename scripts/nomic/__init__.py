@@ -1,0 +1,46 @@
+"""
+Nomic Loop: Autonomous self-improvement cycle for aragora.
+
+This package provides modular components for the nomic loop:
+- recovery: Phase error recovery and retry logic
+- circuit_breaker: Agent failure detection and cooldown
+- safety: Protected file checksums, backups, and rollback
+- git: Git operations for version control
+- config: Configuration constants and environment loading
+
+Like a PCR machine for code evolution:
+1. DEBATE: All agents propose improvements to aragora
+2. CONSENSUS: Agents critique and refine until consensus
+3. DESIGN: Agents design the implementation
+4. IMPLEMENT: Agents write the code
+5. VERIFY: Run tests, check quality
+6. COMMIT: If verified, commit changes
+7. REPEAT: Cycle continues
+
+The dialectic tension between models (visionary vs pragmatic vs synthesizer)
+creates emergent complexity and self-criticality.
+"""
+
+from .recovery import PhaseError, PhaseRecovery
+from .circuit_breaker import AgentCircuitBreaker
+from .config import (
+    NOMIC_AUTO_COMMIT,
+    NOMIC_AUTO_CONTINUE,
+    NOMIC_MAX_CYCLE_SECONDS,
+    NOMIC_STALL_THRESHOLD,
+    load_dotenv,
+)
+
+__all__ = [
+    # Recovery
+    "PhaseError",
+    "PhaseRecovery",
+    # Circuit Breaker
+    "AgentCircuitBreaker",
+    # Config
+    "NOMIC_AUTO_COMMIT",
+    "NOMIC_AUTO_CONTINUE",
+    "NOMIC_MAX_CYCLE_SECONDS",
+    "NOMIC_STALL_THRESHOLD",
+    "load_dotenv",
+]

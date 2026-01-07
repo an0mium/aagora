@@ -22,6 +22,16 @@ Inspired by:
 
 SAFETY: This file includes backup/restore mechanisms and safety prompts
 to prevent the nomic loop from breaking itself.
+
+NOTE: Utility modules have been extracted to scripts/nomic/ package:
+- scripts/nomic/recovery.py: PhaseError, PhaseRecovery
+- scripts/nomic/circuit_breaker.py: AgentCircuitBreaker
+- scripts/nomic/safety/checksums.py: Protected file verification
+- scripts/nomic/safety/backups.py: Backup/restore functionality
+- scripts/nomic/git/operations.py: Git operations
+- scripts/nomic/config.py: Configuration constants
+
+Original implementations are preserved here for backward compatibility.
 """
 
 import asyncio
@@ -45,6 +55,30 @@ logger = logging.getLogger(__name__)
 
 # Import config for database paths (consolidated persona database)
 from aragora.config import DB_PERSONAS_PATH
+
+# =============================================================================
+# MODULAR PACKAGE IMPORTS (scripts/nomic/)
+# These modules are extracted versions of the code below, available for reuse
+# =============================================================================
+try:
+    from scripts.nomic import (
+        PhaseError as _PhaseError,
+        PhaseRecovery as _PhaseRecovery,
+        AgentCircuitBreaker as _AgentCircuitBreaker,
+    )
+    from scripts.nomic.safety import (
+        PROTECTED_FILES as _PROTECTED_FILES,
+        SAFETY_PREAMBLE as _SAFETY_PREAMBLE,
+    )
+    from scripts.nomic.config import (
+        NOMIC_AUTO_COMMIT as _NOMIC_AUTO_COMMIT,
+        NOMIC_AUTO_CONTINUE as _NOMIC_AUTO_CONTINUE,
+        NOMIC_MAX_CYCLE_SECONDS as _NOMIC_MAX_CYCLE_SECONDS,
+        NOMIC_STALL_THRESHOLD as _NOMIC_STALL_THRESHOLD,
+    )
+    _NOMIC_PACKAGE_AVAILABLE = True
+except ImportError:
+    _NOMIC_PACKAGE_AVAILABLE = False
 
 # =============================================================================
 # AUTOMATION FLAGS - Environment variables for CI/automation support

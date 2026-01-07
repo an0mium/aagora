@@ -79,7 +79,8 @@ class EloDatabase:
             try:
                 yield conn
                 conn.execute("COMMIT")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Non-database exception during transaction, rolling back: {type(e).__name__}: {e}")
                 conn.execute("ROLLBACK")
                 raise
 

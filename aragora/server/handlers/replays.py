@@ -10,7 +10,6 @@ Endpoints:
 
 import json
 import logging
-import re
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -24,7 +23,7 @@ from .base import (
     ttl_cache,
 )
 from aragora.config import DB_TIMEOUT_SECONDS
-from aragora.server.validation import SAFE_ID_PATTERN
+from aragora.server.validation import validate_replay_id
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,9 @@ class ReplaysHandler(BaseHandler):
             if '..' in path:
                 return error_response("Invalid replay ID", 400)
             replay_id = path.split('/')[-1]
-            if not replay_id or not re.match(SAFE_ID_PATTERN, replay_id):
-                return error_response("Invalid replay ID format", 400)
+            is_valid, err = validate_replay_id(replay_id)
+            if not is_valid:
+                return error_response(err, 400)
             # Support pagination for large replay files
             offset = get_int_param(query_params, 'offset', 0)
             limit = get_int_param(query_params, 'limit', 1000)

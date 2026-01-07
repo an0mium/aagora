@@ -9,6 +9,7 @@ Main components:
 - emitter: Event emitter and audience participation (SyncEventEmitter, AudienceInbox)
 - state_manager: Debate and loop state management (DebateStateManager)
 - arena_hooks: Arena integration hooks (create_arena_hooks)
+- broadcaster: Client management and broadcasting utilities (WebSocketBroadcaster)
 - servers: WebSocket and HTTP server classes (DebateStreamServer, AiohttpUnifiedServer)
 """
 
@@ -39,6 +40,13 @@ from .state_manager import (
 from .arena_hooks import (
     create_arena_hooks,
     wrap_agent_for_streaming,
+)
+from .broadcaster import (
+    BroadcasterConfig,
+    ClientManager,
+    DebateStateCache,
+    LoopRegistry,
+    WebSocketBroadcaster,
 )
 from .servers import (
     DebateStreamServer,
@@ -89,6 +97,12 @@ __all__ = [
     # Arena hooks
     "create_arena_hooks",
     "wrap_agent_for_streaming",
+    # Broadcaster
+    "BroadcasterConfig",
+    "ClientManager",
+    "DebateStateCache",
+    "LoopRegistry",
+    "WebSocketBroadcaster",
     # Servers
     "DebateStreamServer",
     "AiohttpUnifiedServer",

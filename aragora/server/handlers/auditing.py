@@ -10,7 +10,6 @@ Endpoints:
 import asyncio
 import json
 import logging
-import re
 import time
 import uuid
 from datetime import datetime
@@ -21,8 +20,8 @@ from .base import (
     HandlerResult,
     json_response,
     error_response,
-    SAFE_ID_PATTERN,
 )
+from aragora.server.validation import validate_debate_id, validate_agent_name, validate_id
 from aragora.utils.optional_imports import try_import_class
 
 logger = logging.getLogger(__name__)
@@ -75,8 +74,9 @@ class AuditingHandler(BaseHandler):
             parts = path.split("/")
             if len(parts) >= 4:
                 debate_id = parts[3]
-                if not re.match(SAFE_ID_PATTERN, debate_id):
-                    return error_response("Invalid debate_id format", 400)
+                is_valid, err = validate_debate_id(debate_id)
+                if not is_valid:
+                    return error_response(err, 400)
                 return self._run_red_team_analysis(debate_id, handler)
 
         return None
@@ -106,8 +106,9 @@ class AuditingHandler(BaseHandler):
             if not agent_name:
                 return error_response("Missing required field: agent_name", 400)
 
-            if not re.match(SAFE_ID_PATTERN, agent_name):
-                return error_response("Invalid agent_name format", 400)
+            is_valid, err = validate_agent_name(agent_name)
+            if not is_valid:
+                return error_response(err, 400)
 
             probe_type_strs = data.get('probe_types', [
                 'contradiction', 'hallucination', 'sycophancy', 'persistence'
@@ -314,7 +315,8 @@ class AuditingHandler(BaseHandler):
 
             agents = []
             for name in agent_names[:5]:
-                if not re.match(SAFE_ID_PATTERN, name):
+                is_valid, _ = validate_id(name, "agent name")
+                if not is_valid:
                     continue
                 try:
                     agent = create_agent(model_type, name=name, role="proposer")

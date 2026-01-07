@@ -1,0 +1,1778 @@
+openapi: 3.0.3
+info:
+  title: Aragora Debate API
+  description: |
+    Multi-agent debate framework API for orchestrating AI debates,
+    tracking agent performance, and managing consensus memory.
+
+    ## Authentication
+    Protected endpoints require a Bearer token in the Authorization header:
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## Rate Limiting
+    Query parameters have maximum values to prevent abuse.
+    Responses include cache headers where applicable.
+  version: 1.0.0
+  contact:
+    name: Aragora Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Debates
+    description: Debate management and history
+  - name: Agents
+    description: Agent profiles, rankings, and performance
+  - name: System
+    description: Health checks and system status
+  - name: Consensus
+    description: Consensus memory and dissent tracking
+  - name: Memory
+    description: Continuum memory management
+  - name: Tournaments
+    description: Tournament management
+  - name: Replays
+    description: Debate replay access
+  - name: Documents
+    description: Document upload and management
+  - name: Verification
+    description: Formal verification of claims
+  - name: Analytics
+    description: System analytics and metrics
+  - name: Relationships
+    description: Agent relationship tracking
+  - name: Moments
+    description: Significant debate moments
+  - name: Dashboard
+    description: Dashboard aggregated data
+
+paths:
+  # =============================================================================
+  # DEBATES
+  # =============================================================================
+  /api/debates:
+    get:
+      tags: [Debates]
+      summary: List all debates
+      description: Returns a paginated list of recent debates
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Maximum number of debates to return
+      responses:
+        '200':
+          description: List of debates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  debates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DebateSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/debates/slug/{slug}:
+    get:
+      tags: [Debates]
+      summary: Get debate by slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]+$'
+      responses:
+        '200':
+          description: Debate details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Debate'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/debates/{id}/export/{format}:
+    get:
+      tags: [Debates]
+      summary: Export debate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: format
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [json, csv, html]
+        - name: table
+          in: query
+          schema:
+            type: string
+            enum: [summary, messages, critiques, votes]
+      responses:
+        '200':
+          description: Exported debate data
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/debates/{id}/impasse:
+    get:
+      tags: [Debates]
+      summary: Detect debate impasse
+      description: Analyzes debate for signs of stalemate or circular arguments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Impasse analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImpasseAnalysis'
+
+  /api/debates/{id}/convergence:
+    get:
+      tags: [Debates]
+      summary: Get convergence status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Convergence metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvergenceStatus'
+
+  /api/debates/{id}/citations:
+    get:
+      tags: [Debates]
+      summary: Get evidence citations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Evidence citations and grounded verdict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Citations'
+
+  /api/debates/{id}/fork:
+    post:
+      tags: [Debates]
+      summary: Fork debate at branch point
+      description: Create a counterfactual fork of the debate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch_point]
+              properties:
+                branch_point:
+                  type: integer
+                  description: Round number to fork from
+                modified_context:
+                  type: string
+                  description: Optional modified context for the fork
+      responses:
+        '200':
+          description: Forked debate created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # =============================================================================
+  # AGENTS
+  # =============================================================================
+  /api/leaderboard:
+    get:
+      tags: [Agents]
+      summary: Get agent rankings
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: domain
+          in: query
+          schema:
+            type: string
+          description: Filter by domain
+      responses:
+        '200':
+          description: Agent leaderboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  leaderboard:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LeaderboardEntry'
+
+  /api/matches/recent:
+    get:
+      tags: [Agents]
+      summary: Get recent matches
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: loop_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recent matches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matches:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Match'
+
+  /api/agent/{name}/profile:
+    get:
+      tags: [Agents]
+      summary: Get agent profile
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]+$'
+      responses:
+        '200':
+          description: Agent profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfile'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/agent/{name}/history:
+    get:
+      tags: [Agents]
+      summary: Get agent match history
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+      responses:
+        '200':
+          description: Match history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MatchHistoryEntry'
+
+  /api/agent/{name}/consistency:
+    get:
+      tags: [Agents]
+      summary: Get consistency score
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Consistency metrics from flip detector
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsistencyScore'
+
+  /api/agent/{name}/network:
+    get:
+      tags: [Agents]
+      summary: Get relationship network
+      description: Returns rivals and allies for the agent
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Relationship network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipNetwork'
+
+  /api/agent/compare:
+    get:
+      tags: [Agents]
+      summary: Compare multiple agents
+      parameters:
+        - name: agents
+          in: query
+          required: true
+          schema:
+            type: array
+            items:
+              type: string
+            minItems: 2
+            maxItems: 5
+          style: form
+          explode: true
+      responses:
+        '200':
+          description: Agent comparison
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentComparison'
+
+  /api/flips/recent:
+    get:
+      tags: [Agents]
+      summary: Get recent position flips
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Recent position flips
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flips:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PositionFlip'
+
+  # =============================================================================
+  # SYSTEM
+  # =============================================================================
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health check
+      responses:
+        '200':
+          description: System healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+        '503':
+          description: System degraded
+
+  /api/health/detailed:
+    get:
+      tags: [System]
+      summary: Detailed health check
+      responses:
+        '200':
+          description: Detailed health metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedHealth'
+
+  /api/nomic/state:
+    get:
+      tags: [System]
+      summary: Get nomic loop state
+      responses:
+        '200':
+          description: Current nomic state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NomicState'
+
+  /api/nomic/health:
+    get:
+      tags: [System]
+      summary: Get nomic health
+      description: Includes stall detection (30 minute threshold)
+      responses:
+        '200':
+          description: Nomic health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NomicHealth'
+
+  /api/modes:
+    get:
+      tags: [System]
+      summary: Get available modes
+      responses:
+        '200':
+          description: Available operational modes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  modes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Mode'
+
+  # =============================================================================
+  # CONSENSUS
+  # =============================================================================
+  /api/consensus/similar:
+    get:
+      tags: [Consensus]
+      summary: Find similar debates
+      parameters:
+        - name: topic
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 500
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        '200':
+          description: Similar debates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  similar:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SimilarDebate'
+
+  /api/consensus/settled:
+    get:
+      tags: [Consensus]
+      summary: Get settled topics
+      parameters:
+        - name: min_confidence
+          in: query
+          schema:
+            type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+            default: 0.8
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: High-confidence settled topics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settled:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SettledTopic'
+
+  /api/consensus/stats:
+    get:
+      tags: [Consensus]
+      summary: Get consensus statistics
+      responses:
+        '200':
+          description: Consensus memory statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsensusStats'
+
+  /api/consensus/dissents:
+    get:
+      tags: [Consensus]
+      summary: Get dissenting views
+      parameters:
+        - name: topic
+          in: query
+          schema:
+            type: string
+        - name: domain
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Recent dissenting views
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dissents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Dissent'
+
+  # =============================================================================
+  # MEMORY
+  # =============================================================================
+  /api/memory/continuum/retrieve:
+    get:
+      tags: [Memory]
+      summary: Retrieve memories
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 500
+        - name: tiers
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [fast, medium, slow, glacial]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: min_importance
+          in: query
+          schema:
+            type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+            default: 0.0
+      responses:
+        '200':
+          description: Retrieved memories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Memory'
+
+  /api/memory/continuum/consolidate:
+    post:
+      tags: [Memory]
+      summary: Trigger consolidation
+      responses:
+        '200':
+          description: Consolidation triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  promoted:
+                    type: integer
+                  demoted:
+                    type: integer
+
+  /api/memory/tier-stats:
+    get:
+      tags: [Memory]
+      summary: Get tier statistics
+      responses:
+        '200':
+          description: Memory tier statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TierStats'
+
+  # =============================================================================
+  # TOURNAMENTS
+  # =============================================================================
+  /api/tournaments:
+    get:
+      tags: [Tournaments]
+      summary: List tournaments
+      responses:
+        '200':
+          description: Available tournaments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tournaments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tournament'
+
+  /api/tournaments/{id}/standings:
+    get:
+      tags: [Tournaments]
+      summary: Get tournament standings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tournament standings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TournamentStandings'
+
+  # =============================================================================
+  # REPLAYS
+  # =============================================================================
+  /api/replays:
+    get:
+      tags: [Replays]
+      summary: List replays
+      responses:
+        '200':
+          description: Available replays
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  replays:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReplaySummary'
+
+  /api/replays/{replay_id}:
+    get:
+      tags: [Replays]
+      summary: Get replay
+      parameters:
+        - name: replay_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 1000
+      responses:
+        '200':
+          description: Replay events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Replay'
+
+  # =============================================================================
+  # DOCUMENTS
+  # =============================================================================
+  /api/documents:
+    get:
+      tags: [Documents]
+      summary: List documents
+      responses:
+        '200':
+          description: Uploaded documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentSummary'
+
+  /api/documents/formats:
+    get:
+      tags: [Documents]
+      summary: Get supported formats
+      responses:
+        '200':
+          description: Supported document formats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportedFormats'
+
+  /api/documents/{doc_id}:
+    get:
+      tags: [Documents]
+      summary: Get document
+      parameters:
+        - name: doc_id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_-]+$'
+      responses:
+        '200':
+          description: Document content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # =============================================================================
+  # VERIFICATION
+  # =============================================================================
+  /api/verification/status:
+    get:
+      tags: [Verification]
+      summary: Get verification backend status
+      responses:
+        '200':
+          description: Backend availability (Z3, Lean)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationStatus'
+
+  /api/verification/formal-verify:
+    post:
+      tags: [Verification]
+      summary: Verify claim formally
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claim]
+              properties:
+                claim:
+                  type: string
+                  description: Claim to verify
+                claim_type:
+                  type: string
+                context:
+                  type: string
+                timeout:
+                  type: integer
+                  minimum: 1
+                  maximum: 120
+                  default: 30
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResult'
+
+  # =============================================================================
+  # ANALYTICS
+  # =============================================================================
+  /api/analytics/disagreements:
+    get:
+      tags: [Analytics]
+      summary: Get disagreement statistics
+      responses:
+        '200':
+          description: Disagreement metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisagreementStats'
+
+  /api/ranking/stats:
+    get:
+      tags: [Analytics]
+      summary: Get ranking statistics
+      responses:
+        '200':
+          description: Ranking system statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RankingStats'
+
+  # =============================================================================
+  # RELATIONSHIPS
+  # =============================================================================
+  /api/relationships/summary:
+    get:
+      tags: [Relationships]
+      summary: Get relationship overview
+      responses:
+        '200':
+          description: Global relationship summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipSummary'
+
+  /api/relationships/graph:
+    get:
+      tags: [Relationships]
+      summary: Get relationship graph
+      parameters:
+        - name: min_debates
+          in: query
+          schema:
+            type: integer
+            default: 3
+        - name: min_score
+          in: query
+          schema:
+            type: number
+            format: float
+            default: 0.0
+      responses:
+        '200':
+          description: Full relationship graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipGraph'
+
+  /api/relationship/{agent_a}/{agent_b}:
+    get:
+      tags: [Relationships]
+      summary: Get relationship between agents
+      parameters:
+        - name: agent_a
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_b
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Detailed relationship
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Relationship'
+
+  # =============================================================================
+  # MOMENTS
+  # =============================================================================
+  /api/moments/summary:
+    get:
+      tags: [Moments]
+      summary: Get moments overview
+      responses:
+        '200':
+          description: Global moments summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MomentsSummary'
+
+  /api/moments/timeline:
+    get:
+      tags: [Moments]
+      summary: Get moments timeline
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Chronological moments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Moment'
+
+  /api/moments/trending:
+    get:
+      tags: [Moments]
+      summary: Get trending moments
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Most significant recent moments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Moment'
+
+  # =============================================================================
+  # DASHBOARD
+  # =============================================================================
+  /api/dashboard/debates:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard debate metrics
+      parameters:
+        - name: domain
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+      responses:
+        '200':
+          description: Consolidated debate metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetrics'
+
+  # =============================================================================
+  # PULSE (TRENDING)
+  # =============================================================================
+  /api/pulse/trending:
+    get:
+      tags: [System]
+      summary: Get trending topics
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Trending topics from HackerNews, Reddit, Twitter
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  topics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrendingTopic'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Invalid or missing authentication token"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Resource not found"
+
+  schemas:
+    DebateSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        task:
+          type: string
+        outcome:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        rounds:
+          type: integer
+        agents:
+          type: array
+          items:
+            type: string
+
+    Debate:
+      type: object
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        task:
+          type: string
+        context:
+          type: string
+        outcome:
+          type: string
+        final_answer:
+          type: string
+        rounds:
+          type: array
+          items:
+            $ref: '#/components/schemas/Round'
+        created_at:
+          type: string
+          format: date-time
+
+    Round:
+      type: object
+      properties:
+        round_number:
+          type: integer
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        critiques:
+          type: array
+          items:
+            $ref: '#/components/schemas/Critique'
+
+    Message:
+      type: object
+      properties:
+        agent:
+          type: string
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    Critique:
+      type: object
+      properties:
+        author:
+          type: string
+        target:
+          type: string
+        content:
+          type: string
+        severity:
+          type: number
+          format: float
+
+    ImpasseAnalysis:
+      type: object
+      properties:
+        impasse_detected:
+          type: boolean
+        indicators:
+          type: array
+          items:
+            type: string
+        circular_arguments:
+          type: array
+          items:
+            type: object
+        repetition_score:
+          type: number
+          format: float
+
+    ConvergenceStatus:
+      type: object
+      properties:
+        converged:
+          type: boolean
+        similarity_score:
+          type: number
+          format: float
+        rounds_to_convergence:
+          type: integer
+
+    Citations:
+      type: object
+      properties:
+        citations:
+          type: array
+          items:
+            type: object
+            properties:
+              claim:
+                type: string
+              source:
+                type: string
+              confidence:
+                type: number
+        grounded_verdict:
+          type: object
+
+    LeaderboardEntry:
+      type: object
+      properties:
+        rank:
+          type: integer
+        agent:
+          type: string
+        elo:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        win_rate:
+          type: number
+          format: float
+
+    Match:
+      type: object
+      properties:
+        id:
+          type: string
+        debate_id:
+          type: string
+        winner:
+          type: string
+        loser:
+          type: string
+        elo_change:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    AgentProfile:
+      type: object
+      properties:
+        name:
+          type: string
+        elo:
+          type: integer
+        rank:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        win_rate:
+          type: number
+          format: float
+        specialties:
+          type: array
+          items:
+            type: string
+
+    MatchHistoryEntry:
+      type: object
+      properties:
+        debate_id:
+          type: string
+        opponent:
+          type: string
+        result:
+          type: string
+          enum: [win, loss, draw]
+        elo_change:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    ConsistencyScore:
+      type: object
+      properties:
+        agent:
+          type: string
+        consistency_score:
+          type: number
+          format: float
+        total_flips:
+          type: integer
+        recent_flips:
+          type: integer
+
+    RelationshipNetwork:
+      type: object
+      properties:
+        agent:
+          type: string
+        rivals:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentRelation'
+        allies:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentRelation'
+
+    AgentRelation:
+      type: object
+      properties:
+        agent:
+          type: string
+        score:
+          type: number
+          format: float
+        debates:
+          type: integer
+
+    AgentComparison:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentProfile'
+        head_to_head:
+          type: object
+          additionalProperties:
+            type: object
+
+    PositionFlip:
+      type: object
+      properties:
+        agent:
+          type: string
+        topic:
+          type: string
+        old_position:
+          type: string
+        new_position:
+          type: string
+        debate_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    DetailedHealth:
+      type: object
+      properties:
+        status:
+          type: string
+        observers:
+          type: object
+        memory:
+          type: object
+        uptime_seconds:
+          type: number
+
+    NomicState:
+      type: object
+      properties:
+        phase:
+          type: string
+        cycle:
+          type: integer
+        loop_id:
+          type: string
+        last_update:
+          type: string
+          format: date-time
+
+    NomicHealth:
+      type: object
+      properties:
+        healthy:
+          type: boolean
+        stalled:
+          type: boolean
+        last_activity:
+          type: string
+          format: date-time
+
+    Mode:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        builtin:
+          type: boolean
+
+    SimilarDebate:
+      type: object
+      properties:
+        debate_id:
+          type: string
+        topic:
+          type: string
+        similarity:
+          type: number
+          format: float
+        outcome:
+          type: string
+
+    SettledTopic:
+      type: object
+      properties:
+        topic:
+          type: string
+        consensus:
+          type: string
+        confidence:
+          type: number
+          format: float
+        debate_count:
+          type: integer
+
+    ConsensusStats:
+      type: object
+      properties:
+        total_topics:
+          type: integer
+        settled_count:
+          type: integer
+        average_confidence:
+          type: number
+          format: float
+
+    Dissent:
+      type: object
+      properties:
+        agent:
+          type: string
+        topic:
+          type: string
+        position:
+          type: string
+        debate_id:
+          type: string
+
+    Memory:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        tier:
+          type: string
+          enum: [fast, medium, slow, glacial]
+        importance:
+          type: number
+          format: float
+        created_at:
+          type: string
+          format: date-time
+
+    TierStats:
+      type: object
+      properties:
+        fast:
+          $ref: '#/components/schemas/TierInfo'
+        medium:
+          $ref: '#/components/schemas/TierInfo'
+        slow:
+          $ref: '#/components/schemas/TierInfo'
+        glacial:
+          $ref: '#/components/schemas/TierInfo'
+
+    TierInfo:
+      type: object
+      properties:
+        count:
+          type: integer
+        avg_importance:
+          type: number
+          format: float
+
+    Tournament:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        participants:
+          type: integer
+
+    TournamentStandings:
+      type: object
+      properties:
+        tournament_id:
+          type: string
+        standings:
+          type: array
+          items:
+            type: object
+            properties:
+              rank:
+                type: integer
+              agent:
+                type: string
+              points:
+                type: integer
+
+    ReplaySummary:
+      type: object
+      properties:
+        id:
+          type: string
+        debate_id:
+          type: string
+        event_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    Replay:
+      type: object
+      properties:
+        id:
+          type: string
+        events:
+          type: array
+          items:
+            type: object
+        total_events:
+          type: integer
+
+    DocumentSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        word_count:
+          type: integer
+        preview:
+          type: string
+
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        content_type:
+          type: string
+        text:
+          type: string
+        page_count:
+          type: integer
+        word_count:
+          type: integer
+
+    SupportedFormats:
+      type: object
+      properties:
+        formats:
+          type: array
+          items:
+            type: object
+            properties:
+              ext:
+                type: string
+              mime:
+                type: string
+              available:
+                type: boolean
+        max_size_mb:
+          type: integer
+
+    VerificationStatus:
+      type: object
+      properties:
+        z3_available:
+          type: boolean
+        lean_available:
+          type: boolean
+
+    VerificationResult:
+      type: object
+      properties:
+        verified:
+          type: boolean
+        backend:
+          type: string
+        proof:
+          type: string
+        counterexample:
+          type: string
+
+    DisagreementStats:
+      type: object
+      properties:
+        total_disagreements:
+          type: integer
+        avg_severity:
+          type: number
+          format: float
+
+    RankingStats:
+      type: object
+      properties:
+        total_agents:
+          type: integer
+        total_matches:
+          type: integer
+        avg_elo:
+          type: number
+          format: float
+
+    RelationshipSummary:
+      type: object
+      properties:
+        total_relationships:
+          type: integer
+        rivalries:
+          type: integer
+        alliances:
+          type: integer
+
+    RelationshipGraph:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              elo:
+                type: integer
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              target:
+                type: string
+              weight:
+                type: number
+
+    Relationship:
+      type: object
+      properties:
+        agent_a:
+          type: string
+        agent_b:
+          type: string
+        debates:
+          type: integer
+        wins_a:
+          type: integer
+        wins_b:
+          type: integer
+        relationship_type:
+          type: string
+          enum: [rival, ally, neutral]
+
+    MomentsSummary:
+      type: object
+      properties:
+        total_moments:
+          type: integer
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+
+    Moment:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [upset_victory, position_reversal, calibration_vindication, alliance_shift, consensus_breakthrough, streak_achievement, domain_mastery]
+        agent:
+          type: string
+        description:
+          type: string
+        significance:
+          type: number
+          format: float
+        timestamp:
+          type: string
+          format: date-time
+
+    DashboardMetrics:
+      type: object
+      properties:
+        debates_count:
+          type: integer
+        consensus_rate:
+          type: number
+          format: float
+        avg_rounds:
+          type: number
+          format: float
+        top_agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+        recent_debates:
+          type: array
+          items:
+            $ref: '#/components/schemas/DebateSummary'
+
+    TrendingTopic:
+      type: object
+      properties:
+        title:
+          type: string
+        source:
+          type: string
+          enum: [hackernews, reddit, twitter]
+        url:
+          type: string
+        score:
+          type: integer

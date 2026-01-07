@@ -133,8 +133,8 @@ class DebateController:
     """
 
     # Class-level thread pool (shared across instances)
+    # Protected by instance-level _executor_thread_lock for thread-safe lazy init
     _executor: Optional[ThreadPoolExecutor] = None
-    _executor_lock = asyncio.Lock() if hasattr(asyncio, "Lock") else None
 
     def __init__(
         self,
@@ -155,7 +155,9 @@ class DebateController:
         self.emitter = emitter
         self.elo_system = elo_system
         self.auto_select_fn = auto_select_fn
-        self._executor_thread_lock = __import__("threading").Lock()
+        # Thread lock for lazy-initializing shared executor from sync code (_get_executor)
+        import threading
+        self._executor_thread_lock = threading.Lock()
 
     def start_debate(self, request: DebateRequest) -> DebateResponse:
         """Start a new debate asynchronously.
