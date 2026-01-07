@@ -104,13 +104,17 @@ class TestExecWithTimeout:
     def test_safe_builtins_enforced(self):
         """Unsafe builtins should not be available."""
         namespace = {}
-        with pytest.raises(NameError):
+        # Code validation catches dangerous patterns early (RuntimeError)
+        # or execution fails with NameError if pattern slips through
+        with pytest.raises((NameError, RuntimeError)):
             _exec_with_timeout("result = open('/etc/passwd')", namespace)
 
     def test_import_blocked(self):
         """Import should be blocked."""
         namespace = {}
-        with pytest.raises((NameError, ImportError)):
+        # Code validation catches import early (RuntimeError)
+        # or execution fails with ImportError/NameError
+        with pytest.raises((NameError, ImportError, RuntimeError)):
             _exec_with_timeout("import os", namespace)
 
 

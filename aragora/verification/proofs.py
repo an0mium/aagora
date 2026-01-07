@@ -149,9 +149,37 @@ def _exec_in_subprocess(
         }
 
     # Create wrapper script that captures execution results
+    # Define safe builtins inside subprocess (can't serialize functions)
     wrapper_code = f'''
 import json
 import sys
+
+# Safe builtins whitelist - matches SAFE_BUILTINS in parent module
+SAFE_BUILTINS = {{
+    # Math and logic
+    'abs': abs, 'all': all, 'any': any, 'bin': bin, 'bool': bool,
+    'divmod': divmod, 'float': float, 'hex': hex, 'int': int,
+    'len': len, 'max': max, 'min': min, 'oct': oct, 'ord': ord,
+    'pow': pow, 'round': round, 'sum': sum,
+    # String/data
+    'chr': chr, 'str': str, 'repr': repr, 'ascii': ascii,
+    'format': format, 'hash': hash,
+    # Collections
+    'dict': dict, 'frozenset': frozenset, 'list': list, 'set': set,
+    'tuple': tuple, 'range': range, 'enumerate': enumerate, 'zip': zip,
+    'filter': filter, 'map': map, 'reversed': reversed, 'sorted': sorted,
+    'slice': slice,
+    # Types and inspection
+    'callable': callable, 'isinstance': isinstance, 'issubclass': issubclass,
+    'type': type, 'id': id, 'iter': iter, 'next': next,
+    # Exceptions (needed for try/except in proofs)
+    'Exception': Exception, 'ValueError': ValueError, 'TypeError': TypeError,
+    'KeyError': KeyError, 'IndexError': IndexError, 'AssertionError': AssertionError,
+    'AttributeError': AttributeError, 'RuntimeError': RuntimeError,
+    # Constants
+    'True': True, 'False': False, 'None': None,
+    # Explicitly excluded: __import__, open, exec, eval, compile, globals, locals
+}}
 
 namespace = {{}}
 stdout_capture = []
@@ -166,11 +194,21 @@ old_stdout = sys.stdout
 sys.stdout = OutputCapture()
 
 try:
-    exec({repr(code)}, {{"__builtins__": {{}}}}, namespace)
+    exec({repr(code)}, {{"__builtins__": SAFE_BUILTINS}}, namespace)
     sys.stdout = old_stdout
+    # Serialize all namespace variables that can be repr'd to literals
+    serializable_ns = {{}}
+    for key, value in namespace.items():
+        if not key.startswith('_'):
+            try:
+                serializable_ns[key] = repr(value)
+            except Exception:
+                pass  # Skip non-serializable values
+    # Prefer __result__ (assertion result) over result (user variable)
     print(json.dumps({{
         "success": True,
-        "result": repr(namespace.get("result", namespace.get("__result__", None))),
+        "namespace": serializable_ns,
+        "result": repr(namespace.get("__result__", namespace.get("result", None))),
         "stdout": "".join(stdout_capture)
     }}))
 except Exception as e:
@@ -251,13 +289,21 @@ def _exec_with_timeout(code: str, namespace: dict, timeout: float = EXEC_TIMEOUT
             raise AssertionError(error_msg)
         raise RuntimeError(error_msg)
 
-    # Parse result back into namespace
+    # Parse all namespace variables back
+    if result.get("namespace"):
+        for key, repr_value in result["namespace"].items():
+            try:
+                # Safely parse repr'd value using ast.literal_eval (only allows literals)
+                namespace[key] = ast.literal_eval(repr_value)
+            except (ValueError, SyntaxError):
+                # If not a valid literal, keep as string
+                namespace[key] = repr_value
+
+    # Also set __result__ for backward compatibility
     if result.get("result"):
         try:
-            # Safely parse repr'd result using ast.literal_eval (only allows literals)
             namespace["__result__"] = ast.literal_eval(result["result"])
         except (ValueError, SyntaxError):
-            # If not a valid literal, keep as string
             namespace["__result__"] = result["result"]
 
     if result.get("stdout"):
