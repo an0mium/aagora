@@ -33,6 +33,7 @@ class SystemHandler(BaseHandler):
 
     ROUTES = [
         "/api/health",
+        "/api/health/detailed",
         "/api/nomic/state",
         "/api/nomic/health",
         "/api/nomic/log",
@@ -53,6 +54,9 @@ class SystemHandler(BaseHandler):
         """Route system requests to appropriate methods."""
         if path == "/api/health":
             return self._health_check()
+
+        if path == "/api/health/detailed":
+            return self._detailed_health_check()
 
         if path == "/api/nomic/state":
             return self._get_nomic_state()
@@ -129,6 +133,82 @@ class SystemHandler(BaseHandler):
             },
             "version": "1.0.0",
         }
+
+        return json_response(health)
+
+    def _detailed_health_check(self) -> HandlerResult:
+        """Return detailed health status with system observer metrics.
+
+        Includes:
+        - Basic health components
+        - Agent success/failure rates (from SimpleObserver)
+        - Null byte incidents
+        - Timeout incidents
+        - Memory stats
+        - Maintenance status
+        """
+        nomic_dir = self.get_nomic_dir()
+        storage = self.get_storage()
+        elo = self.get_elo_system()
+
+        health = {
+            "status": "healthy",
+            "components": {
+                "storage": storage is not None,
+                "elo_system": elo is not None,
+                "nomic_dir": nomic_dir is not None and nomic_dir.exists() if nomic_dir else False,
+            },
+            "version": "1.0.0",
+        }
+
+        # Add observer metrics if available
+        try:
+            from aragora.monitoring.simple_observer import SimpleObserver
+            log_path = str(nomic_dir / "system_health.log") if nomic_dir else "system_health.log"
+            observer = SimpleObserver(log_file=log_path)
+            observer_report = observer.get_report()
+
+            if "error" not in observer_report:
+                health["observer"] = observer_report
+
+                # Set status based on failure rate thresholds
+                failure_rate = observer_report.get("failure_rate", 0)
+                if failure_rate > 0.5:
+                    health["status"] = "degraded"
+                    health["warnings"] = health.get("warnings", [])
+                    health["warnings"].append(f"High failure rate: {failure_rate:.1%}")
+                elif failure_rate > 0.3:
+                    health["warnings"] = health.get("warnings", [])
+                    health["warnings"].append(f"Elevated failure rate: {failure_rate:.1%}")
+
+        except ImportError:
+            health["observer"] = {"status": "unavailable", "reason": "module not found"}
+        except Exception as e:
+            health["observer"] = {"status": "error", "error": str(e)}
+
+        # Add maintenance stats if available
+        try:
+            if nomic_dir:
+                from aragora.maintenance import DatabaseMaintenance
+                maintenance = DatabaseMaintenance(nomic_dir)
+                health["maintenance"] = maintenance.get_stats()
+        except ImportError:
+            pass
+        except Exception as e:
+            health["maintenance"] = {"error": str(e)}
+
+        # Add memory stats if available
+        try:
+            import psutil
+            process = psutil.Process()
+            health["memory"] = {
+                "rss_mb": round(process.memory_info().rss / (1024 * 1024), 2),
+                "percent": round(process.memory_percent(), 2),
+            }
+        except ImportError:
+            pass
+        except Exception:
+            pass
 
         return json_response(health)
 

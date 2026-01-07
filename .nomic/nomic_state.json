@@ -1,9 +1,6 @@
 {
-  "phase": "idle",
-  "stage": "ready",
-  "all_passed": true,
-  "checks": [],
-  "saved_at": "2026-01-06T21:00:00.000000",
-  "cycle": 0,
-  "note": "Reset for fresh start after root cause analysis"
+  "phase": "debate",
+  "stage": "arena_starting",
+  "saved_at": "2026-01-06T18:58:04.111113",
+  "cycle": 1
 }

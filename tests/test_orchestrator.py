@@ -123,10 +123,6 @@ class TestDebateExecution:
     """Tests for debate execution flow."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        not hasattr(asyncio, 'timeout'),
-        reason="asyncio.timeout requires Python 3.11+"
-    )
     async def test_simple_debate_completes(self):
         """Test a simple debate runs to completion."""
         agents = [
@@ -147,10 +143,6 @@ class TestDebateExecution:
         assert result.rounds_used > 0
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        not hasattr(asyncio, 'timeout'),
-        reason="asyncio.timeout requires Python 3.11+"
-    )
     async def test_debate_produces_messages(self):
         """Test debate produces message history."""
         agents = [
@@ -167,10 +159,6 @@ class TestDebateExecution:
         assert len(result.messages) > 0
 
     @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        not hasattr(asyncio, 'timeout'),
-        reason="asyncio.timeout requires Python 3.11+"
-    )
     async def test_early_stopping_when_consensus(self):
         """Test debate stops early when consensus reached."""
         agents = [

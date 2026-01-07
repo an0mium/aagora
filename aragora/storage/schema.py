@@ -92,7 +92,11 @@ def _validate_default_value(default: str) -> bool:
 DB_TIMEOUT = 30.0
 
 
-def get_wal_connection(db_path: Union[str, Path], timeout: float = DB_TIMEOUT) -> sqlite3.Connection:
+def get_wal_connection(
+    db_path: Union[str, Path],
+    timeout: float = DB_TIMEOUT,
+    check_same_thread: bool = True,
+) -> sqlite3.Connection:
     """Get a SQLite connection with WAL mode enabled for better concurrency.
 
     WAL (Write-Ahead Logging) mode allows:
@@ -103,11 +107,12 @@ def get_wal_connection(db_path: Union[str, Path], timeout: float = DB_TIMEOUT) -
     Args:
         db_path: Path to the SQLite database file
         timeout: Connection timeout in seconds (default: 30.0)
+        check_same_thread: If False, allows connection use across threads (default: True)
 
     Returns:
         A sqlite3.Connection configured for WAL mode
     """
-    conn = sqlite3.connect(db_path, timeout=timeout)
+    conn = sqlite3.connect(db_path, timeout=timeout, check_same_thread=check_same_thread)
     # Enable WAL mode for better concurrency
     conn.execute("PRAGMA journal_mode=WAL")
     # Use NORMAL synchronous mode (safe with WAL, faster than FULL)
@@ -560,3 +565,205 @@ class DatabaseManager:
 
     def __repr__(self) -> str:
         return f"DatabaseManager({self.db_path!r})"
+
+
+class ConnectionPool:
+    """
+    Thread-safe SQLite connection pool.
+
+    Maintains a pool of reusable connections for high-concurrency scenarios.
+    Each connection is configured with WAL mode for better concurrent access.
+
+    Usage:
+        pool = ConnectionPool("/path/to/db.db", max_connections=10)
+
+        # Acquire and release connections
+        with pool.connection() as conn:
+            conn.execute("SELECT ...")
+
+        # Or manually
+        conn = pool.acquire()
+        try:
+            conn.execute("...")
+        finally:
+            pool.release(conn)
+
+        # Get pool statistics
+        stats = pool.stats()
+        print(f"Active: {stats['active']}, Idle: {stats['idle']}")
+    """
+
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        max_connections: int = 10,
+        timeout: float = DB_TIMEOUT,
+    ):
+        """Initialize the connection pool.
+
+        Args:
+            db_path: Path to the SQLite database file
+            max_connections: Maximum number of connections in the pool
+            timeout: Connection timeout in seconds
+        """
+        self.db_path = str(Path(db_path).resolve())
+        self.max_connections = max_connections
+        self.timeout = timeout
+
+        self._idle: list[sqlite3.Connection] = []
+        self._active: set[int] = set()  # Track active connection ids
+        self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._closed = False
+
+    def acquire(self, timeout: Optional[float] = None) -> sqlite3.Connection:
+        """Acquire a connection from the pool.
+
+        Blocks if no connections are available and pool is at max capacity.
+
+        Args:
+            timeout: Max time to wait for a connection (None = wait forever)
+
+        Returns:
+            A sqlite3.Connection from the pool
+
+        Raises:
+            TimeoutError: If timeout is reached while waiting for a connection
+            RuntimeError: If pool is closed
+        """
+        wait_timeout = timeout or self.timeout
+
+        with self._condition:
+            if self._closed:
+                raise RuntimeError("Connection pool is closed")
+
+            # Wait for an available connection
+            start_time = threading.Event()  # Just for timing
+            waited = 0.0
+
+            while True:
+                # Try to get an idle connection
+                if self._idle:
+                    conn = self._idle.pop()
+                    # Validate connection is still usable
+                    try:
+                        conn.execute("SELECT 1")
+                        self._active.add(id(conn))
+                        return conn
+                    except sqlite3.Error:
+                        # Connection is broken, discard it
+                        logger.debug(f"Discarded broken pooled connection to {self.db_path}")
+                        continue
+
+                # Create a new connection if under limit
+                if len(self._active) < self.max_connections:
+                    # Use check_same_thread=False since pool is designed for multi-threaded use
+                    conn = get_wal_connection(self.db_path, self.timeout, check_same_thread=False)
+                    self._active.add(id(conn))
+                    logger.debug(
+                        f"Created new pooled connection to {self.db_path} "
+                        f"(active: {len(self._active)}/{self.max_connections})"
+                    )
+                    return conn
+
+                # Wait for a connection to be released
+                remaining = wait_timeout - waited
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Timeout waiting for connection to {self.db_path} "
+                        f"(active: {len(self._active)}, max: {self.max_connections})"
+                    )
+
+                self._condition.wait(timeout=min(remaining, 1.0))
+                waited += 1.0
+
+    def release(self, conn: sqlite3.Connection) -> None:
+        """Release a connection back to the pool.
+
+        Args:
+            conn: Connection to release
+        """
+        with self._condition:
+            conn_id = id(conn)
+            if conn_id not in self._active:
+                logger.warning("Attempted to release connection not from this pool")
+                return
+
+            self._active.discard(conn_id)
+
+            if self._closed:
+                # Pool is closed, close the connection
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            else:
+                # Return to idle pool
+                self._idle.append(conn)
+                self._condition.notify()
+
+    @contextmanager
+    def connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Context manager for acquiring and releasing connections.
+
+        Automatically handles commit/rollback semantics.
+
+        Yields:
+            sqlite3.Connection from the pool
+        """
+        conn = self.acquire()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            self.release(conn)
+
+    def stats(self) -> dict[str, int]:
+        """Get pool statistics.
+
+        Returns:
+            Dict with 'active', 'idle', and 'total' counts
+        """
+        with self._lock:
+            return {
+                "active": len(self._active),
+                "idle": len(self._idle),
+                "total": len(self._active) + len(self._idle),
+                "max": self.max_connections,
+            }
+
+    def close(self) -> None:
+        """Close all connections in the pool."""
+        with self._condition:
+            self._closed = True
+
+            # Close all idle connections
+            for conn in self._idle:
+                try:
+                    conn.close()
+                except Exception as e:
+                    logger.warning(f"Error closing pooled connection: {e}")
+
+            self._idle.clear()
+            logger.debug(
+                f"Closed connection pool for {self.db_path} "
+                f"(active: {len(self._active)} connections may still be in use)"
+            )
+
+            # Notify waiters so they can fail
+            self._condition.notify_all()
+
+    def __del__(self):
+        """Ensure pool is closed on garbage collection."""
+        if not self._closed:
+            self.close()
+
+    def __repr__(self) -> str:
+        stats = self.stats()
+        return (
+            f"ConnectionPool({self.db_path!r}, "
+            f"active={stats['active']}, idle={stats['idle']}, max={self.max_connections})"
+        )

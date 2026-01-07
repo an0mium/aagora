@@ -5,6 +5,7 @@ Endpoints:
 - GET /api/replays - List available replays
 - GET /api/replays/:replay_id - Get specific replay with events
 - GET /api/learning/evolution - Get meta-learning patterns
+- GET /api/meta-learning/stats - Get meta-learning hyperparameters and efficiency stats
 """
 
 import json
@@ -36,6 +37,7 @@ class ReplaysHandler(BaseHandler):
     ROUTES = [
         "/api/replays",
         "/api/learning/evolution",
+        "/api/meta-learning/stats",
     ]
 
     def can_handle(self, path: str) -> bool:
@@ -57,6 +59,10 @@ class ReplaysHandler(BaseHandler):
         if path == "/api/learning/evolution":
             limit = get_int_param(query_params, 'limit', 20)
             return self._get_learning_evolution(nomic_dir, min(limit, 100))
+
+        if path == "/api/meta-learning/stats":
+            limit = get_int_param(query_params, 'limit', 20)
+            return self._get_meta_learning_stats(nomic_dir, min(limit, 50))
 
         if path.startswith("/api/replays/"):
             # Block path traversal
@@ -176,3 +182,126 @@ class ReplaysHandler(BaseHandler):
             return error_response(_safe_error_message(e, "learning_evolution"), 500)
         except Exception as e:
             return error_response(_safe_error_message(e, "learning_evolution"), 500)
+
+    @ttl_cache(ttl_seconds=60, key_prefix="meta_learning_stats", skip_first=True)
+    def _get_meta_learning_stats(
+        self, nomic_dir: Optional[Path], limit: int
+    ) -> HandlerResult:
+        """Get meta-learning hyperparameters and efficiency stats.
+
+        Returns current hyperparameters, adjustment history, and efficiency metrics.
+        """
+        if not nomic_dir:
+            return json_response({
+                "status": "no_data",
+                "current_hyperparams": {},
+                "adjustment_history": [],
+                "efficiency_log": [],
+            })
+
+        try:
+            db_path = nomic_dir / "meta_learning.db"
+            if not db_path.exists():
+                return json_response({
+                    "status": "no_database",
+                    "current_hyperparams": {},
+                    "adjustment_history": [],
+                    "efficiency_log": [],
+                })
+
+            with sqlite3.connect(str(db_path), timeout=DB_TIMEOUT_SECONDS) as conn:
+                conn.row_factory = sqlite3.Row
+
+                # Get current hyperparameters (most recent)
+                cursor = conn.execute("""
+                    SELECT hyperparams, metrics, adjustment_reason, created_at
+                    FROM meta_hyperparams
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
+                current_hyperparams = {}
+                if row:
+                    try:
+                        current_hyperparams = json.loads(row["hyperparams"]) if row["hyperparams"] else {}
+                    except json.JSONDecodeError:
+                        pass
+
+                # Get adjustment history
+                cursor = conn.execute("""
+                    SELECT hyperparams, metrics, adjustment_reason, created_at
+                    FROM meta_hyperparams
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (limit,))
+                adjustment_history = []
+                for row in cursor.fetchall():
+                    try:
+                        adjustment_history.append({
+                            "hyperparams": json.loads(row["hyperparams"]) if row["hyperparams"] else {},
+                            "metrics": json.loads(row["metrics"]) if row["metrics"] else None,
+                            "reason": row["adjustment_reason"],
+                            "timestamp": row["created_at"],
+                        })
+                    except json.JSONDecodeError:
+                        continue
+
+                # Get efficiency log
+                cursor = conn.execute("""
+                    SELECT cycle_number, metrics, created_at
+                    FROM meta_efficiency_log
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (limit,))
+                efficiency_log = []
+                for row in cursor.fetchall():
+                    try:
+                        efficiency_log.append({
+                            "cycle": row["cycle_number"],
+                            "metrics": json.loads(row["metrics"]) if row["metrics"] else {},
+                            "timestamp": row["created_at"],
+                        })
+                    except json.JSONDecodeError:
+                        continue
+
+                # Compute trend from efficiency log
+                trend = "insufficient_data"
+                if len(efficiency_log) >= 4:
+                    mid = len(efficiency_log) // 2
+                    first_half = efficiency_log[mid:]  # Older entries (reversed order)
+                    second_half = efficiency_log[:mid]  # Newer entries
+                    if first_half and second_half:
+                        first_retention = sum(
+                            e.get("metrics", {}).get("pattern_retention_rate", 0.5)
+                            for e in first_half
+                        ) / len(first_half)
+                        second_retention = sum(
+                            e.get("metrics", {}).get("pattern_retention_rate", 0.5)
+                            for e in second_half
+                        ) / len(second_half)
+                        if second_retention > first_retention + 0.05:
+                            trend = "improving"
+                        elif second_retention < first_retention - 0.05:
+                            trend = "declining"
+                        else:
+                            trend = "stable"
+
+            return json_response({
+                "status": "ok",
+                "current_hyperparams": current_hyperparams,
+                "adjustment_history": adjustment_history,
+                "efficiency_log": efficiency_log,
+                "trend": trend,
+                "evaluations": len(efficiency_log),
+            })
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                return json_response({
+                    "status": "tables_not_initialized",
+                    "current_hyperparams": {},
+                    "adjustment_history": [],
+                    "efficiency_log": [],
+                })
+            return error_response(_safe_error_message(e, "meta_learning_stats"), 500)
+        except Exception as e:
+            return error_response(_safe_error_message(e, "meta_learning_stats"), 500)

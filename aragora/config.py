@@ -97,6 +97,18 @@ STREAMING_CAPABLE_AGENTS = _env_str(
     "grok,anthropic-api,openai-api"
 )
 
+# Valid agent types (allowlist for security)
+# Single source of truth - import this instead of duplicating
+ALLOWED_AGENT_TYPES = frozenset({
+    # CLI-based
+    "codex", "claude", "openai", "gemini-cli", "grok-cli",
+    "qwen-cli", "deepseek-cli", "kilocode",
+    # API-based (direct)
+    "gemini", "ollama", "anthropic-api", "openai-api", "grok",
+    # API-based (via OpenRouter)
+    "deepseek", "deepseek-r1", "llama", "mistral", "openrouter",
+})
+
 # === Caching TTLs (seconds) ===
 CACHE_TTL_LEADERBOARD = _env_int("ARAGORA_CACHE_LEADERBOARD", 300)  # 5 min
 CACHE_TTL_AGENT_PROFILE = _env_int("ARAGORA_CACHE_AGENT_PROFILE", 600)  # 10 min

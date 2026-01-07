@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 from aragora.agents.base import CritiqueMixin
+from aragora.agents.errors import (
+    AgentConnectionError,
+    AgentRateLimitError,
+    AgentTimeoutError,
+    handle_agent_errors,
+)
+from aragora.agents.registry import AgentRegistry
 from aragora.config import DB_TIMEOUT_SECONDS, get_api_key
 from aragora.core import Agent, Critique, Message
 from aragora.server.error_utils import sanitize_error_text as _sanitize_error_message
@@ -216,6 +223,13 @@ class APIAgent(CritiqueMixin, Agent):
     # _parse_critique is inherited from CritiqueMixin
 
 
+@AgentRegistry.register(
+    "gemini",
+    default_model="gemini-3-pro-preview",
+    agent_type="API",
+    env_vars="GEMINI_API_KEY or GOOGLE_API_KEY",
+    accepts_api_key=True,
+)
 class GeminiAgent(APIAgent):
     """Agent that uses Google Gemini API directly (not CLI).
 
@@ -298,6 +312,12 @@ class GeminiAgent(APIAgent):
         error_lower = error_text.lower()
         return any(kw in error_lower for kw in quota_keywords)
 
+    @handle_agent_errors(
+        max_retries=3,
+        retry_delay=1.0,
+        retry_backoff=2.0,
+        retryable_exceptions=(AgentRateLimitError, AgentConnectionError, AgentTimeoutError),
+    )
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using Gemini API."""
 
@@ -512,6 +532,13 @@ Be constructive but thorough."""
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "ollama",
+    default_model="llama3.2",
+    agent_type="API",
+    requires="Ollama running locally (brew install ollama && ollama serve)",
+    env_vars="OLLAMA_HOST (optional, defaults to localhost:11434)",
+)
 class OllamaAgent(APIAgent):
     """Agent that uses local Ollama API."""
 
@@ -532,6 +559,12 @@ class OllamaAgent(APIAgent):
         )
         self.agent_type = "ollama"
 
+    @handle_agent_errors(
+        max_retries=3,
+        retry_delay=1.0,
+        retry_backoff=2.0,
+        retryable_exceptions=(AgentRateLimitError, AgentConnectionError, AgentTimeoutError),
+    )
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using Ollama API."""
         full_prompt = prompt
@@ -598,6 +631,14 @@ REASONING: explanation"""
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "anthropic-api",
+    default_model="claude-sonnet-4-20250514",
+    default_name="claude-api",
+    agent_type="API",
+    env_vars="ANTHROPIC_API_KEY",
+    accepts_api_key=True,
+)
 class AnthropicAPIAgent(APIAgent):
     """Agent that uses Anthropic API directly (without CLI).
 
@@ -673,6 +714,12 @@ class AnthropicAPIAgent(APIAgent):
         error_lower = error_text.lower()
         return any(kw in error_lower for kw in quota_keywords)
 
+    @handle_agent_errors(
+        max_retries=3,
+        retry_delay=1.0,
+        retry_backoff=2.0,
+        retryable_exceptions=(AgentRateLimitError, AgentConnectionError, AgentTimeoutError),
+    )
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using Anthropic API.
 
@@ -858,6 +905,14 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "openai-api",
+    default_model="gpt-4o",
+    default_name="openai-api",
+    agent_type="API",
+    env_vars="OPENAI_API_KEY",
+    accepts_api_key=True,
+)
 class OpenAIAPIAgent(APIAgent):
     """Agent that uses OpenAI API directly (without CLI).
 
@@ -921,6 +976,12 @@ class OpenAIAPIAgent(APIAgent):
         quota_keywords = ["quota", "rate_limit", "insufficient_quota", "exceeded"]
         return any(kw in error_text.lower() for kw in quota_keywords)
 
+    @handle_agent_errors(
+        max_retries=3,
+        retry_delay=1.0,
+        retry_backoff=2.0,
+        retryable_exceptions=(AgentRateLimitError, AgentConnectionError, AgentTimeoutError),
+    )
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using OpenAI API."""
         full_prompt = prompt
@@ -1100,6 +1161,12 @@ REASONING: explanation"""
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "grok",
+    default_model="grok-3",
+    agent_type="API",
+    env_vars="XAI_API_KEY or GROK_API_KEY",
+)
 class GrokAgent(APIAgent):
     """Agent that uses xAI's Grok API (OpenAI-compatible).
 
@@ -1124,6 +1191,12 @@ class GrokAgent(APIAgent):
         )
         self.agent_type = "grok"
 
+    @handle_agent_errors(
+        max_retries=3,
+        retry_delay=1.0,
+        retry_backoff=2.0,
+        retryable_exceptions=(AgentRateLimitError, AgentConnectionError, AgentTimeoutError),
+    )
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
         """Generate a response using Grok API."""
 
@@ -1265,6 +1338,13 @@ REASONING: explanation"""
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "openrouter",
+    default_model="deepseek/deepseek-chat-v3-0324",
+    agent_type="API (OpenRouter)",
+    env_vars="OPENROUTER_API_KEY",
+    description="Generic OpenRouter - specify model via 'model' parameter",
+)
 class OpenRouterAgent(APIAgent):
     """Agent that uses OpenRouter API for access to many models.
 
@@ -1545,6 +1625,13 @@ REASONING: explanation"""
 
 
 # Convenience aliases for specific OpenRouter models
+@AgentRegistry.register(
+    "deepseek",
+    default_model="deepseek/deepseek-chat-v3-0324",
+    agent_type="API (OpenRouter)",
+    env_vars="OPENROUTER_API_KEY",
+    description="DeepSeek V3 - excellent for coding/math, very cost-effective",
+)
 class DeepSeekAgent(OpenRouterAgent):
     """DeepSeek V3.2 via OpenRouter - latest model with integrated thinking + tool-use."""
 
@@ -1558,6 +1645,13 @@ class DeepSeekAgent(OpenRouterAgent):
         self.agent_type = "deepseek"
 
 
+@AgentRegistry.register(
+    "deepseek-r1",
+    default_model="deepseek/deepseek-r1",
+    agent_type="API (OpenRouter)",
+    env_vars="OPENROUTER_API_KEY",
+    description="DeepSeek R1 - chain-of-thought reasoning model",
+)
 class DeepSeekReasonerAgent(OpenRouterAgent):
     """DeepSeek R1 via OpenRouter - reasoning model with chain-of-thought."""
 
@@ -1584,6 +1678,13 @@ class DeepSeekV3Agent(OpenRouterAgent):
         self.agent_type = "deepseek-v3"
 
 
+@AgentRegistry.register(
+    "llama",
+    default_model="meta-llama/llama-3.3-70b-instruct",
+    agent_type="API (OpenRouter)",
+    env_vars="OPENROUTER_API_KEY",
+    description="Llama 3.3 70B Instruct",
+)
 class LlamaAgent(OpenRouterAgent):
     """Llama 3.3 70B via OpenRouter."""
 
@@ -1597,6 +1698,13 @@ class LlamaAgent(OpenRouterAgent):
         self.agent_type = "llama"
 
 
+@AgentRegistry.register(
+    "mistral",
+    default_model="mistralai/mistral-large-2411",
+    agent_type="API (OpenRouter)",
+    env_vars="OPENROUTER_API_KEY",
+    description="Mistral Large",
+)
 class MistralAgent(OpenRouterAgent):
     """Mistral Large via OpenRouter."""
 

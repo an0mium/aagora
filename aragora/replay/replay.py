@@ -5,12 +5,15 @@ Enables persistence and playback of past debates for review and learning.
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from aragora.core import DebateResult
+
+logger = logging.getLogger(__name__)
 
 
 class DebateRecorder:
@@ -111,7 +114,7 @@ class DebateReplayer:
                 }
                 debates.append(debate_info)
             except Exception as e:
-                print(f"Warning: Could not load debate {file_path}: {e}")
+                logger.warning("Could not load debate %s: %s", file_path, e)
 
         # Sort by recorded_at descending (newest first)
         debates.sort(key=lambda x: x.get("recorded_at", ""), reverse=True)
@@ -139,7 +142,7 @@ class DebateReplayer:
             result = DebateResult(**result_data)
             return result
         except Exception as e:
-            print(f"Error loading debate {filename}: {e}")
+            logger.error("Error loading debate %s: %s", filename, e)
             return None
 
     def replay_debate(self, filename: str, speed: float = 1.0) -> Optional[DebateResult]:

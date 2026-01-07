@@ -1,6 +1,6 @@
 # Aragora Project Status
 
-*Last updated: January 5, 2026 (12:00 UTC)*
+*Last updated: January 6, 2026 (22:00 UTC)*
 
 ## Current State
 
@@ -37,6 +37,23 @@
 | `anthropic-api` | Claude Opus 4.5 | Anthropic |
 | `openai-api` | GPT 5.2 | OpenAI |
 | `deepseek-r1` | DeepSeek V3.2 | OpenRouter |
+
+### Recent Changes (2026-01-06)
+- Extracted `SecurityBarrier` and `TelemetryVerifier` to `debate/security_barrier.py` (213 lines)
+- Extracted `MemoryManager` to `debate/memory_manager.py`
+- Extracted `PromptBuilder` to `debate/prompt_builder.py`
+- Fixed Z3 test availability handling (proper pytest.skip when Z3 unavailable)
+- Reduced orchestrator.py from 3,758 to 3,545 LOC
+- Added comprehensive documentation for Phases 16-19 in FEATURES.md
+- Updated ENVIRONMENT.md with telemetry and belief network config options
+- Fixed CLAUDE.md CircuitBreaker location (was orchestrator.py, now resilience.py)
+- Nomic loop state reset for fresh cycle after root cause analysis
+
+### Recent Changes (2026-01-05)
+- Fixed `_get_belief_classes()` → `_get_belief_analyzer()` typo in orchestrator.py
+- Fixed all 7 unanimous consensus tests
+- Added test baseline capture to nomic loop
+- Improved fix targeting prompts (include failing file paths)
 
 ### Recent Changes (2026-01-04)
 - Added OpenRouter support (DeepSeek, Llama, Mistral)

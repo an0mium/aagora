@@ -18,6 +18,7 @@ import re
 from typing import Optional, TYPE_CHECKING
 
 from aragora.agents.base import CritiqueMixin, MAX_CONTEXT_CHARS, MAX_MESSAGE_CHARS
+from aragora.agents.registry import AgentRegistry
 from aragora.core import Agent, Critique, Message
 
 if TYPE_CHECKING:
@@ -279,6 +280,12 @@ class CLIAgent(CritiqueMixin, Agent):
     # _parse_critique is inherited from CritiqueMixin
 
 
+@AgentRegistry.register(
+    "codex",
+    default_model="gpt-5.2-codex",
+    agent_type="CLI",
+    requires="codex CLI (npm install -g @openai/codex)",
+)
 class CodexAgent(CLIAgent):
     """Agent that uses OpenAI Codex CLI.
 
@@ -354,6 +361,12 @@ Be constructive but thorough. Identify both technical and conceptual issues."""
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "claude",
+    default_model="claude-sonnet-4",
+    agent_type="CLI",
+    requires="claude CLI (npm install -g @anthropic-ai/claude-code)",
+)
 class ClaudeAgent(CLIAgent):
     """Agent that uses Claude CLI (claude-code).
 
@@ -413,6 +426,12 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "gemini-cli",
+    default_model="gemini-3-pro-preview",
+    agent_type="CLI",
+    requires="gemini CLI (npm install -g @google/gemini-cli)",
+)
 class GeminiCLIAgent(CLIAgent):
     """Agent that uses Google Gemini CLI (v0.22+).
 
@@ -474,6 +493,13 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "kilocode",
+    default_model=None,
+    default_name="kilocode",
+    agent_type="CLI",
+    requires="kilocode CLI",
+)
 class KiloCodeAgent(CLIAgent):
     """
     Agent that uses Kilo Code CLI for codebase exploration.
@@ -603,6 +629,12 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "grok-cli",
+    default_model="grok-4",
+    agent_type="CLI",
+    requires="grok CLI (npm install -g grok-cli)",
+)
 class GrokCLIAgent(CLIAgent):
     """Agent that uses xAI Grok CLI.
 
@@ -693,6 +725,12 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "qwen-cli",
+    default_model="qwen3-coder",
+    agent_type="CLI",
+    requires="qwen CLI (npm install -g @qwen-code/qwen-code)",
+)
 class QwenCLIAgent(CLIAgent):
     """Agent that uses Alibaba Qwen Code CLI.
 
@@ -749,6 +787,13 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "deepseek-cli",
+    default_model="deepseek-v3",
+    agent_type="CLI",
+    requires="deepseek CLI (pip install deepseek-cli)",
+    env_vars="DEEPSEEK_API_KEY",
+)
 class DeepseekCLIAgent(CLIAgent):
     """Agent that uses Deepseek CLI.
 
@@ -805,6 +850,13 @@ Provide structured feedback:
         return self._parse_critique(response, "proposal", proposal)
 
 
+@AgentRegistry.register(
+    "openai",
+    default_model="gpt-4o",
+    agent_type="CLI",
+    requires="openai CLI (pip install openai)",
+    env_vars="OPENAI_API_KEY",
+)
 class OpenAIAgent(CLIAgent):
     """Agent that uses OpenAI CLI.
 

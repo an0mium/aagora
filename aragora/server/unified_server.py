@@ -39,19 +39,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Import centralized config and error utilities
-from aragora.config import DB_INSIGHTS_PATH, DB_PERSONAS_PATH, DB_TIMEOUT_SECONDS, MAX_AGENTS_PER_DEBATE, MAX_CONCURRENT_DEBATES
+from aragora.config import (
+    DB_INSIGHTS_PATH,
+    DB_PERSONAS_PATH,
+    DB_TIMEOUT_SECONDS,
+    MAX_AGENTS_PER_DEBATE,
+    MAX_CONCURRENT_DEBATES,
+    ALLOWED_AGENT_TYPES,
+)
 from aragora.server.error_utils import safe_error_message as _safe_error_message
 from aragora.server.validation import SAFE_ID_PATTERN
-
-# Valid agent types (allowlist for security)
-ALLOWED_AGENT_TYPES = frozenset({
-    # CLI-based
-    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli", "kilocode",
-    # API-based (direct)
-    "gemini", "ollama", "anthropic-api", "openai-api", "grok",
-    # API-based (via OpenRouter)
-    "deepseek", "deepseek-r1", "llama", "mistral", "openrouter",
-})
 
 # DoS protection limits
 MAX_MULTIPART_PARTS = 10
@@ -70,27 +67,30 @@ TRUSTED_PROXIES = frozenset(
 )
 
 # Query parameter whitelist (security: reject unknown params to prevent injection)
-# Maps param name -> allowed values (None means any string allowed, set means restricted)
+# Maps param name -> validation rule:
+#   - None: numeric/short params (no length limit, validated elsewhere)
+#   - set: restricted to specific values
+#   - int: max length for string params (DoS protection)
 ALLOWED_QUERY_PARAMS = {
-    # Pagination
+    # Pagination (numeric, validated by int parsing)
     "limit": None,
     "offset": None,
-    # Filtering
-    "domain": None,
-    "loop_id": None,
-    "topic": None,
-    "query": None,
+    # Filtering (string, need length limits)
+    "domain": 100,
+    "loop_id": 100,
+    "topic": 500,
+    "query": 1000,
     # Export
     "table": {"summary", "debates", "proposals", "votes", "critiques", "messages"},
     # Agent queries
-    "agent": None,
-    "agent_a": None,
-    "agent_b": None,
+    "agent": 100,
+    "agent_a": 100,
+    "agent_b": 100,
     "sections": {"identity", "performance", "relationships", "all"},
     # Calibration
     "buckets": None,
     # Memory
-    "tiers": None,
+    "tiers": 100,
     "min_importance": None,
     # Genesis
     "event_type": {"mutation", "crossover", "selection", "extinction", "speciation"},
@@ -103,17 +103,31 @@ def _validate_query_params(query: dict) -> tuple[bool, str]:
     """Validate query parameters against whitelist.
 
     Returns (is_valid, error_message).
+
+    Validation rules:
+    - None: no length validation (for numeric params)
+    - set: value must be in the set
+    - int: max length for string params
     """
     for param, values in query.items():
         if param not in ALLOWED_QUERY_PARAMS:
             return False, f"Unknown query parameter: {param}"
 
         allowed = ALLOWED_QUERY_PARAMS[param]
-        if allowed is not None:
+        if allowed is None:
+            # No validation needed (numeric params validated elsewhere)
+            continue
+
+        if isinstance(allowed, set):
             # Check if value is in the allowed set
             for val in values:
                 if val not in allowed:
                     return False, f"Invalid value for {param}: {val}"
+        elif isinstance(allowed, int):
+            # Check length limit
+            for val in values:
+                if len(val) > allowed:
+                    return False, f"Parameter {param} exceeds max length ({allowed})"
 
     return True, ""
 

@@ -40,15 +40,14 @@ except ImportError:
     create_agent = None
     Environment = None
 
-# Valid agent types (allowlist for security)
-ALLOWED_AGENT_TYPES = frozenset({
-    "codex", "claude", "openai", "gemini-cli", "grok-cli", "qwen-cli", "deepseek-cli", "kilocode",
-    "gemini", "ollama", "anthropic-api", "openai-api", "grok",
-    "deepseek", "deepseek-r1", "llama", "mistral", "openrouter",
-})
-
 # Import centralized config and error utilities
-from aragora.config import DB_INSIGHTS_PATH, DB_PERSONAS_PATH, MAX_AGENTS_PER_DEBATE, MAX_CONCURRENT_DEBATES
+from aragora.config import (
+    DB_INSIGHTS_PATH,
+    DB_PERSONAS_PATH,
+    MAX_AGENTS_PER_DEBATE,
+    MAX_CONCURRENT_DEBATES,
+    ALLOWED_AGENT_TYPES,
+)
 from aragora.server.error_utils import safe_error_message as _safe_error_message
 
 # Thread-safe debate tracking

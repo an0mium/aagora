@@ -1,5 +1,7 @@
 # Aragora API Reference
 
+> **⚠️ DEPRECATED:** This document is outdated. Please refer to [API_REFERENCE.md](./API_REFERENCE.md) for the comprehensive and up-to-date API documentation with 70+ endpoints.
+
 Complete API documentation for the Aragora multi-agent debate platform.
 
 **Base URL:** `https://api.aragora.ai`

@@ -286,9 +286,9 @@ class CritiqueStore:
             if result.grounded_verdict:
                 try:
                     grounded_verdict_json = json.dumps(result.grounded_verdict.to_dict())
-                except (AttributeError, TypeError):
-                    # Fallback for objects without to_dict
-                    pass
+                except (AttributeError, TypeError) as e:
+                    # Fallback for objects without to_dict - continue without verdict
+                    logger.debug(f"Could not serialize grounded_verdict: {e}")
 
             # Store debate
             cursor.execute(

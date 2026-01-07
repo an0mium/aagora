@@ -1464,6 +1464,250 @@ result = manager.validate_schema(["agents", "matches", "domains"])
 
 ---
 
+## Phase 16: Telemetry & Security (2026-01)
+
+Security-focused telemetry controls for production deployments.
+
+### TelemetryConfig
+**File:** `aragora/debate/telemetry_config.py`
+
+Controls observation levels for debug and production modes.
+
+```python
+from aragora.debate.telemetry_config import TelemetryConfig
+
+config = TelemetryConfig()
+print(f"Current level: {config.level}")  # CONTROLLED by default
+
+# Check what's allowed
+if config.should_broadcast():
+    # Send telemetry to WebSocket clients
+    pass
+
+if config.should_redact():
+    # Apply SecurityBarrier to sensitive content
+    pass
+```
+
+**Telemetry Levels:**
+| Level | Value | Description |
+|-------|-------|-------------|
+| `SILENT` | 0 | No telemetry broadcast |
+| `DIAGNOSTIC` | 1 | Internal diagnostics only |
+| `CONTROLLED` | 2 | Redacted telemetry (default) |
+| `SPECTACLE` | 3 | Full transparency |
+
+### SecurityBarrier
+**File:** `aragora/debate/security_barrier.py`
+
+Dynamic secret redaction for telemetry streams.
+
+```python
+from aragora.debate.security_barrier import SecurityBarrier
+
+barrier = SecurityBarrier()
+
+# Redact sensitive content
+safe_text = barrier.redact("My API key is sk-ant-1234567890")
+# Returns: "My API key is [REDACTED]"
+
+# Check if content is sensitive
+if barrier.contains_sensitive(user_input):
+    print("Warning: Input contains sensitive patterns")
+
+# Add custom patterns
+barrier.add_pattern(r"INTERNAL_SECRET_\d+")
+
+# Redact nested dictionaries
+safe_data = barrier.redact_dict({
+    "response": "Bearer abc123",
+    "nested": {"key": "OPENAI_API_KEY=sk-xxx"}
+})
+```
+
+**Default Patterns:**
+- API keys (`api_key`, `token`, `secret`, `password`)
+- Bearer tokens
+- OpenAI-style keys (`sk-*`)
+- Google API keys (`AIza*`)
+- Environment variables
+- URLs with credentials
+- Private keys
+
+### TelemetryVerifier
+**File:** `aragora/debate/security_barrier.py`
+
+Runtime capability verification for agents.
+
+```python
+from aragora.debate.security_barrier import TelemetryVerifier
+
+verifier = TelemetryVerifier()
+
+# Verify agent has required capabilities
+passed, missing = verifier.verify_agent(agent, ["generate", "name", "model"])
+if not passed:
+    print(f"Agent missing: {missing}")
+
+# Get verification report
+report = verifier.get_verification_report()
+print(f"Passed: {report['passed']}/{report['total']}")
+```
+
+---
+
+## Phase 17: Infrastructure & Maintenance (2026-01)
+
+Automated maintenance and monitoring utilities.
+
+### DatabaseMaintenance
+**File:** `aragora/maintenance/db_maintenance.py`
+
+Automated SQLite database upkeep.
+
+```python
+from aragora.maintenance.db_maintenance import DatabaseMaintenance
+
+maintenance = DatabaseMaintenance()
+
+# Checkpoint WAL files on startup
+maintenance.checkpoint_all_wal()
+
+# Run VACUUM and ANALYZE
+maintenance.optimize_databases()
+```
+
+**Features:**
+- WAL checkpoint flushing on startup
+- VACUUM and ANALYZE operations for query optimization
+- Manages 23+ database files across the system
+
+### SimpleObserver
+**File:** `aragora/monitoring/simple_observer.py`
+
+Basic agent failure tracking.
+
+```python
+from aragora.monitoring.simple_observer import SimpleObserver
+
+observer = SimpleObserver()
+
+# Record events
+observer.record_attempt("claude")
+observer.record_completion("claude")
+observer.record_timeout("openai")
+
+# Get metrics
+rate = observer.get_failure_rate("claude")
+report = observer.get_report()
+```
+
+---
+
+## Phase 18: Social Media Connectors (2026-01)
+
+Publishing debate highlights to social platforms.
+
+### YouTubeUploaderConnector
+**File:** `aragora/connectors/youtube_uploader.py`
+
+OAuth 2.0 video uploads to YouTube.
+
+```python
+from aragora.connectors.youtube_uploader import YouTubeUploaderConnector
+
+uploader = YouTubeUploaderConnector(credentials_path="youtube_creds.json")
+
+metadata = YouTubeVideoMetadata(
+    title="AI Debate: Climate Policy",
+    description="Multi-agent debate on carbon pricing",
+    tags=["AI", "debate", "climate"],
+    category="Science & Technology"
+)
+
+video_id = await uploader.upload(
+    video_path="debate_recording.mp4",
+    metadata=metadata
+)
+```
+
+### TwitterPosterConnector
+**File:** `aragora/connectors/twitter_poster.py`
+
+OAuth 1.0a posting to Twitter/X with thread support.
+
+```python
+from aragora.connectors.twitter_poster import TwitterPosterConnector
+
+poster = TwitterPosterConnector(
+    api_key="...",
+    api_secret="...",
+    access_token="...",
+    access_secret="..."
+)
+
+# Post single tweet
+result = await poster.post("Key insight from today's debate: ...")
+
+# Post thread (up to 25 tweets)
+thread_result = await poster.post_thread([
+    "Thread: AI debate highlights 🧵",
+    "1/ Agent A argued for progressive carbon tax...",
+    "2/ Agent B countered with economic concerns...",
+    "3/ Final consensus: Phased implementation wins"
+])
+```
+
+---
+
+## Phase 19: Agent Utilities (2026-01)
+
+Shared utilities for agent implementations.
+
+### QuotaFallbackMixin
+**File:** `aragora/agents/fallback.py`
+
+Automatic fallback when provider quota exceeded.
+
+```python
+from aragora.agents.fallback import QuotaFallbackMixin
+
+class MyAgent(QuotaFallbackMixin, BaseAgent):
+    async def generate(self, prompt):
+        try:
+            return await self._primary_generate(prompt)
+        except Exception as e:
+            if self._is_quota_error(e):
+                return await self._fallback_generate(prompt)
+            raise
+```
+
+**Quota Detection:**
+- HTTP 429 (Too Many Requests)
+- HTTP 403 with quota keywords
+- Provider-specific error messages
+
+### StreamingMixin
+**File:** `aragora/agents/streaming.py`
+
+Shared SSE parsing logic for API agents.
+
+```python
+from aragora.agents.streaming import StreamingMixin
+
+class MyStreamingAgent(StreamingMixin, BaseAgent):
+    async def stream_generate(self, prompt):
+        async for chunk in self._parse_sse_stream(response):
+            yield chunk
+```
+
+**Features:**
+- OpenAI, Anthropic, Grok, OpenRouter format support
+- DoS protection (1MB buffer limit)
+- Automatic format detection
+
+---
+
 ## API Reference
 
 See [API_REFERENCE.md](./API_REFERENCE.md) for complete HTTP and WebSocket API documentation.

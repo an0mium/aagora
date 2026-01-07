@@ -80,12 +80,19 @@ aragora/
 ├── agents/                 # Agent implementations
 │   ├── base.py            # Abstract Agent class
 │   ├── cli_agents.py      # CLI tool wrappers (Claude, Codex, etc.)
+│   ├── api_agents.py      # API-based agents (Anthropic, OpenAI, etc.)
+│   ├── fallback.py        # QuotaFallbackMixin for provider failover
+│   ├── streaming.py       # StreamingMixin for SSE parsing
 │   ├── personas.py        # PersonaManager for agent traits
 │   ├── laboratory.py      # PersonaLaboratory for A/B testing
 │   └── prober.py          # CapabilityProber for quality assurance
 │
 ├── debate/                 # Core debate infrastructure
-│   ├── orchestrator.py    # Arena and DebateProtocol
+│   ├── orchestrator.py    # Arena class (3,545 LOC)
+│   ├── memory_manager.py  # MemoryManager (extracted from orchestrator)
+│   ├── prompt_builder.py  # PromptBuilder (extracted from orchestrator)
+│   ├── security_barrier.py# SecurityBarrier, TelemetryVerifier
+│   ├── telemetry_config.py# TelemetryConfig (observation levels)
 │   ├── convergence.py     # ConvergenceDetector
 │   ├── graph.py           # DebateGraph (DAG-based debates)
 │   ├── forking.py         # DebateForker (parallel branches)
@@ -120,7 +127,17 @@ aragora/
 │   ├── base.py            # BaseConnector protocol
 │   ├── local_docs.py      # LocalDocsConnector
 │   ├── github.py          # GitHubConnector
-│   └── web.py             # WebConnector
+│   ├── web.py             # WebConnector
+│   ├── youtube_uploader.py# YouTubeUploaderConnector (OAuth 2.0)
+│   └── twitter_poster.py  # TwitterPosterConnector (OAuth 1.0a)
+│
+├── maintenance/            # System maintenance utilities
+│   └── db_maintenance.py  # DatabaseMaintenance (WAL, VACUUM)
+│
+├── monitoring/             # System monitoring
+│   └── simple_observer.py # SimpleObserver (agent failure tracking)
+│
+├── resilience.py          # CircuitBreaker for agent failure handling
 │
 ├── visualization/          # Debate visualization
 │   ├── mapper.py          # ArgumentCartographer

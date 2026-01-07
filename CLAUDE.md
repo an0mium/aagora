@@ -11,19 +11,24 @@ Aragora is a multi-agent debate framework where heterogeneous AI agents discuss,
 ```
 aragora/
 ├── debate/           # Core debate orchestration
-│   ├── orchestrator.py  # Arena class - main debate engine
-│   ├── consensus.py     # Consensus detection and proofs
-│   └── convergence.py   # Semantic similarity detection
+│   ├── orchestrator.py     # Arena class - main debate engine (3,545 LOC)
+│   ├── memory_manager.py   # Memory coordination (extracted)
+│   ├── prompt_builder.py   # Prompt construction (extracted)
+│   ├── security_barrier.py # Telemetry redaction (extracted)
+│   ├── consensus.py        # Consensus detection and proofs
+│   └── convergence.py      # Semantic similarity detection
 ├── agents/           # Agent implementations
 │   ├── cli_agents.py    # CLI-based agents (claude, codex, gemini)
-│   └── api_agents.py    # API-based agents (anthropic-api, openai)
+│   ├── api_agents.py    # API-based agents (anthropic-api, openai)
+│   └── fallback.py      # Quota detection and OpenRouter fallback
 ├── memory/           # Learning and persistence
 │   ├── continuum.py     # Multi-tier memory (fast/medium/slow/glacial)
 │   └── consensus.py     # Historical debate outcomes
 ├── server/           # HTTP/WebSocket API
-│   └── unified_server.py  # Main server (54+ endpoints)
+│   └── unified_server.py  # Main server (72+ endpoints)
 ├── ranking/          # Agent skill tracking
 │   └── elo.py           # ELO ratings and calibration scoring
+├── resilience.py     # CircuitBreaker for agent failure handling
 └── verification/     # Proof generation
     └── formal.py        # Z3/Lean verification backends
 ```
@@ -148,7 +153,10 @@ Partially integrated:
 - Calibration scoring
 
 Recent additions (2026-01):
-- `CircuitBreaker` class in orchestrator.py - handles failing agents gracefully
+- `CircuitBreaker` class in aragora/resilience.py - handles failing agents gracefully
+- `SecurityBarrier` and `TelemetryVerifier` in debate/security_barrier.py - telemetry redaction
+- `MemoryManager` in debate/memory_manager.py - memory coordination (extracted from orchestrator)
+- `PromptBuilder` in debate/prompt_builder.py - prompt construction (extracted from orchestrator)
 - OpenRouter fallback in api_agents.py - auto-fallback when OpenAI returns 429
 - `ttl_cache` decorator in handlers/base.py - simple TTL caching
 

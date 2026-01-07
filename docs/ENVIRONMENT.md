@@ -89,17 +89,47 @@ For semantic search and memory retrieval.
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `EMBEDDING_PROVIDER` | Optional | Provider to use | `auto` |
 | `OPENAI_EMBEDDING_MODEL` | Optional | OpenAI embedding model | `text-embedding-3-small` |
 
-Supported providers: `openai`, `gemini`, `sentence-transformers`, `auto`
+Currently uses OpenAI or Gemini embeddings based on available API keys.
 
 ## Formal Verification
 
+> **Note:** These variables are defined but not yet actively used in the codebase.
+
+| Variable | Required | Description | Default | Status |
+|----------|----------|-------------|---------|--------|
+| `Z3_TIMEOUT` | Optional | Z3 solver timeout (seconds) | `30` | Planned |
+| `LEAN_PATH` | Optional | Path to Lean 4 installation | Auto-detect | Planned |
+
+## Telemetry Configuration
+
+Controls observation levels for debug and production modes.
+
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `Z3_TIMEOUT` | Optional | Z3 solver timeout (seconds) | `30` |
-| `LEAN_PATH` | Optional | Path to Lean 4 installation | Auto-detect |
+| `ARAGORA_TELEMETRY_LEVEL` | Optional | Telemetry level (SILENT/DIAGNOSTIC/CONTROLLED/SPECTACLE) | `CONTROLLED` |
+
+Levels:
+- `SILENT` (0): No telemetry broadcast
+- `DIAGNOSTIC` (1): Internal diagnostics only
+- `CONTROLLED` (2): Redacted telemetry (default, secrets filtered)
+- `SPECTACLE` (3): Full transparency (development only)
+
+## Belief Network Settings
+
+For belief propagation analysis during debates.
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `ARAGORA_BELIEF_MAX_ITERATIONS` | Optional | Max iterations for belief convergence | `100` |
+| `ARAGORA_BELIEF_CONVERGENCE_THRESHOLD` | Optional | Convergence epsilon | `0.001` |
+
+## Queue Settings
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `ARAGORA_USER_EVENT_QUEUE_SIZE` | Optional | User event queue buffer size | `100` |
 
 ## Debug & Logging
 

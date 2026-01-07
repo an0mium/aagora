@@ -142,26 +142,11 @@ class AgentStreamError(AgentError):
 # Sensitive Data Sanitization
 # =============================================================================
 
-_SENSITIVE_PATTERNS = [
-    (r"sk-[a-zA-Z0-9]{20,}", "<REDACTED_KEY>"),
-    (r"AIza[a-zA-Z0-9_-]{35}", "<REDACTED_KEY>"),
-    (r'["\']?api[_-]?key["\']?\s*[:=]\s*["\']?[\w-]+["\']?', "api_key=<REDACTED>"),
-    (r'["\']?authorization["\']?\s*[:=]\s*["\']?Bearer\s+[\w.-]+["\']?', "auth=<REDACTED>"),
-    (r'["\']?token["\']?\s*[:=]\s*["\']?[\w.-]+["\']?', "token=<REDACTED>"),
-    (r'["\']?secret["\']?\s*[:=]\s*["\']?[\w-]+["\']?', "secret=<REDACTED>"),
-    (r"x-api-key:\s*[\w-]+", "x-api-key: <REDACTED>"),
-    (r"x-goog-api-key:\s*[\w-]+", "x-goog-api-key: <REDACTED>"),
-]
-
-
-def sanitize_error(text: str, max_length: int = 500) -> str:
-    """Sanitize error message to remove potential secrets."""
-    sanitized = str(text)
-    for pattern, replacement in _SENSITIVE_PATTERNS:
-        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
-    if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length] + "... [truncated]"
-    return sanitized
+# Import shared sanitization utilities
+from aragora.utils.error_sanitizer import (
+    sanitize_error,
+    SENSITIVE_PATTERNS as _SENSITIVE_PATTERNS,  # For backwards compatibility
+)
 
 
 # =============================================================================
