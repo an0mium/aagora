@@ -1,11 +1,11 @@
 # Aragora Project Status
 
-*Last updated: January 7, 2026 (12:00 UTC)*
+*Last updated: January 8, 2026 (04:00 UTC)*
 
 ## Current State
 
 ### Test Status
-- **Total Tests**: 3,400+ collected (massive expansion via parametrized tests)
+- **Total Tests**: 12,000+ collected (massive expansion via parametrized tests)
 - **Frontend Tests**: 34 Jest tests (DebateListPanel, AgentComparePanel)
 - **Recent Fixes (2026-01-05)**:
   - Fixed `_get_belief_classes()` → `_get_belief_analyzer()` typo in orchestrator.py
@@ -37,6 +37,20 @@
 | `anthropic-api` | Claude Opus 4.5 | Anthropic |
 | `openai-api` | GPT 5.2 | OpenAI |
 | `deepseek-r1` | DeepSeek V3.2 | OpenRouter |
+
+### Recent Changes (2026-01-08)
+- **Nomic Loop Phase Extraction**: All 6 phases now have modular implementations
+  - `ContextPhase` - Multi-agent codebase exploration
+  - `DebatePhase` - Improvement proposal with PostDebateHooks
+  - `DesignPhase` - Architecture planning with BeliefContext
+  - `ImplementPhase` - Hybrid multi-model code generation
+  - `VerifyPhase` - Tests and quality checks
+  - `CommitPhase` - Git commit with safety checks
+  - Opt-in via `USE_EXTRACTED_PHASES=1` environment variable
+  - 29 new tests for phase factories and result types
+- **Test Isolation**: Added global `clear_handler_cache` fixture to conftest.py
+- **Flaky Test Fixes**: Fixed pulse handler tests that were making real API calls
+- **Test Count**: Expanded to 12,001 tests (from 3,400+)
 
 ### Recent Changes (2026-01-07)
 - **Database Consolidation**: Implemented full migration system for 22→4 databases
@@ -373,6 +387,30 @@
 3. **Cross-cycle Learning**: Persist insights between cycles via continuum.db
 
 ## Architecture Notes
+
+### Nomic Loop Phase Architecture
+
+The nomic loop (`scripts/nomic_loop.py`) implements a 6-phase self-improvement cycle:
+
+| Phase | Class | Location | Purpose |
+|-------|-------|----------|---------|
+| 0 | `ContextPhase` | `scripts/nomic/phases/context.py` | Multi-agent codebase exploration |
+| 1 | `DebatePhase` | `scripts/nomic/phases/debate.py` | Improvement proposal with hooks |
+| 2 | `DesignPhase` | `scripts/nomic/phases/design.py` | Architecture planning |
+| 3 | `ImplementPhase` | `scripts/nomic/phases/implement.py` | Hybrid code generation |
+| 4 | `VerifyPhase` | `scripts/nomic/phases/verify.py` | Tests and quality checks |
+| 5 | `CommitPhase` | `scripts/nomic/phases/commit.py` | Git commit with safety |
+
+**Migration Status**: All phases have opt-in modular implementations via `USE_EXTRACTED_PHASES=1`.
+
+**Factory Methods**: Each phase has a corresponding factory method in NomicLoop:
+- `_create_context_phase()`, `_create_debate_phase()`, `_create_design_phase()`
+- `_create_implement_phase()`, `_create_verify_phase()`, `_create_commit_phase()`
+
+**PostDebateHooks**: 10 callback hooks for debate post-processing:
+- `on_consensus_stored`, `on_calibration_recorded`, `on_insights_extracted`
+- `on_memories_recorded`, `on_persona_recorded`, `on_patterns_extracted`
+- `on_meta_analyzed`, `on_elo_recorded`, `on_claims_extracted`, `on_belief_network_built`
 
 The codebase is **feature-rich with improving exposure**:
 - 64+ API endpoints, ~15% used by frontend
