@@ -12,10 +12,11 @@ import asyncio
 import functools
 import logging
 import random
-from typing import Any, Callable, Type, TypeVar
+from typing import Any, Callable, Type
 
 import aiohttp
 
+from aragora.agents.types import T
 from aragora.utils.error_sanitizer import sanitize_error
 from .classifier import ErrorContext, ErrorAction
 from .exceptions import (
@@ -30,9 +31,6 @@ from .exceptions import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Type variable for generic return types
-T = TypeVar("T")
 
 
 # =============================================================================
@@ -75,6 +73,47 @@ def calculate_retry_delay_with_jitter(
 _calculate_retry_delay_with_jitter = calculate_retry_delay_with_jitter
 
 
+def _build_error_action(
+    error: AgentError,
+    ctx: ErrorContext,
+    retryable_exceptions: tuple,
+    override_delay: float | None = None,
+) -> ErrorAction:
+    """
+    Build an ErrorAction with consistent retry logic.
+
+    This helper consolidates the repeated pattern of:
+    1. Check if error is retryable based on attempt count and exception type
+    2. Calculate backoff delay with jitter
+    3. Return ErrorAction tuple
+
+    Args:
+        error: The agent error that occurred
+        ctx: Error context with attempt count and retry settings
+        retryable_exceptions: Tuple of exception types that can be retried
+        override_delay: Optional fixed delay (e.g., from Retry-After header)
+
+    Returns:
+        ErrorAction with retry decision and delay
+    """
+    should_retry = (
+        ctx.max_retries > 0
+        and ctx.attempt <= ctx.max_retries
+        and isinstance(error, retryable_exceptions)
+    )
+
+    if not should_retry:
+        delay = 0.0
+    elif override_delay is not None:
+        delay = override_delay
+    else:
+        delay = calculate_retry_delay_with_jitter(
+            ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
+        )
+
+    return ErrorAction(error=error, should_retry=should_retry, delay_seconds=delay)
+
+
 # =============================================================================
 # Error Handler Functions
 # =============================================================================
@@ -92,16 +131,7 @@ def _handle_timeout_error(
         timeout_seconds=ctx.timeout,
         cause=e,
     )
-    should_retry = (
-        ctx.max_retries > 0
-        and ctx.attempt <= ctx.max_retries
-        and isinstance(error, retryable_exceptions)
-    )
-    delay = calculate_retry_delay_with_jitter(
-        ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
-    ) if should_retry else 0.0
-
-    return ErrorAction(error=error, should_retry=should_retry, delay_seconds=delay)
+    return _build_error_action(error, ctx, retryable_exceptions)
 
 
 def _handle_connection_error(
@@ -115,21 +145,8 @@ def _handle_connection_error(
     else:
         msg = f"Connection failed: {sanitize_error(str(e))}"
 
-    error = AgentConnectionError(
-        msg,
-        agent_name=ctx.agent_name,
-        cause=e,
-    )
-    should_retry = (
-        ctx.max_retries > 0
-        and ctx.attempt <= ctx.max_retries
-        and isinstance(error, retryable_exceptions)
-    )
-    delay = calculate_retry_delay_with_jitter(
-        ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
-    ) if should_retry else 0.0
-
-    return ErrorAction(error=error, should_retry=should_retry, delay_seconds=delay)
+    error = AgentConnectionError(msg, agent_name=ctx.agent_name, cause=e)
+    return _build_error_action(error, ctx, retryable_exceptions)
 
 
 def _handle_payload_error(
@@ -143,16 +160,7 @@ def _handle_payload_error(
         agent_name=ctx.agent_name,
         cause=e,
     )
-    should_retry = (
-        ctx.max_retries > 0
-        and ctx.attempt <= ctx.max_retries
-        and isinstance(error, retryable_exceptions)
-    )
-    delay = calculate_retry_delay_with_jitter(
-        ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
-    ) if should_retry else 0.0
-
-    return ErrorAction(error=error, should_retry=should_retry, delay_seconds=delay)
+    return _build_error_action(error, ctx, retryable_exceptions)
 
 
 def _handle_response_error(
@@ -176,25 +184,14 @@ def _handle_response_error(
             retry_after=retry_after,
             cause=e,
         )
-        should_retry = (
-            ctx.max_retries > 0
-            and ctx.attempt <= ctx.max_retries
-            and isinstance(error, retryable_exceptions)
-        )
 
-        # Use Retry-After if available, otherwise use backoff
-        if should_retry and retry_after:
+        # Compute override delay from Retry-After with jitter
+        override_delay = None
+        if retry_after is not None:
             base_wait = min(retry_after, ctx.max_delay)
-            jitter = base_wait * 0.1 * random.uniform(0, 1)
-            delay = base_wait + jitter
-        elif should_retry:
-            delay = calculate_retry_delay_with_jitter(
-                ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
-            )
-        else:
-            delay = 0.0
+            override_delay = base_wait + base_wait * 0.1 * random.uniform(0, 1)
 
-        return ErrorAction(error=error, should_retry=should_retry, delay_seconds=delay)
+        return _build_error_action(error, ctx, retryable_exceptions, override_delay)
 
     elif e.status >= 500:
         error = AgentConnectionError(
@@ -203,16 +200,7 @@ def _handle_response_error(
             status_code=e.status,
             cause=e,
         )
-        should_retry = (
-            ctx.max_retries > 0
-            and ctx.attempt <= ctx.max_retries
-            and isinstance(error, retryable_exceptions)
-        )
-        delay = calculate_retry_delay_with_jitter(
-            ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
-        ) if should_retry else 0.0
-
-        return ErrorAction(error=error, should_retry=should_retry, delay_seconds=delay)
+        return _build_error_action(error, ctx, retryable_exceptions)
 
     else:
         # 4xx errors - not retryable
@@ -240,16 +228,7 @@ def _handle_agent_error(
             error=e, should_retry=False, delay_seconds=0.0, log_level="error"
         )
 
-    should_retry = (
-        ctx.max_retries > 0
-        and ctx.attempt <= ctx.max_retries
-        and isinstance(e, retryable_exceptions)
-    )
-    delay = calculate_retry_delay_with_jitter(
-        ctx.attempt - 1, ctx.retry_delay, ctx.max_delay
-    ) if should_retry else 0.0
-
-    return ErrorAction(error=e, should_retry=should_retry, delay_seconds=delay)
+    return _build_error_action(e, ctx, retryable_exceptions)
 
 
 def _handle_json_error(e: ValueError, ctx: ErrorContext) -> ErrorAction:
