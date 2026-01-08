@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 from aragora.config import DB_PERSONAS_PATH, DB_TIMEOUT_SECONDS
 from aragora.insights.database import InsightsDatabase
@@ -293,9 +293,9 @@ class PersonaManager:
             row = cursor.fetchone()
 
             if row:
-                expertise = safe_json_loads(row[0], {})
+                expertise: dict[str, Any] = safe_json_loads(row[0], {})
             else:
-                expertise = {}
+                expertise: dict[str, Any] = {}
 
             # Smooth update (blend old and new)
             old_score = expertise.get(domain, 0.5)

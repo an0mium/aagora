@@ -37,6 +37,8 @@ class BroadcasterConfig:
     # Rate limiting
     rate_limiter_ttl: int = 3600  # 1 hour
     cleanup_interval: int = 100  # Cleanup every N accesses
+    rate_limit_per_minute: float = 60.0  # Tokens per minute per client
+    rate_limit_burst: int = 10  # Max burst size
 
     # Client tracking
     max_client_ids: int = 10000
@@ -129,7 +131,10 @@ class ClientManager:
 
         with self._rate_limiters_lock:
             if client_id not in self._rate_limiters:
-                self._rate_limiters[client_id] = TokenBucket()
+                self._rate_limiters[client_id] = TokenBucket(
+                    rate_per_minute=self.config.rate_limit_per_minute,
+                    burst_size=self.config.rate_limit_burst,
+                )
             self._rate_limiter_last_access[client_id] = time.time()
             return self._rate_limiters[client_id]
 
