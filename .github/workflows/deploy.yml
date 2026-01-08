@@ -133,11 +133,11 @@ jobs:
       - name: Deploy to EC2
         run: |
           ssh -i ~/.ssh/ec2 ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
-            cd /home/ec2-user/aragora
+            cd ~/aragora || cd /home/ec2-user/aragora
             git pull origin main
-            source venv/bin/activate
+            source venv/bin/activate || source ~/venv/bin/activate
             pip install -e .
-            sudo systemctl restart aragora
+            sudo systemctl restart aragora-staging || sudo systemctl restart aragora
           EOF
 
       - name: Verify deployment
