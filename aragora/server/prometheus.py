@@ -556,9 +556,16 @@ def record_memory_operation(operation: str) -> None:
 # Decorators for Easy Instrumentation
 # ============================================================================
 
-def timed_http_request(endpoint: str):
-    """Decorator to time HTTP request handlers."""
-    def decorator(func: Callable):
+def timed_http_request(endpoint: str) -> Callable[[Callable], Callable]:
+    """Decorator to time HTTP request handlers.
+
+    Args:
+        endpoint: The HTTP endpoint being timed (e.g., "/api/debates")
+
+    Returns:
+        Decorator function that wraps handlers with timing instrumentation.
+    """
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
             start = time.perf_counter()
@@ -576,9 +583,17 @@ def timed_http_request(endpoint: str):
     return decorator
 
 
-def timed_agent_generation(agent_type: str, model: str):
-    """Decorator to time agent generation."""
-    def decorator(func: Callable):
+def timed_agent_generation(agent_type: str, model: str) -> Callable[[Callable], Callable]:
+    """Decorator to time agent generation.
+
+    Args:
+        agent_type: Type of agent being timed (e.g., "anthropic-api")
+        model: Model name being used (e.g., "claude-3-sonnet")
+
+    Returns:
+        Async decorator function that wraps generators with timing instrumentation.
+    """
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
             start = time.perf_counter()
@@ -595,19 +610,22 @@ def timed_agent_generation(agent_type: str, model: str):
     return decorator
 
 
-def timed_db_query(operation: str, table: str):
+def timed_db_query(operation: str, table: str) -> Callable[[Callable], Callable]:
     """Decorator to time database query execution.
 
     Args:
         operation: Query operation type (select, insert, update, delete)
         table: Table name being queried
 
+    Returns:
+        Decorator function that wraps queries with timing instrumentation.
+
     Usage:
         @timed_db_query("select", "debates")
         def list_debates(self, limit: int):
             ...
     """
-    def decorator(func: Callable):
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
             start = time.perf_counter()
@@ -624,19 +642,22 @@ def timed_db_query(operation: str, table: str):
     return decorator
 
 
-def timed_db_query_async(operation: str, table: str):
+def timed_db_query_async(operation: str, table: str) -> Callable[[Callable], Callable]:
     """Async decorator to time database query execution.
 
     Args:
         operation: Query operation type (select, insert, update, delete)
         table: Table name being queried
 
+    Returns:
+        Async decorator function that wraps queries with timing instrumentation.
+
     Usage:
         @timed_db_query_async("select", "debates")
         async def list_debates(self, limit: int):
             ...
     """
-    def decorator(func: Callable):
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
             start = time.perf_counter()

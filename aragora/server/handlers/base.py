@@ -327,7 +327,7 @@ def _map_exception_to_status(e: Exception, default: int = 500) -> int:
     return _EXCEPTION_STATUS_MAP.get(error_type, default)
 
 
-def handle_errors(context: str, default_status: int = 500):
+def handle_errors(context: str, default_status: int = 500) -> Callable[[Callable], Callable]:
     """
     Decorator for consistent exception handling with tracing.
 
@@ -340,6 +340,9 @@ def handle_errors(context: str, default_status: int = 500):
     Args:
         context: Description of the operation (e.g., "debate creation")
         default_status: Default HTTP status for unrecognized exceptions
+
+    Returns:
+        Decorator function that wraps handler methods with error handling.
 
     Usage:
         @handle_errors("leaderboard retrieval")
@@ -368,7 +371,7 @@ def handle_errors(context: str, default_status: int = 500):
     return decorator
 
 
-def log_request(context: str, log_response: bool = False):
+def log_request(context: str, log_response: bool = False) -> Callable[[Callable], Callable]:
     """
     Decorator for structured request/response logging.
 
@@ -380,6 +383,9 @@ def log_request(context: str, log_response: bool = False):
         context: Description of the operation (e.g., "debate creation")
         log_response: If True, also log response body (use cautiously for
                      privacy/size reasons)
+
+    Returns:
+        Decorator function that wraps handler methods with logging.
 
     Usage:
         @log_request("debate creation")
