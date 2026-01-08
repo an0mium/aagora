@@ -553,11 +553,33 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
             trending_category: Filter trending topics by category (optional)
 
         All agents participate as proposers for full participation in all rounds.
+
+        Requires authentication when ARAGORA_API_TOKEN is set.
         """
         global _active_debates, _debate_executor
         import aiohttp.web as web
+        from aragora.server.auth import auth_config, check_auth
 
         origin = request.headers.get("Origin")
+
+        # Authenticate if auth is enabled (starting debates uses compute resources)
+        if auth_config.enabled:
+            headers = dict(request.headers)
+            client_ip = request.remote or ""
+            if client_ip in TRUSTED_PROXIES:
+                forwarded = request.headers.get('X-Forwarded-For', '')
+                if forwarded:
+                    client_ip = forwarded.split(',')[0].strip()
+
+            authenticated, remaining = check_auth(headers, "", loop_id="", ip_address=client_ip)
+            if not authenticated:
+                status = 429 if remaining == 0 else 401
+                msg = "Rate limit exceeded" if remaining == 0 else "Authentication required to start debates"
+                return web.json_response(
+                    {"error": msg},
+                    status=status,
+                    headers=self._cors_headers(origin)
+                )
 
         if not DEBATE_AVAILABLE:
             return web.json_response(
@@ -1033,6 +1055,37 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
                 logger.error(f"[ws] Drain loop error: {e}")
                 await asyncio.sleep(0.1)
 
+    def _add_versioned_routes(self, app, routes: list) -> None:
+        """Add both versioned (/api/v1/) and legacy (/api/) routes.
+
+        This enables API versioning while maintaining backwards compatibility.
+        Routes registered:
+        - /api/v1/{path} - Versioned (preferred)
+        - /api/{path}    - Legacy (deprecated, for backwards compatibility)
+
+        Args:
+            app: aiohttp Application
+            routes: List of (method, path, handler) tuples where path is without prefix
+        """
+        for method, path, handler in routes:
+            # Add versioned route (preferred)
+            v1_path = f"/api/v1{path}"
+            # Add legacy route (backwards compatible)
+            legacy_path = f"/api{path}"
+
+            if method == "GET":
+                app.router.add_get(v1_path, handler)
+                app.router.add_get(legacy_path, handler)
+            elif method == "POST":
+                app.router.add_post(v1_path, handler)
+                app.router.add_post(legacy_path, handler)
+            elif method == "PUT":
+                app.router.add_put(v1_path, handler)
+                app.router.add_put(legacy_path, handler)
+            elif method == "DELETE":
+                app.router.add_delete(v1_path, handler)
+                app.router.add_delete(legacy_path, handler)
+
     async def start(self) -> None:
         """Start the unified HTTP+WebSocket server."""
         import aiohttp.web as web
@@ -1042,30 +1095,39 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
         # Create aiohttp app
         app = web.Application()
 
-        # Add routes
+        # Add OPTIONS handler for CORS preflight
         app.router.add_route("OPTIONS", "/{path:.*}", self._handle_options)
-        app.router.add_get("/api/leaderboard", self._handle_leaderboard)
-        app.router.add_get("/api/matches/recent", self._handle_matches_recent)
-        app.router.add_get("/api/insights/recent", self._handle_insights_recent)
-        app.router.add_get("/api/flips/summary", self._handle_flips_summary)
-        app.router.add_get("/api/flips/recent", self._handle_flips_recent)
-        app.router.add_get("/api/tournaments", self._handle_tournaments)
-        app.router.add_get("/api/tournaments/{tournament_id}", self._handle_tournament_details)
-        app.router.add_get("/api/agent/{name}/consistency", self._handle_agent_consistency)
-        app.router.add_get("/api/agent/{name}/network", self._handle_agent_network)
-        app.router.add_get("/api/memory/tier-stats", self._handle_memory_tier_stats)
-        app.router.add_get("/api/laboratory/emergent-traits", self._handle_laboratory_emergent_traits)
-        app.router.add_get("/api/laboratory/cross-pollinations/suggest", self._handle_laboratory_cross_pollinations)
-        app.router.add_get("/api/nomic/state", self._handle_nomic_state)
-        app.router.add_get("/api/debate/{loop_id}/graph", self._handle_graph_json)
-        app.router.add_get("/api/debate/{loop_id}/graph/mermaid", self._handle_graph_mermaid)
-        app.router.add_get("/api/debate/{loop_id}/graph/stats", self._handle_graph_stats)
-        app.router.add_get("/api/debate/{loop_id}/audience/clusters", self._handle_audience_clusters)
-        app.router.add_get("/api/replays", self._handle_replays)
-        app.router.add_get("/api/replays/{replay_id}/html", self._handle_replay_html)
-        app.router.add_post("/api/debate", self._handle_start_debate)  # Start ad-hoc debate
-        app.router.add_get("/", self._websocket_handler)  # WebSocket at root
-        app.router.add_get("/ws", self._websocket_handler)  # Also at /ws
+
+        # Define API routes (path suffix after /api or /api/v1)
+        api_routes = [
+            ("GET", "/leaderboard", self._handle_leaderboard),
+            ("GET", "/matches/recent", self._handle_matches_recent),
+            ("GET", "/insights/recent", self._handle_insights_recent),
+            ("GET", "/flips/summary", self._handle_flips_summary),
+            ("GET", "/flips/recent", self._handle_flips_recent),
+            ("GET", "/tournaments", self._handle_tournaments),
+            ("GET", "/tournaments/{tournament_id}", self._handle_tournament_details),
+            ("GET", "/agent/{name}/consistency", self._handle_agent_consistency),
+            ("GET", "/agent/{name}/network", self._handle_agent_network),
+            ("GET", "/memory/tier-stats", self._handle_memory_tier_stats),
+            ("GET", "/laboratory/emergent-traits", self._handle_laboratory_emergent_traits),
+            ("GET", "/laboratory/cross-pollinations/suggest", self._handle_laboratory_cross_pollinations),
+            ("GET", "/nomic/state", self._handle_nomic_state),
+            ("GET", "/debate/{loop_id}/graph", self._handle_graph_json),
+            ("GET", "/debate/{loop_id}/graph/mermaid", self._handle_graph_mermaid),
+            ("GET", "/debate/{loop_id}/graph/stats", self._handle_graph_stats),
+            ("GET", "/debate/{loop_id}/audience/clusters", self._handle_audience_clusters),
+            ("GET", "/replays", self._handle_replays),
+            ("GET", "/replays/{replay_id}/html", self._handle_replay_html),
+            ("POST", "/debate", self._handle_start_debate),
+        ]
+
+        # Add routes with both versioned and legacy paths
+        self._add_versioned_routes(app, api_routes)
+
+        # WebSocket handlers (not versioned)
+        app.router.add_get("/", self._websocket_handler)
+        app.router.add_get("/ws", self._websocket_handler)
 
         # Start drain loop
         asyncio.create_task(self._drain_loop())
@@ -1077,7 +1139,8 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
 
         logger.info(f"Unified server (HTTP+WS) running on http://{self.host}:{self.port}")
         logger.info(f"  WebSocket: ws://{self.host}:{self.port}/")
-        logger.info(f"  HTTP API:  http://{self.host}:{self.port}/api/*")
+        logger.info(f"  HTTP API:  http://{self.host}:{self.port}/api/v1/* (preferred)")
+        logger.info(f"  Legacy:    http://{self.host}:{self.port}/api/* (deprecated)")
 
         await site.start()
 
