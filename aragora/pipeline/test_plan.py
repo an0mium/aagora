@@ -14,8 +14,11 @@ from typing import Optional
 from enum import Enum
 
 
-class TestType(Enum):
-    """Types of tests."""
+class VerificationType(Enum):
+    """Types of verification tests.
+
+    Note: Renamed from TestType to avoid pytest collection warnings.
+    """
     UNIT = "unit"
     INTEGRATION = "integration"
     E2E = "e2e"
@@ -24,12 +27,23 @@ class TestType(Enum):
     REGRESSION = "regression"
 
 
-class TestPriority(Enum):
-    """Test priority levels."""
+# Backward compatibility alias
+TestType = VerificationType
+
+
+class CasePriority(Enum):
+    """Test case priority levels.
+
+    Note: Renamed from TestPriority to avoid pytest collection warnings.
+    """
     P0 = "p0"  # Critical - must pass
     P1 = "p1"  # High priority
     P2 = "p2"  # Medium priority
     P3 = "p3"  # Low priority
+
+
+# Backward compatibility alias
+TestPriority = CasePriority
 
 
 @dataclass
@@ -39,8 +53,8 @@ class VerificationCase:
     id: str
     title: str
     description: str
-    test_type: TestType
-    priority: TestPriority
+    test_type: VerificationType
+    priority: CasePriority
 
     # Test details
     preconditions: list[str] = field(default_factory=list)
@@ -95,11 +109,11 @@ class VerificationPlan:
         """Add a test case."""
         self.test_cases.append(test)
 
-    def get_by_type(self, test_type: TestType) -> list[VerificationCase]:
+    def get_by_type(self, test_type: VerificationType) -> list[VerificationCase]:
         """Get tests by type."""
         return [t for t in self.test_cases if t.test_type == test_type]
 
-    def get_by_priority(self, priority: TestPriority) -> list[VerificationCase]:
+    def get_by_priority(self, priority: CasePriority) -> list[VerificationCase]:
         """Get tests by priority."""
         return [t for t in self.test_cases if t.priority == priority]
 
@@ -112,8 +126,8 @@ class VerificationPlan:
         """Generate summary statistics."""
         return {
             "total_tests": len(self.test_cases),
-            "by_type": {t.value: len(self.get_by_type(t)) for t in TestType},
-            "by_priority": {p.value: len(self.get_by_priority(p)) for p in TestPriority},
+            "by_type": {t.value: len(self.get_by_type(t)) for t in VerificationType},
+            "by_priority": {p.value: len(self.get_by_priority(p)) for p in CasePriority},
             "automated": sum(1 for t in self.test_cases if t.automated),
             "implemented": sum(1 for t in self.test_cases if t.implemented),
         }
@@ -123,7 +137,7 @@ class VerificationPlan:
         summary = self.summary
 
         tests_by_priority = ""
-        for priority in TestPriority:
+        for priority in CasePriority:
             priority_tests = self.get_by_priority(priority)
             if priority_tests:
                 tests_by_priority += f"\n### Priority {priority.value.upper()} ({len(priority_tests)})\n\n"
@@ -260,8 +274,8 @@ class VerificationPlanGenerator:
                     id=f"consensus-{test_num}",
                     title=f"Verify: {line[:50]}...",
                     description=f"Test that the implementation satisfies: {line}",
-                    test_type=TestType.INTEGRATION,
-                    priority=TestPriority.P1,
+                    test_type=VerificationType.INTEGRATION,
+                    priority=CasePriority.P1,
                     steps=["Set up test environment", "Execute functionality", "Verify expected behavior"],
                     expected_result="Functionality works as described in debate conclusion",
                 ))
@@ -288,8 +302,8 @@ class VerificationPlanGenerator:
                     id=f"critique-{test_num}",
                     title=f"Edge case: {issue[:50]}...",
                     description=f"Test edge case identified in critique: {issue}",
-                    test_type=TestType.UNIT,
-                    priority=TestPriority.P2,
+                    test_type=VerificationType.UNIT,
+                    priority=CasePriority.P2,
                     steps=["Set up edge case conditions", "Execute", "Verify handling"],
                     expected_result="Edge case is handled gracefully",
                     related_critique_ids=[event.get("event_id", "")],
@@ -304,8 +318,8 @@ class VerificationPlanGenerator:
                     id=f"formal-{v.claim_id}",
                     title=f"Property: {v.claim_text[:50]}...",
                     description=f"Regression test for formally verified property: {v.claim_text}",
-                    test_type=TestType.UNIT,
-                    priority=TestPriority.P0,  # Critical - must not regress
+                    test_type=VerificationType.UNIT,
+                    priority=CasePriority.P0,  # Critical - must not regress
                     steps=["Property was formally verified", "Implement as regression test"],
                     expected_result="Property holds",
                     automated=True,
@@ -319,8 +333,8 @@ class VerificationPlanGenerator:
             id="smoke-1",
             title="Smoke test: Basic functionality",
             description="Verify basic functionality works after implementation",
-            test_type=TestType.E2E,
-            priority=TestPriority.P0,
+            test_type=VerificationType.E2E,
+            priority=CasePriority.P0,
             steps=["Deploy changes", "Execute happy path", "Verify success"],
             expected_result="Basic use case succeeds",
         ))
@@ -330,8 +344,8 @@ class VerificationPlanGenerator:
             id="regression-1",
             title="Regression: Existing functionality",
             description="Verify existing functionality is not broken",
-            test_type=TestType.REGRESSION,
-            priority=TestPriority.P1,
+            test_type=VerificationType.REGRESSION,
+            priority=CasePriority.P1,
             steps=["Run existing test suite", "Verify all pass"],
             expected_result="No regressions",
         ))
