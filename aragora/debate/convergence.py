@@ -16,7 +16,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -222,10 +222,13 @@ class SentenceTransformerBackend(SimilarityBackend):
         - Individual similarity computations are cached with LRU (256 pairs)
     """
 
-    _model_cache = None
-    _model_name_cache = None
+    _model_cache: Optional[Any] = None
+    _model_name_cache: Optional[str] = None
     _similarity_cache: dict[tuple[str, str], float] = {}
-    _cache_max_size = 256
+    _cache_max_size: int = 256
+
+    model: Any
+    cosine_similarity: Any
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         """Initialize sentence transformer backend."""

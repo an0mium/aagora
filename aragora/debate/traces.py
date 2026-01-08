@@ -405,9 +405,9 @@ class DebateTracer:
 
             conn.commit()
 
-    def get_state_at_event(self, event_id: str) -> dict:
+    def get_state_at_event(self, event_id: str) -> dict[str, Any]:
         """Reconstruct debate state at a specific event."""
-        state = {
+        state: dict[str, Any] = {
             "round": 0,
             "messages": [],
             "critiques": [],

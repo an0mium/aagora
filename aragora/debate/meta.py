@@ -10,7 +10,7 @@ Enables agents to analyze the debate process itself, identifying:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 import logging
 
@@ -131,7 +131,7 @@ class MetaCritiqueAnalyzer:
         observations = []
 
         # Group messages by agent
-        by_agent = {}
+        by_agent: dict[str, list[Any]] = {}
         for msg in messages:
             if msg.agent not in by_agent:
                 by_agent[msg.agent] = []
@@ -198,7 +198,7 @@ class MetaCritiqueAnalyzer:
         # Track key positions over time
         # This is a simplified version - a full implementation would use embeddings
 
-        positions_by_round = {}
+        positions_by_round: dict[int, list[str]] = {}
         for msg in messages:
             if msg.round not in positions_by_round:
                 positions_by_round[msg.round] = []
