@@ -462,8 +462,9 @@ class TestCacheMiddleware:
 
     def test_bounded_ttl_cache_set_get(self):
         """BoundedTTLCache should store and retrieve values."""
-        from aragora.server.middleware.cache import BoundedTTLCache
+        from aragora.server.middleware.cache import get_bounded_ttl_cache_class
 
+        BoundedTTLCache = get_bounded_ttl_cache_class()
         cache = BoundedTTLCache()
         cache.set("key1", "value1")
 
@@ -473,8 +474,9 @@ class TestCacheMiddleware:
 
     def test_bounded_ttl_cache_expiry(self):
         """BoundedTTLCache should expire old entries."""
-        from aragora.server.middleware.cache import BoundedTTLCache
+        from aragora.server.middleware.cache import get_bounded_ttl_cache_class
 
+        BoundedTTLCache = get_bounded_ttl_cache_class()
         cache = BoundedTTLCache()
         cache.set("key1", "value1")
 
@@ -488,8 +490,9 @@ class TestCacheMiddleware:
 
     def test_bounded_ttl_cache_lru_eviction(self):
         """BoundedTTLCache should evict old entries when full."""
-        from aragora.server.middleware.cache import BoundedTTLCache
+        from aragora.server.middleware.cache import get_bounded_ttl_cache_class
 
+        BoundedTTLCache = get_bounded_ttl_cache_class()
         cache = BoundedTTLCache(max_entries=3, evict_percent=0.5)
 
         cache.set("key1", "value1")
@@ -506,8 +509,9 @@ class TestCacheMiddleware:
 
     def test_bounded_ttl_cache_stats(self):
         """BoundedTTLCache should track stats."""
-        from aragora.server.middleware.cache import BoundedTTLCache
+        from aragora.server.middleware.cache import get_bounded_ttl_cache_class
 
+        BoundedTTLCache = get_bounded_ttl_cache_class()
         cache = BoundedTTLCache()
         cache.set("key1", "value1")
 
@@ -522,8 +526,9 @@ class TestCacheMiddleware:
 
     def test_bounded_ttl_cache_clear(self):
         """BoundedTTLCache.clear should remove entries."""
-        from aragora.server.middleware.cache import BoundedTTLCache
+        from aragora.server.middleware.cache import get_bounded_ttl_cache_class
 
+        BoundedTTLCache = get_bounded_ttl_cache_class()
         cache = BoundedTTLCache()
         cache.set("prefix1:key1", "value1")
         cache.set("prefix1:key2", "value2")
@@ -611,22 +616,25 @@ class TestCacheMiddleware:
     def test_invalidate_cache_by_source(self):
         """invalidate_cache should clear related cache entries."""
         from aragora.server.middleware import invalidate_cache
-        from aragora.server.middleware.cache import reset_cache, get_cache, CACHE_INVALIDATION_MAP
+        from aragora.server.middleware.cache import reset_cache, get_cache, get_cache_invalidation_map
 
         reset_cache()
         cache = get_cache()
 
         # Add some cache entries matching ELO prefixes
-        for prefix in CACHE_INVALIDATION_MAP.get("elo", [])[:3]:
+        # Note: The CACHE_INVALIDATION_MAP uses event names like "elo_updated" not "elo"
+        cache_map = get_cache_invalidation_map()
+        elo_prefixes = cache_map.get("elo_updated", [])[:3]
+        for prefix in elo_prefixes:
             cache.set(f"{prefix}:test", "value")
 
         # Add unrelated entry
         cache.set("other:test", "value")
 
         initial_count = len(cache)
-        assert initial_count >= 4
+        assert initial_count >= 4, f"Expected at least 4 entries, got {initial_count}. Prefixes: {elo_prefixes}"
 
-        # Invalidate ELO caches
+        # Invalidate ELO caches using the data source name (not event name)
         cleared = invalidate_cache("elo")
         assert cleared >= 3
 

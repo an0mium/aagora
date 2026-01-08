@@ -168,7 +168,7 @@ class FeedbackPhase:
             self._emit_match_recorded_event(ctx, participants)
 
         except Exception as e:
-            logger.debug("ELO update failed: %s", e)
+            logger.warning("ELO update failed for debate %s: %s", ctx.debate_id, e)
 
     def _emit_match_recorded_event(
         self, ctx: "DebateContext", participants: list[str]
@@ -199,7 +199,7 @@ class FeedbackPhase:
                 }
             ))
         except Exception as e:
-            logger.debug(f"ELO event emission error: {e}")
+            logger.warning(f"ELO event emission error: {e}")
 
     def _update_persona_performance(self, ctx: "DebateContext") -> None:
         """Update PersonaManager with performance feedback."""
@@ -218,7 +218,7 @@ class FeedbackPhase:
                     success=success,
                 )
         except Exception as e:
-            logger.debug("Persona update failed: %s", e)
+            logger.warning("Persona update failed: %s", e)
 
     def _resolve_positions(self, ctx: "DebateContext") -> None:
         """Resolve positions in PositionLedger."""
@@ -241,7 +241,7 @@ class FeedbackPhase:
                             resolution_source=f"debate:{ctx.debate_id}",
                         )
         except Exception as e:
-            logger.debug("Position resolution failed: %s", e)
+            logger.warning("Position resolution failed: %s", e)
 
     def _update_relationships(self, ctx: "DebateContext") -> None:
         """Update relationship metrics from debate."""
@@ -275,7 +275,7 @@ class FeedbackPhase:
                 critiques=critiques,
             )
         except Exception as e:
-            logger.debug("Relationship tracking failed: %s", e)
+            logger.warning("Relationship tracking failed: %s", e)
 
     def _detect_moments(self, ctx: "DebateContext") -> None:
         """Detect significant narrative moments."""
@@ -318,7 +318,7 @@ class FeedbackPhase:
                                 self._emit_moment_event(moment)
 
         except Exception as e:
-            logger.debug("Moment detection failed: %s", e)
+            logger.warning("Moment detection failed: %s", e)
 
     async def _index_debate(self, ctx: "DebateContext") -> None:
         """Index debate in embeddings for historical retrieval."""
@@ -357,7 +357,7 @@ class FeedbackPhase:
                 ))
 
         except Exception as e:
-            logger.debug("Embedding indexing failed: %s", e)
+            logger.warning("Embedding indexing failed: %s", e)
 
     def _detect_flips(self, ctx: "DebateContext") -> None:
         """Detect position flips for all participating agents."""
@@ -375,7 +375,7 @@ class FeedbackPhase:
                     self._emit_flip_events(ctx, agent.name, flips)
 
         except Exception as e:
-            logger.debug("Flip detection failed: %s", e)
+            logger.warning("Flip detection failed: %s", e)
 
     def _emit_flip_events(
         self, ctx: "DebateContext", agent_name: str, flips: list
@@ -404,7 +404,7 @@ class FeedbackPhase:
                     }
                 ))
         except Exception as e:
-            logger.debug(f"Flip event emission error: {e}")
+            logger.warning(f"Flip event emission error: {e}")
 
     def _store_memory(self, ctx: "DebateContext") -> None:
         """Store debate outcome in ContinuumMemory."""

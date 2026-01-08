@@ -30,13 +30,16 @@ from aragora.server.validation import (
     validate_debate_id,
 )
 
+# Rate limiting is available from aragora.server.middleware.rate_limit
+# or aragora.server.rate_limit for backward compatibility
+
 # Re-export DB_TIMEOUT_SECONDS for backwards compatibility
 __all__ = [
-    "DB_TIMEOUT_SECONDS", "require_auth", "require_storage", "error_response",
-    "json_response", "handle_errors", "log_request", "ttl_cache", "clear_cache",
-    "get_cache_stats", "CACHE_INVALIDATION_MAP", "invalidate_cache", "invalidate_on_event",
-    "invalidate_leaderboard_cache", "invalidate_agent_cache", "invalidate_debate_cache",
-    "rate_limit", "RateLimiter",
+    "DB_TIMEOUT_SECONDS", "require_auth", "require_storage", "require_feature",
+    "error_response", "json_response", "handle_errors", "log_request", "ttl_cache",
+    "clear_cache", "get_cache_stats", "CACHE_INVALIDATION_MAP", "invalidate_cache",
+    "invalidate_on_event", "invalidate_leaderboard_cache", "invalidate_agent_cache",
+    "invalidate_debate_cache", "PathMatcher", "RouteDispatcher",
 ]
 
 logger = logging.getLogger(__name__)
@@ -332,226 +335,6 @@ def invalidate_debate_cache(debate_id: str | None = None) -> int:
         return invalidate_on_event("debate_completed")
 
 
-
-
-# =============================================================================
-# Rate Limiting
-# =============================================================================
-
-
-class RateLimiter:
-    """
-    Token bucket rate limiter for API endpoints.
-
-    Provides per-client rate limiting with configurable requests per minute
-    and burst capacity. Uses sliding window for accurate rate tracking.
-
-    Example:
-        limiter = RateLimiter(requests_per_minute=30, burst=5)
-        if not limiter.allow(client_ip):
-            return error_response("Rate limit exceeded", 429)
-    """
-
-    def __init__(
-        self,
-        requests_per_minute: int = 60,
-        burst: int = 10,
-        key_prefix: str = "",
-    ):
-        """
-        Initialize rate limiter.
-
-        Args:
-            requests_per_minute: Maximum requests per minute per client
-            burst: Additional burst capacity above the base rate
-            key_prefix: Prefix for client keys (to namespace different endpoints)
-        """
-        self.requests_per_minute = requests_per_minute
-        self.burst = burst
-        self.key_prefix = key_prefix
-        self._tokens: dict[str, tuple[float, float]] = {}  # key -> (tokens, last_update)
-        self._refill_rate = requests_per_minute / 60.0  # tokens per second
-
-    def allow(self, client_key: str) -> tuple[bool, dict]:
-        """
-        Check if request is allowed for a client.
-
-        Args:
-            client_key: Unique client identifier (e.g., IP address, API key)
-
-        Returns:
-            Tuple of (allowed, info) where info contains rate limit headers
-        """
-        now = time.time()
-        full_key = f"{self.key_prefix}:{client_key}" if self.key_prefix else client_key
-
-        # Get or create token bucket for this client
-        if full_key in self._tokens:
-            tokens, last_update = self._tokens[full_key]
-            # Refill tokens based on time elapsed
-            elapsed = now - last_update
-            tokens = min(
-                self.requests_per_minute + self.burst,
-                tokens + elapsed * self._refill_rate
-            )
-        else:
-            tokens = self.requests_per_minute + self.burst
-
-        # Rate limit info for headers
-        info = {
-            "X-RateLimit-Limit": str(self.requests_per_minute),
-            "X-RateLimit-Remaining": str(max(0, int(tokens) - 1)),
-            "X-RateLimit-Reset": str(int(now + 60)),
-        }
-
-        # Check if request is allowed
-        if tokens >= 1:
-            self._tokens[full_key] = (tokens - 1, now)
-            return True, info
-        else:
-            # Calculate retry-after
-            tokens_needed = 1 - tokens
-            retry_after = int(tokens_needed / self._refill_rate) + 1
-            info["Retry-After"] = str(retry_after)
-            self._tokens[full_key] = (tokens, now)
-            return False, info
-
-    def get_client_key(self, handler) -> str:
-        """Extract client key from request handler.
-
-        Uses X-Forwarded-For if behind proxy, otherwise REMOTE_ADDR.
-        Falls back to 'anonymous' if neither available.
-        """
-        if handler is None:
-            return "anonymous"
-
-        # Check for forwarded IP (behind proxy)
-        if hasattr(handler, 'headers'):
-            forwarded = handler.headers.get('X-Forwarded-For', '')
-            if forwarded:
-                # Take first IP in chain (original client)
-                return forwarded.split(',')[0].strip()
-
-        # Check for direct connection
-        if hasattr(handler, 'client_address'):
-            addr = handler.client_address
-            if isinstance(addr, tuple) and len(addr) >= 1:
-                return str(addr[0])
-
-        return "anonymous"
-
-    def cleanup(self, max_age_seconds: int = 300) -> int:
-        """Remove stale entries older than max_age_seconds.
-
-        Returns number of entries removed.
-        """
-        now = time.time()
-        stale_keys = [
-            key for key, (_, last_update) in self._tokens.items()
-            if now - last_update > max_age_seconds
-        ]
-        for key in stale_keys:
-            del self._tokens[key]
-        return len(stale_keys)
-
-
-# Global rate limiters for different endpoint categories
-_rate_limiters: dict[str, RateLimiter] = {}
-
-
-def get_rate_limiter(
-    name: str,
-    requests_per_minute: int = 60,
-    burst: int = 10,
-) -> RateLimiter:
-    """Get or create a named rate limiter.
-
-    Args:
-        name: Unique name for this limiter (e.g., "debate_create", "probe_run")
-        requests_per_minute: Max requests per minute
-        burst: Burst capacity
-
-    Returns:
-        RateLimiter instance
-    """
-    if name not in _rate_limiters:
-        _rate_limiters[name] = RateLimiter(
-            requests_per_minute=requests_per_minute,
-            burst=burst,
-            key_prefix=name,
-        )
-    return _rate_limiters[name]
-
-
-def rate_limit(
-    requests_per_minute: int = 30,
-    burst: int = 5,
-    limiter_name: Optional[str] = None,
-):
-    """
-    Decorator for rate limiting handler methods.
-
-    Applies token bucket rate limiting per client. Returns 429 Too Many Requests
-    when limit exceeded.
-
-    Args:
-        requests_per_minute: Maximum requests per minute per client
-        burst: Additional burst capacity
-        limiter_name: Optional name to share limiter across handlers
-
-    Usage:
-        @rate_limit(requests_per_minute=30, burst=5)
-        def _run_capability_probe(self, handler):
-            ...
-
-        @rate_limit(requests_per_minute=10, burst=2, limiter_name="expensive")
-        def _run_deep_analysis(self, path, query_params, handler):
-            ...
-    """
-    def decorator(func: Callable) -> Callable:
-        # Get or create limiter
-        name = limiter_name or func.__name__
-        limiter = get_rate_limiter(name, requests_per_minute, burst)
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Extract handler from args/kwargs
-            handler = kwargs.get('handler')
-            if handler is None:
-                for arg in args:
-                    if hasattr(arg, 'headers'):
-                        handler = arg
-                        break
-
-            # Get client key and check rate limit
-            client_key = limiter.get_client_key(handler)
-            allowed, info = limiter.allow(client_key)
-
-            if not allowed:
-                logger.warning(
-                    f"Rate limit exceeded for {client_key} on {func.__name__}"
-                )
-                return error_response(
-                    "Rate limit exceeded. Please try again later.",
-                    status=429,
-                    headers=info,
-                )
-
-            # Call handler and add rate limit headers to response
-            result = func(*args, **kwargs)
-
-            # Add headers to response if possible
-            if hasattr(result, 'headers') and isinstance(result.headers, dict):
-                result.headers.update({
-                    k: v for k, v in info.items()
-                    if k.startswith('X-RateLimit')
-                })
-
-            return result
-        return wrapper
-    return decorator
-
-
 @dataclass
 class HandlerResult:
     """Result of handling an HTTP request."""
@@ -803,6 +586,43 @@ def require_storage(func: Callable) -> Callable:
     return wrapper
 
 
+def require_feature(
+    feature_check: Callable[[], bool],
+    feature_name: str,
+    status_code: int = 503,
+):
+    """
+    Decorator that requires a feature to be available before executing the handler.
+
+    Eliminates repetitive feature availability checks from handler methods.
+    Returns an error response if the feature is not available.
+
+    Args:
+        feature_check: Callable that returns True if feature is available
+        feature_name: Human-readable name for error message
+        status_code: HTTP status code to return if unavailable (default 503)
+
+    Usage:
+        @require_feature(lambda: CONSENSUS_AVAILABLE, "Consensus memory")
+        def _get_similar_debates(self, topic: str, limit: int) -> HandlerResult:
+            # CONSENSUS_AVAILABLE is guaranteed True here
+            ...
+
+        # Or with a more complex check:
+        @require_feature(lambda: self.ctx.get("embeddings") is not None, "Embeddings")
+        def _search_debates(self, query: str) -> HandlerResult:
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not feature_check():
+                return error_response(f"{feature_name} not available", status_code)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
 def with_error_recovery(
     fallback_value: Any = None,
     log_errors: bool = True,
@@ -855,6 +675,128 @@ def with_error_recovery(
 
 # Note: Validation functions moved to aragora.server.validation
 # Use: from aragora.server.validation import validate_against_schema, ValidationResult
+
+
+class PathMatcher:
+    """Utility for matching URL paths against patterns.
+
+    Simplifies the common pattern of parsing path segments and dispatching
+    to handler methods.
+
+    Example:
+        matcher = PathMatcher("/api/agent/{name}/{action}")
+        result = matcher.match("/api/agent/claude/profile")
+        # result = {"name": "claude", "action": "profile"}
+
+        matcher = PathMatcher("/api/debates")
+        result = matcher.match("/api/debates")
+        # result = {}  (empty dict = matched)
+
+        result = matcher.match("/api/other")
+        # result = None  (None = no match)
+    """
+
+    def __init__(self, pattern: str):
+        """Initialize with a URL pattern.
+
+        Args:
+            pattern: URL pattern with {param} placeholders for path segments
+        """
+        self.pattern = pattern
+        self.parts = pattern.strip("/").split("/")
+        self.param_indices: dict[str, int] = {}
+
+        for i, part in enumerate(self.parts):
+            if part.startswith("{") and part.endswith("}"):
+                param_name = part[1:-1]
+                self.param_indices[param_name] = i
+
+    def match(self, path: str) -> dict | None:
+        """Match a path against this pattern.
+
+        Returns:
+            Dict of extracted parameters if matched, None otherwise
+        """
+        path_parts = path.strip("/").split("/")
+
+        if len(path_parts) != len(self.parts):
+            return None
+
+        params = {}
+        for i, (pattern_part, path_part) in enumerate(zip(self.parts, path_parts)):
+            if pattern_part.startswith("{") and pattern_part.endswith("}"):
+                param_name = pattern_part[1:-1]
+                params[param_name] = path_part
+            elif pattern_part != path_part:
+                return None
+
+        return params
+
+    def matches(self, path: str) -> bool:
+        """Check if a path matches this pattern."""
+        return self.match(path) is not None
+
+
+class RouteDispatcher:
+    """Dispatcher for routing paths to handler methods.
+
+    Simplifies the common pattern of if/elif chains in handle() methods.
+
+    Example:
+        dispatcher = RouteDispatcher()
+        dispatcher.add_route("/api/agents", self._list_agents)
+        dispatcher.add_route("/api/agent/{name}/profile", self._get_profile)
+        dispatcher.add_route("/api/agent/{name}/history", self._get_history)
+
+        # In handle() method:
+        result = dispatcher.dispatch(path, query_params)
+        if result is not None:
+            return result
+    """
+
+    def __init__(self):
+        self.routes: list[tuple[PathMatcher, callable]] = []
+
+    def add_route(self, pattern: str, handler: callable) -> "RouteDispatcher":
+        """Add a route pattern with its handler.
+
+        Args:
+            pattern: URL pattern with {param} placeholders
+            handler: Callable that receives (params_dict, query_params)
+                     or just () if no path params
+
+        Returns:
+            Self for chaining
+        """
+        self.routes.append((PathMatcher(pattern), handler))
+        return self
+
+    def dispatch(self, path: str, query_params: dict = None) -> any:
+        """Dispatch a path to its handler.
+
+        Args:
+            path: URL path to dispatch
+            query_params: Query parameters dict
+
+        Returns:
+            Handler result if matched, None otherwise
+        """
+        query_params = query_params or {}
+
+        for matcher, handler in self.routes:
+            params = matcher.match(path)
+            if params is not None:
+                # Call handler with path params and query params
+                if params:
+                    return handler(params, query_params)
+                else:
+                    return handler(query_params)
+
+        return None
+
+    def can_handle(self, path: str) -> bool:
+        """Check if any route can handle this path."""
+        return any(matcher.matches(path) for matcher, _ in self.routes)
 
 
 def parse_query_params(query_string: str) -> dict:

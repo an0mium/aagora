@@ -97,7 +97,7 @@ class SpectatorMixin:
             )
             self.event_emitter.emit(stream_event)
         except Exception as e:
-            logger.debug(f"Event emission error (non-fatal): {e}")
+            logger.warning(f"Event emission error (non-fatal): {e}")
 
         # Update ArgumentCartographer with this event
         self._update_cartographer(event_type, **kwargs)
@@ -126,7 +126,7 @@ class SpectatorMixin:
                 moment.agent_name,
             )
         except Exception as e:
-            logger.debug("Failed to emit moment event: %s", e)
+            logger.warning("Failed to emit moment event: %s", e)
 
     def _update_cartographer(self, event_type: str, **kwargs: Any) -> None:
         """Update the ArgumentCartographer graph with debate events.

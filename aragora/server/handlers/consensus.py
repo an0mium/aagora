@@ -38,6 +38,7 @@ from .base import (
     validate_path_segment,
     SAFE_ID_PATTERN,
     ttl_cache,
+    require_feature,
 )
 from aragora.utils.optional_imports import try_import
 
@@ -152,11 +153,9 @@ class ConsensusHandler(BaseHandler):
         return None
 
     @ttl_cache(ttl_seconds=CACHE_TTL_CONSENSUS_SIMILAR, key_prefix="consensus_similar", skip_first=True)
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_similar_debates(self, topic: str, limit: int) -> HandlerResult:
         """Find debates similar to a topic."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         if not topic:
             return error_response("topic parameter required", 400)
 
@@ -184,11 +183,9 @@ class ConsensusHandler(BaseHandler):
             return error_response(_safe_error_message(e, "similar_topics"), 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_CONSENSUS_SETTLED, key_prefix="consensus_settled", skip_first=True)
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_settled_topics(self, min_confidence: float, limit: int) -> HandlerResult:
         """Get high-confidence settled topics."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         try:
             memory = ConsensusMemory()
             with _get_connection(memory.db_path) as conn:
@@ -220,11 +217,9 @@ class ConsensusHandler(BaseHandler):
             return error_response(_safe_error_message(e, "settled_topics"), 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_CONSENSUS_STATS, key_prefix="consensus_stats", skip_first=True)
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_consensus_stats(self) -> HandlerResult:
         """Get consensus memory statistics."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         try:
             memory = ConsensusMemory()
             raw_stats = memory.get_statistics()
@@ -255,13 +250,11 @@ class ConsensusHandler(BaseHandler):
             return error_response(_safe_error_message(e, "consensus_stats"), 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_RECENT_DISSENTS, key_prefix="recent_dissents", skip_first=True)
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_recent_dissents(
         self, topic: Optional[str], domain: Optional[str], limit: int
     ) -> HandlerResult:
         """Get recent dissents, optionally filtered by topic."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         try:
             memory = ConsensusMemory()
 
@@ -301,13 +294,11 @@ class ConsensusHandler(BaseHandler):
             return error_response(_safe_error_message(e, "recent_dissents"), 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_CONTRARIAN_VIEWS, key_prefix="contrarian_views", skip_first=True)
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_contrarian_views(
         self, topic: Optional[str], domain: Optional[str], limit: int
     ) -> HandlerResult:
         """Get historical contrarian/dissenting views."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         try:
             memory = ConsensusMemory()
 
@@ -350,13 +341,11 @@ class ConsensusHandler(BaseHandler):
             return error_response(_safe_error_message(e, "contrarian_views"), 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_RISK_WARNINGS, key_prefix="risk_warnings", skip_first=True)
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_risk_warnings(
         self, topic: Optional[str], domain: Optional[str], limit: int
     ) -> HandlerResult:
         """Get risk warnings and edge case concerns."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         try:
             memory = ConsensusMemory()
 
@@ -409,11 +398,9 @@ class ConsensusHandler(BaseHandler):
         except Exception as e:
             return error_response(_safe_error_message(e, "risk_warnings"), 500)
 
+    @require_feature(lambda: CONSENSUS_MEMORY_AVAILABLE, "Consensus memory")
     def _get_domain_history(self, domain: str, limit: int) -> HandlerResult:
         """Get consensus history for a domain."""
-        if not CONSENSUS_MEMORY_AVAILABLE:
-            return error_response("Consensus memory not available", 503)
-
         try:
             memory = ConsensusMemory()
             records = memory.get_domain_consensus_history(domain, limit=limit)

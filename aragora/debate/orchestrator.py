@@ -822,7 +822,7 @@ class Arena:
             )
             self.event_emitter.emit(stream_event)
         except Exception as e:
-            logger.debug(f"Event emission error (non-fatal): {e}")
+            logger.warning(f"Event emission error (non-fatal): {e}")
 
         # Update ArgumentCartographer with this event
         self._update_cartographer(event_type, **kwargs)
@@ -840,7 +840,7 @@ class Arena:
             ))
             logger.debug("Emitted moment event: %s for %s", moment.moment_type, moment.agent_name)
         except Exception as e:
-            logger.debug("Failed to emit moment event: %s", e)
+            logger.warning("Failed to emit moment event: %s", e)
 
     def _update_cartographer(self, event_type: str, **kwargs):
         """Update the ArgumentCartographer graph with debate events."""
@@ -1162,13 +1162,13 @@ class Arena:
                         disproven_count += 1
 
                 except Exception as e:
-                    logger.debug(f"Formal verification failed for claim: {e}")
+                    logger.info(f"  [formal] Verification skipped for claim: {e}")
 
             if verified_count > 0 or disproven_count > 0:
                 logger.info(f"  [formal] Z3 verified {verified_count} claims, disproved {disproven_count}")
 
         except Exception as e:
-            logger.debug(f"Formal verification error: {e}")
+            logger.warning(f"  [formal] Verification system error: {e}")
 
     async def _fetch_historical_context(self, task: str, limit: int = 3) -> str:
         """Fetch similar past debates for historical context."""
@@ -1194,62 +1194,86 @@ class Arena:
         """
         context_parts = []
 
-        # === Aragora-Specific Context ===
-        # Auto-inject aragora documentation when debate mentions aragora
+        # Gather context from multiple sources
+        aragora_ctx = await self._gather_aragora_context(task)
+        if aragora_ctx:
+            context_parts.append(aragora_ctx)
+
+        evidence_ctx = await self._gather_evidence_context(task)
+        if evidence_ctx:
+            context_parts.append(evidence_ctx)
+
+        trending_ctx = await self._gather_trending_context()
+        if trending_ctx:
+            context_parts.append(trending_ctx)
+
+        if context_parts:
+            return "\n\n".join(context_parts)
+        else:
+            return "No research context available."
+
+    async def _gather_aragora_context(self, task: str) -> Optional[str]:
+        """Gather Aragora-specific documentation context if relevant to task."""
         task_lower = task.lower()
-        is_aragora_topic = any(kw in task_lower for kw in ["aragora", "multi-agent debate", "nomic loop", "debate framework"])
+        is_aragora_topic = any(
+            kw in task_lower
+            for kw in ["aragora", "multi-agent debate", "nomic loop", "debate framework"]
+        )
 
-        if is_aragora_topic:
-            try:
-                from pathlib import Path
-                import asyncio
+        if not is_aragora_topic:
+            return None
 
-                # Find project root (where CLAUDE.md and docs/ are)
-                project_root = Path(__file__).parent.parent.parent
-                docs_dir = project_root / "docs"
+        try:
+            from pathlib import Path
+            import asyncio
 
-                aragora_context_parts: list[str] = []
-                loop = asyncio.get_running_loop()
+            project_root = Path(__file__).parent.parent.parent
+            docs_dir = project_root / "docs"
 
-                # Helper to read file in thread pool (non-blocking)
-                def _read_file_sync(path: Path, limit: int) -> str | None:
-                    try:
-                        if path.exists():
-                            return path.read_text()[:limit]
-                    except (OSError, UnicodeDecodeError):
-                        pass
-                    return None
+            aragora_context_parts: list[str] = []
+            loop = asyncio.get_running_loop()
 
-                # Read key documentation files asynchronously
-                key_docs = ["FEATURES.md", "ARCHITECTURE.md", "QUICKSTART.md", "STATUS.md"]
-                for doc_name in key_docs:
-                    doc_path = docs_dir / doc_name
-                    content = await loop.run_in_executor(
-                        None, lambda p=doc_path: _read_file_sync(p, 3000)
-                    )
-                    if content:
-                        aragora_context_parts.append(f"### {doc_name}\n{content}")
+            def _read_file_sync(path: Path, limit: int) -> str | None:
+                try:
+                    if path.exists():
+                        return path.read_text()[:limit]
+                except (OSError, UnicodeDecodeError):
+                    pass
+                return None
 
-                # Also include CLAUDE.md for project overview
-                claude_md = project_root / "CLAUDE.md"
+            # Read key documentation files
+            key_docs = ["FEATURES.md", "ARCHITECTURE.md", "QUICKSTART.md", "STATUS.md"]
+            for doc_name in key_docs:
+                doc_path = docs_dir / doc_name
                 content = await loop.run_in_executor(
-                    None, lambda: _read_file_sync(claude_md, 2000)
+                    None, lambda p=doc_path: _read_file_sync(p, 3000)
                 )
                 if content:
-                    aragora_context_parts.insert(0, f"### Project Overview (CLAUDE.md)\n{content}")
+                    aragora_context_parts.append(f"### {doc_name}\n{content}")
 
-                if aragora_context_parts:
-                    context_parts.append(
-                        "## ARAGORA PROJECT CONTEXT\n"
-                        "The following is internal documentation about the Aragora project:\n\n"
-                        + "\n\n---\n\n".join(aragora_context_parts[:4])  # Limit to 4 docs
-                    )
-                    logger.info("Injected Aragora project documentation context")
+            # Also include CLAUDE.md for project overview
+            claude_md = project_root / "CLAUDE.md"
+            content = await loop.run_in_executor(
+                None, lambda: _read_file_sync(claude_md, 2000)
+            )
+            if content:
+                aragora_context_parts.insert(0, f"### Project Overview (CLAUDE.md)\n{content}")
 
-            except Exception as e:
-                logger.debug(f"Failed to load Aragora context: {e}")
+            if aragora_context_parts:
+                logger.info("Injected Aragora project documentation context")
+                return (
+                    "## ARAGORA PROJECT CONTEXT\n"
+                    "The following is internal documentation about the Aragora project:\n\n"
+                    + "\n\n---\n\n".join(aragora_context_parts[:4])
+                )
 
-        # === Evidence Collection ===
+        except Exception as e:
+            logger.warning(f"Failed to load Aragora context: {e}")
+
+        return None
+
+    async def _gather_evidence_context(self, task: str) -> Optional[str]:
+        """Gather evidence from web, GitHub, and local docs connectors."""
         try:
             from aragora.evidence.collector import EvidenceCollector
 
@@ -1275,7 +1299,7 @@ class Arena:
             except ImportError:
                 pass
 
-            # Add local docs connector for project-specific knowledge
+            # Add local docs connector
             try:
                 from aragora.connectors.local_docs import LocalDocsConnector
                 from pathlib import Path
@@ -1289,24 +1313,27 @@ class Arena:
             except ImportError:
                 pass
 
-            # Collect evidence from all available connectors
-            if enabled_connectors:
-                evidence_pack = await collector.collect_evidence(task, enabled_connectors=enabled_connectors)
+            if not enabled_connectors:
+                return None
 
-                if evidence_pack.snippets:
-                    # Store evidence pack for grounding verdict with citations
-                    self._research_evidence_pack = evidence_pack
-                    # Update prompt_builder with evidence for per-round citation support
-                    if hasattr(self, 'prompt_builder') and self.prompt_builder:
-                        self.prompt_builder.set_evidence_pack(evidence_pack)
-                    # Store evidence in ContinuumMemory for future debates
-                    self._store_evidence_in_memory(evidence_pack.snippets, task)
-                    context_parts.append(f"## EVIDENCE CONTEXT\n{evidence_pack.to_context_string()}")
+            evidence_pack = await collector.collect_evidence(
+                task, enabled_connectors=enabled_connectors
+            )
+
+            if evidence_pack.snippets:
+                self._research_evidence_pack = evidence_pack
+                if hasattr(self, 'prompt_builder') and self.prompt_builder:
+                    self.prompt_builder.set_evidence_pack(evidence_pack)
+                self._store_evidence_in_memory(evidence_pack.snippets, task)
+                return f"## EVIDENCE CONTEXT\n{evidence_pack.to_context_string()}"
 
         except Exception as e:
             logger.warning(f"Evidence collection failed: {e}")
 
-        # === Pulse/Trending Context ===
+        return None
+
+    async def _gather_trending_context(self) -> Optional[str]:
+        """Gather pulse/trending context from social platforms."""
         try:
             from aragora.pulse.ingestor import (
                 PulseManager,
@@ -1324,17 +1351,14 @@ class Arena:
 
             if topics:
                 trending_context = "## TRENDING CONTEXT\nCurrent trending topics that may be relevant:\n"
-                for t in topics[:5]:  # Show top 5 from all platforms
+                for t in topics[:5]:
                     trending_context += f"- {t.topic} ({t.platform}, {t.volume:,} engagement, {t.category})\n"
-                context_parts.append(trending_context)
+                return trending_context
 
         except Exception as e:
             logger.debug(f"Pulse context unavailable: {e}")
 
-        if context_parts:
-            return "\n\n".join(context_parts)
-        else:
-            return "No research context available."
+        return None
 
     def _format_conclusion(self, result: "DebateResult") -> str:
         """Format a clear, readable debate conclusion with full context."""
@@ -1578,7 +1602,7 @@ class Arena:
             if self.debate_embeddings:
                 await self.debate_embeddings.index_debate(artifact)
         except Exception as e:
-            logger.debug("Async debate indexing failed: %s", e)
+            logger.warning("Async debate indexing failed: %s", e)
 
     async def _with_timeout(
         self, coro, agent_name: str, timeout_seconds: float = 90.0
@@ -1871,7 +1895,7 @@ Respond with only: CONTINUE or STOP
                         vote_counts[other.name] = vote_counts.get(other.name, 0) + 1
                         break
             except Exception as e:
-                logger.debug(f"Synthesizer vote error for {agent.name}: {e}")
+                logger.warning(f"Judge vote error for {agent.name}: {e}")
 
         # Select agent with most votes, random tiebreaker
         if vote_counts:
@@ -1941,7 +1965,7 @@ and building on others' ideas."""
                     lines.append(f"  Fix: {fix_preview} ({p.success_count} successes)")
             return "\n".join(lines)
         except Exception as e:
-            logger.debug(f"Successful patterns formatting error: {e}")
+            logger.warning(f"Pattern retrieval error: {e}")
             return ""
 
     def _update_role_assignments(self, round_num: int) -> None:
@@ -2040,7 +2064,7 @@ and building on others' ideas."""
             return "\n".join(lines) if len(lines) > 1 else ""
 
         except Exception as e:
-            logger.debug(f"Flip context formatting error: {e}")
+            logger.warning(f"Flip context error for {agent.name}: {e}")
             return ""
 
     def _build_proposal_prompt(self, agent: Agent) -> str:

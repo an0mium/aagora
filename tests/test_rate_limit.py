@@ -228,20 +228,32 @@ class TestGlobalLimiter:
 
     def test_get_limiter_singleton(self):
         """Test get_limiter returns singleton."""
-        set_limiter(None)  # Reset
+        from aragora.server.middleware.rate_limit import reset_rate_limiters
+        reset_rate_limiters()  # Use new API to reset
         limiter1 = get_limiter()
         limiter2 = get_limiter()
         assert limiter1 is limiter2
 
     def test_set_limiter(self):
-        """Test setting custom limiter."""
+        """Test that set_limiter is deprecated and a no-op.
+
+        The new API uses reset_rate_limiters() and get_rate_limiter() instead.
+        set_limiter() is kept for backward compatibility but does nothing.
+        """
+        from aragora.server.middleware.rate_limit import reset_rate_limiters
+        reset_rate_limiters()  # Use new API to reset
+        # set_limiter is now a no-op but should not crash
         custom = RateLimiter(default_limit=10)
         set_limiter(custom)
-        assert get_limiter() is custom
+        # Note: get_limiter() returns the ServiceRegistry-managed instance,
+        # not the custom one, since set_limiter is a no-op
+        limiter = get_limiter()
+        assert limiter is not None
 
     def test_default_endpoint_configs(self):
         """Test default endpoint configurations are set."""
-        set_limiter(None)  # Reset
+        from aragora.server.middleware.rate_limit import reset_rate_limiters
+        reset_rate_limiters()  # Use new API to reset
         limiter = get_limiter()
 
         # Check that some endpoints are configured
