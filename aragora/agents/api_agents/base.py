@@ -57,12 +57,23 @@ class APIAgent(CritiqueMixin, Agent):
             return False
         return not self._circuit_breaker.can_proceed()
 
-    def _build_context_prompt(self, context: list[Message] | None = None) -> str:
+    def _build_context_prompt(
+        self,
+        context: list[Message] | None = None,
+        truncate: bool = False,
+        sanitize_fn: object = None,
+    ) -> str:
         """Build context from previous messages.
 
-        Delegates to CritiqueMixin (no truncation for API agents).
+        Delegates to CritiqueMixin. API agents typically don't truncate.
+
+        Args:
+            context: List of previous messages
+            truncate: Whether to truncate (default False for API agents)
+            sanitize_fn: Optional sanitization function (unused by API agents)
         """
-        return CritiqueMixin._build_context_prompt(self, context, truncate=False)
+        # API agents typically don't need truncation, but respect the parameter
+        return CritiqueMixin._build_context_prompt(self, context, truncate=truncate)
 
     # _parse_critique is inherited from CritiqueMixin
 

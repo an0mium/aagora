@@ -69,8 +69,21 @@ class OpenRouterAgent(APIAgent):
         if system_prompt:
             self.system_prompt = system_prompt
 
-    def _build_context_prompt(self, context: list[Message]) -> str:
-        """Build context prompt from message history."""
+    def _build_context_prompt(
+        self,
+        context: list[Message] | None = None,
+        truncate: bool = False,
+        sanitize_fn: object = None,
+    ) -> str:
+        """Build context prompt from message history.
+
+        OpenRouter-specific: limits to 5 messages, truncates each to 500 chars.
+
+        Args:
+            context: List of previous messages
+            truncate: Ignored (OpenRouter always truncates for rate limiting)
+            sanitize_fn: Ignored (OpenRouter uses simple truncation)
+        """
         if not context:
             return ""
         prompt = "Previous discussion:\n"

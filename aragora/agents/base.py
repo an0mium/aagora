@@ -5,6 +5,7 @@ Base utilities for creating agents.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, Union
 
 from aragora.core import Critique, Message
@@ -36,7 +37,7 @@ class CritiqueMixin:
         self,
         context: list[Message] | None = None,
         truncate: bool = False,
-        sanitize_fn: Any = None,
+        sanitize_fn: Callable[[str], str] | None = None,
     ) -> str:
         """Build context from previous messages.
 
