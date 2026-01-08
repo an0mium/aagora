@@ -13,7 +13,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from aragora.server.http_utils import run_async
 from aragora.server.middleware.rate_limit import rate_limit
@@ -231,7 +231,7 @@ class AuditResultRecorder:
         if not elo_system:
             return {}
 
-        elo_adjustments = {}
+        elo_adjustments: dict[str, int] = {}
         for finding in verdict.findings:
             for agent_name in finding.agents_agree:
                 elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) + 2

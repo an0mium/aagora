@@ -424,7 +424,7 @@ class DebatesHandler(BaseHandler):
                 return json_response(debate)
             elif format == "csv":
                 return self._format_csv(debate, table)
-            elif format == "html":
+            else:  # format == "html"
                 return self._format_html(debate)
 
         except Exception as e:

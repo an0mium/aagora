@@ -8,7 +8,7 @@ This reduces frontend latency by 80% (1 request instead of 6).
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from aragora.config import (
     DB_PERSONAS_PATH,
@@ -89,8 +89,8 @@ class LeaderboardViewHandler(BaseHandler):
         Returns all 6 data sources in a single response with per-section
         error handling for graceful degradation.
         """
-        data = {}
-        errors = {}
+        data: dict[str, Any] = {}
+        errors: dict[str, str] = {}
 
         # Fetch all sections with graceful error handling
         self._safe_fetch_section(

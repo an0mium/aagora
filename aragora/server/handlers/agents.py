@@ -21,7 +21,7 @@ Endpoints:
 """
 
 import logging
-from typing import Optional, List
+from typing import Any, Optional, List
 
 from aragora.config import (
     CACHE_TTL_LEADERBOARD,
@@ -398,7 +398,7 @@ class AgentsHandler(BaseHandler):
             return error_response("ELO system not available", 503)
 
         rating = elo.get_rating(agent)
-        stats = {}
+        stats: dict[str, Any] = {}
         if hasattr(elo, 'get_agent_stats'):
             stats = elo.get_agent_stats(agent) or {}
 

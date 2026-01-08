@@ -12,10 +12,10 @@ import logging
 import re
 from pathlib import Path
 from functools import wraps
-from typing import Callable, NamedTuple, Optional, TYPE_CHECKING
+from typing import Any, Callable, NamedTuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aragora.agents.grounded import RelationshipTracker as _RelationshipTrackerType
+    from aragora.agents.grounded import RelationshipTracker
 
 from .base import (
     BaseHandler,
@@ -242,9 +242,9 @@ class RelationshipHandler(BaseHandler):
         """Get global relationship overview."""
         try:
             # Collect all unique agents and their relationships
-            all_agents = set()
-            all_relationships = []
-            agent_relationship_counts = {}
+            all_agents: set[str] = set()
+            all_relationships: list[dict[str, Any]] = []
+            agent_relationship_counts: dict[str, int] = {}
 
             # We need to query the DB directly to get all relationships
             # Use a helper to get all pairs from the database

@@ -134,7 +134,7 @@ class AnalyticsHandler(BaseHandler):
                 "total_debates": len(debates),
                 "early_stopped": 0,
                 "full_rounds": 0,
-                "average_rounds": 0,
+                "average_rounds": 0.0,
             }
 
             total_rounds = 0

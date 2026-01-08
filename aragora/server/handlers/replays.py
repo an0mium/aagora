@@ -12,7 +12,7 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .base import (
     BaseHandler,
@@ -145,7 +145,7 @@ class ReplaysHandler(BaseHandler):
 
             # Stream events with pagination (bounded memory usage)
             events_file = replay_dir / "events.jsonl"
-            events = []
+            events: list[dict[str, Any]] = []
             total_events = 0
             if events_file.exists():
                 with open(events_file, 'r') as f:
