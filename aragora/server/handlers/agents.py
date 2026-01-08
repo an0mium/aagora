@@ -43,6 +43,7 @@ from .base import (
     get_int_param,
     get_string_param,
     get_agent_name,
+    agent_to_dict,
     ttl_cache,
     handle_errors,
     validate_path_segment,
@@ -215,30 +216,18 @@ class AgentsHandler(BaseHandler):
                 # Get all agents from leaderboard (large limit to get all)
                 rankings = elo.get_leaderboard(limit=500)
                 for agent in rankings:
-                    if isinstance(agent, dict):
-                        name = agent.get("name", "")
-                        if include_stats:
-                            agents.append({
-                                "name": name,
-                                "elo": agent.get("elo", 1500),
-                                "matches": agent.get("matches", 0),
-                                "wins": agent.get("wins", 0),
-                                "losses": agent.get("losses", 0),
-                            })
-                        else:
-                            agents.append({"name": name})
+                    agent_dict = agent_to_dict(agent)
+                    name = agent_dict.get("name", "")
+                    if include_stats:
+                        agents.append({
+                            "name": name,
+                            "elo": agent_dict.get("elo", 1500),
+                            "matches": agent_dict.get("matches", 0),
+                            "wins": agent_dict.get("wins", 0),
+                            "losses": agent_dict.get("losses", 0),
+                        })
                     else:
-                        name = getattr(agent, "name", "")
-                        if include_stats:
-                            agents.append({
-                                "name": name,
-                                "elo": getattr(agent, "elo", 1500),
-                                "matches": getattr(agent, "matches", 0),
-                                "wins": getattr(agent, "wins", 0),
-                                "losses": getattr(agent, "losses", 0),
-                            })
-                        else:
-                            agents.append({"name": name})
+                        agents.append({"name": name})
             except Exception as e:
                 logger.warning(f"Could not get agents from ELO: {e}")
 
@@ -316,21 +305,8 @@ class AgentsHandler(BaseHandler):
             # Enhance rankings with consistency data
             enhanced_rankings = []
             for agent in rankings:
-                agent_name = get_agent_name(agent) or "unknown"
-                if isinstance(agent, dict):
-                    agent_dict = agent.copy()
-                else:
-                    # AgentRating object - convert to dict
-                    agent_dict = {
-                        "name": agent_name,
-                        "agent_name": agent_name,
-                        "elo": getattr(agent, "elo", 1500),
-                        "wins": getattr(agent, "wins", 0),
-                        "losses": getattr(agent, "losses", 0),
-                        "draws": getattr(agent, "draws", 0),
-                        "win_rate": getattr(agent, "win_rate", 0),
-                        "games": getattr(agent, "games_played", 0),
-                    }
+                agent_dict = agent_to_dict(agent)
+                agent_name = agent_dict.get("name", "unknown")
 
                 if agent_name in consistency_map:
                     agent_dict.update(consistency_map[agent_name])

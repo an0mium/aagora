@@ -30,6 +30,7 @@ from .base import (
     get_int_param,
     get_string_param,
     get_agent_name,
+    agent_to_dict,
     ttl_cache,
     validate_path_segment,
     SAFE_ID_PATTERN,
@@ -168,20 +169,8 @@ class LeaderboardViewHandler(BaseHandler):
         # Build response
         enhanced = []
         for agent in rankings:
-            if isinstance(agent, dict):
-                agent_dict = agent.copy()
-                agent_name = agent.get("name")
-            else:
-                agent_dict = {
-                    "name": getattr(agent, "name", "unknown"),
-                    "elo": getattr(agent, "elo", 1500),
-                    "wins": getattr(agent, "wins", 0),
-                    "losses": getattr(agent, "losses", 0),
-                    "draws": getattr(agent, "draws", 0),
-                    "win_rate": getattr(agent, "win_rate", 0),
-                    "games": getattr(agent, "games", 0),
-                }
-                agent_name = agent_dict["name"]
+            agent_dict = agent_to_dict(agent)
+            agent_name = agent_dict.get("name")
 
             if agent_name in consistency_map:
                 agent_dict.update(consistency_map[agent_name])

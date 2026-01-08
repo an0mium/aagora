@@ -8,6 +8,7 @@ Endpoints:
 - GET /metrics - Prometheus-format metrics (OpenMetrics)
 """
 
+import logging
 import os
 import platform
 import threading
@@ -15,6 +16,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from aragora.config import DB_ELO_PATH, DB_INSIGHTS_PATH
 from .base import BaseHandler, HandlerResult, json_response, error_response
@@ -100,6 +103,7 @@ class MetricsHandler(BaseHandler):
                 body=content.encode("utf-8"),
             )
         except Exception as e:
+            logger.error("Failed to get Prometheus metrics: %s", e, exc_info=True)
             return error_response(f"Failed to get Prometheus metrics: {e}", 500)
 
     def _get_metrics(self) -> HandlerResult:
@@ -150,6 +154,7 @@ class MetricsHandler(BaseHandler):
 
             return json_response(metrics)
         except Exception as e:
+            logger.error("Failed to get operational metrics: %s", e, exc_info=True)
             return error_response(f"Failed to get metrics: {e}", 500)
 
     def _get_health(self) -> HandlerResult:
@@ -199,6 +204,7 @@ class MetricsHandler(BaseHandler):
 
             return json_response(health, status=status_code)
         except Exception as e:
+            logger.error("Health check failed: %s", e, exc_info=True)
             return error_response(f"Health check failed: {e}", 500)
 
     def _get_cache_stats(self) -> HandlerResult:
@@ -237,6 +243,7 @@ class MetricsHandler(BaseHandler):
 
             return json_response(stats)
         except Exception as e:
+            logger.error("Failed to get cache stats: %s", e, exc_info=True)
             return error_response(f"Failed to get cache stats: {e}", 500)
 
     def _get_system_info(self) -> HandlerResult:
@@ -265,6 +272,7 @@ class MetricsHandler(BaseHandler):
 
             return json_response(info)
         except Exception as e:
+            logger.error("Failed to get system info: %s", e, exc_info=True)
             return error_response(f"Failed to get system info: {e}", 500)
 
     def _get_database_sizes(self) -> dict:

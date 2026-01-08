@@ -3,6 +3,9 @@ Base handler utilities for modular endpoint handlers.
 
 Provides common response formatting, error handling, and utilities
 shared across all endpoint modules.
+
+Note: Some utilities have been extracted to handlers/utils/ for better
+organization. They are re-exported here for backwards compatibility.
 """
 
 import json
@@ -18,6 +21,17 @@ from typing import Any, Callable, Generator, Optional, Tuple
 from urllib.parse import parse_qs
 
 from aragora.config import DB_TIMEOUT_SECONDS
+
+# Import from extracted utility modules (re-exported for backwards compatibility)
+from aragora.server.handlers.utils.safe_data import (
+    safe_get,
+    safe_get_nested,
+    safe_json_parse,
+)
+from aragora.server.handlers.utils.database import (
+    get_db_connection,
+    table_exists,
+)
 from aragora.server.error_utils import safe_error_message
 from aragora.server.handlers.cache import (
     BoundedTTLCache,
@@ -56,7 +70,7 @@ __all__ = [
     "invalidate_on_event", "invalidate_leaderboard_cache", "invalidate_agent_cache",
     "invalidate_debate_cache", "PathMatcher", "RouteDispatcher", "safe_fetch",
     "get_db_connection", "table_exists", "safe_get", "safe_get_nested", "safe_json_parse",
-    "get_host_header", "get_agent_name",
+    "get_host_header", "get_agent_name", "agent_to_dict",
     "SAFE_ID_PATTERN", "SAFE_SLUG_PATTERN", "SAFE_AGENT_PATTERN",
 ]
 
@@ -64,151 +78,17 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Database Connection Helper
+# Database Connection Helper (imported from utils/database.py)
 # =============================================================================
-
-@contextmanager
-def get_db_connection(db_path: str) -> Generator[sqlite3.Connection, None, None]:
-    """Get a database connection with proper cleanup.
-
-    Shared utility for handlers that need direct database access.
-    Uses DatabaseManager for connection pooling and WAL mode.
-
-    Args:
-        db_path: Path to the SQLite database file
-
-    Yields:
-        sqlite3.Connection with WAL mode and timeout configured
-
-    Example:
-        with get_db_connection(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM table")
-            rows = cursor.fetchall()
-    """
-    from aragora.storage.schema import DatabaseManager
-    manager = DatabaseManager.get_instance(db_path, DB_TIMEOUT_SECONDS)
-    with manager.fresh_connection() as conn:
-        yield conn
-
-
-def table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:
-    """Check if a table exists in the SQLite database.
-
-    Args:
-        cursor: Active database cursor
-        table_name: Name of the table to check
-
-    Returns:
-        True if the table exists, False otherwise
-
-    Example:
-        with get_db_connection(db_path) as conn:
-            cursor = conn.cursor()
-            if not table_exists(cursor, "agent_relationships"):
-                return json_response({"error": "Table not found"})
-    """
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        (table_name,)
-    )
-    return cursor.fetchone() is not None
+# get_db_connection and table_exists are now in aragora.server.handlers.utils.database
+# and re-exported above for backwards compatibility
 
 
 # =============================================================================
-# Dict Access Helpers
+# Dict Access Helpers (imported from utils/safe_data.py)
 # =============================================================================
-
-def safe_get(data: Any, key: str, default: Any = None) -> Any:
-    """Safely get a value from a dict-like object.
-
-    Handles None values, missing keys, and non-dict inputs gracefully.
-
-    Args:
-        data: Dict or dict-like object (can be None)
-        key: Key to look up
-        default: Default value if key not found or data is None
-
-    Returns:
-        The value at key, or default
-
-    Example:
-        # Before:
-        value = data.get("key", []) if data else []
-
-        # After:
-        value = safe_get(data, "key", [])
-    """
-    if data is None:
-        return default
-    if not isinstance(data, dict):
-        return default
-    return data.get(key, default)
-
-
-def safe_get_nested(data: Any, keys: list[str], default: Any = None) -> Any:
-    """Safely navigate nested dict structures.
-
-    Args:
-        data: Root dict or dict-like object (can be None)
-        keys: List of keys to traverse
-        default: Default value if any key not found
-
-    Returns:
-        The nested value, or default
-
-    Example:
-        # Before:
-        value = data.get("outer", {}).get("inner", {}).get("deep", [])
-
-        # After:
-        value = safe_get_nested(data, ["outer", "inner", "deep"], [])
-    """
-    current = data
-    for key in keys:
-        if current is None:
-            return default
-        if not isinstance(current, dict):
-            return default
-        current = current.get(key)
-    return current if current is not None else default
-
-
-def safe_json_parse(data: Any, default: Any = None) -> Any:
-    """Safely parse JSON string or return dict/list as-is.
-
-    Handles the common pattern where a value might be stored as either
-    a JSON string or already parsed as a dict/list.
-
-    Args:
-        data: JSON string, dict, list, or None
-        default: Default value if parsing fails or data is None
-
-    Returns:
-        Parsed dict/list, or default on failure
-
-    Example:
-        # Before (6 lines):
-        raw = debate.get("grounded_verdict")
-        if isinstance(raw, str):
-            try:
-                verdict = json.loads(raw)
-            except json.JSONDecodeError:
-                verdict = None
-
-        # After (1 line):
-        verdict = safe_json_parse(debate.get("grounded_verdict"))
-    """
-    if data is None:
-        return default
-    if isinstance(data, (dict, list)):
-        return data
-    if isinstance(data, str):
-        try:
-            return json.loads(data)
-        except (json.JSONDecodeError, ValueError):
-            return default
-    return default
+# safe_get, safe_get_nested, safe_json_parse are now in
+# aragora.server.handlers.utils.safe_data and re-exported above
 
 
 def get_host_header(handler, default: str = 'localhost:8080') -> str:
@@ -257,6 +137,57 @@ def get_agent_name(agent: Any) -> Optional[str]:
     if isinstance(agent, dict):
         return agent.get("agent_name") or agent.get("name")
     return getattr(agent, "agent_name", None) or getattr(agent, "name", None)
+
+
+def agent_to_dict(agent: Any, include_name: bool = True) -> dict:
+    """Convert agent object or dict to standardized dict with ELO fields.
+
+    Handles the common pattern where agent data might be either a dict
+    or an AgentRating object, extracting standard fields with safe defaults.
+
+    Args:
+        agent: Dict or object containing agent data
+        include_name: Whether to include name/agent_name fields (default: True)
+
+    Returns:
+        Dict with standardized ELO-related fields
+
+    Example:
+        # Before (repeated 40+ times across handlers):
+        agent_dict = {
+            "name": getattr(agent, "name", "unknown"),
+            "elo": getattr(agent, "elo", 1500),
+            "wins": getattr(agent, "wins", 0),
+            "losses": getattr(agent, "losses", 0),
+            ...
+        }
+
+        # After:
+        agent_dict = agent_to_dict(agent)
+    """
+    if agent is None:
+        return {}
+
+    if isinstance(agent, dict):
+        return agent.copy()
+
+    # Extract standard ELO fields from object
+    name = get_agent_name(agent) or "unknown"
+    result = {
+        "elo": getattr(agent, "elo", 1500),
+        "wins": getattr(agent, "wins", 0),
+        "losses": getattr(agent, "losses", 0),
+        "draws": getattr(agent, "draws", 0),
+        "win_rate": getattr(agent, "win_rate", 0.0),
+        "games": getattr(agent, "games_played", getattr(agent, "games", 0)),
+        "matches": getattr(agent, "matches", 0),
+    }
+
+    if include_name:
+        result["name"] = name
+        result["agent_name"] = name
+
+    return result
 
 
 @dataclass

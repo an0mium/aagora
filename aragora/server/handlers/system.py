@@ -304,6 +304,7 @@ class SystemHandler(BaseHandler):
                 state = json.load(f)
             return json_response(state)
         except Exception as e:
+            logger.error("Failed to read nomic state: %s", e, exc_info=True)
             return error_response(f"Failed to read state: {e}", 500)
 
     def _get_nomic_log(self, lines: int) -> HandlerResult:
@@ -327,6 +328,7 @@ class SystemHandler(BaseHandler):
                 "showing": len(recent),
             })
         except Exception as e:
+            logger.error("Failed to read nomic log: %s", e, exc_info=True)
             return error_response(f"Failed to read log: {e}", 500)
 
     def _get_nomic_health(self) -> HandlerResult:
@@ -458,6 +460,7 @@ class SystemHandler(BaseHandler):
                 "high_count": high,
             })
         except Exception as e:
+            logger.error("Failed to read risk register: %s", e, exc_info=True)
             return error_response(f"Failed to read risk register: {e}", 500)
 
     def _get_modes(self) -> HandlerResult:
@@ -506,6 +509,7 @@ class SystemHandler(BaseHandler):
 
             return json_response({"cycles": []})
         except Exception as e:
+            logger.error("Failed to get history cycles: %s", e, exc_info=True)
             return error_response(f"Failed to get cycles: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_events", skip_first=True)
@@ -524,6 +528,7 @@ class SystemHandler(BaseHandler):
 
             return json_response({"events": []})
         except Exception as e:
+            logger.error("Failed to get history events: %s", e, exc_info=True)
             return error_response(f"Failed to get events: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_debates", skip_first=True)
@@ -540,6 +545,7 @@ class SystemHandler(BaseHandler):
                 debates = [d for d in debates if d.get("loop_id") == loop_id]
             return json_response({"debates": debates})
         except Exception as e:
+            logger.error("Failed to get history debates: %s", e, exc_info=True)
             return error_response(f"Failed to get debates: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_summary", skip_first=True)
@@ -565,6 +571,7 @@ class SystemHandler(BaseHandler):
 
             return json_response(summary)
         except Exception as e:
+            logger.error("Failed to get history summary: %s", e, exc_info=True)
             return error_response(f"Failed to get summary: {e}", 500)
 
     def _run_maintenance(self, task: str) -> HandlerResult:
