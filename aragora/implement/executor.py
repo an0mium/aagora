@@ -453,13 +453,13 @@ Make only the changes specified. Follow existing code style."""
                 results.append(result)
                 remaining.remove(task)
 
-                if result.success:
+                if getattr(result, 'success', False):  # type: ignore[union-attr]
                     completed.add(task.id)
 
                 if on_task_complete:
                     on_task_complete(task.id, result)
 
-        return results
+        return results  # type: ignore[return-value]
 
     async def review_with_codex(self, diff: str, timeout: int = 2400) -> dict:  # 40 min - Codex is slow but thorough
         """

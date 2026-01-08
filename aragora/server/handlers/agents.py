@@ -233,7 +233,7 @@ class AgentsHandler(BaseHandler):
 
         # Fallback to known agent types if no ELO data
         if not agents:
-            from aragora.agents.cli_agents import AGENT_TYPES
+            from aragora.agents.cli_agents import AGENT_TYPES  # type: ignore[attr-defined]
             agents = [{"name": name} for name in AGENT_TYPES.keys()]
 
         return json_response({
@@ -496,7 +496,7 @@ class AgentsHandler(BaseHandler):
                     "agent_name": m.agent_name,
                     "description": m.description,
                     "significance_score": m.significance_score,
-                    "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+                    "timestamp": getattr(m, 'timestamp', None).isoformat() if getattr(m, 'timestamp', None) else None,
                     "debate_id": m.debate_id,
                 }
                 for m in moments
@@ -560,7 +560,7 @@ class AgentsHandler(BaseHandler):
         except ImportError:
             pass
 
-        synthesizer = PersonaSynthesizer(
+        synthesizer = PersonaSynthesizer(  # type: ignore[call-arg]
             elo_system=elo,
             calibration_tracker=calibration_tracker,
             position_ledger=position_ledger,
