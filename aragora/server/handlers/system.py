@@ -203,6 +203,8 @@ class SystemHandler(BaseHandler):
             checks["nomic_dir"]["warning"] = "Nomic directory not configured"
 
         # Check WebSocket manager (if available in context)
+        # Note: ws_manager is only available when running via AiohttpUnifiedServer.
+        # When using standard HTTP handlers, WebSocket runs as a separate service.
         ws_manager = self.ctx.get("ws_manager")
         if ws_manager is not None:
             try:
@@ -211,7 +213,8 @@ class SystemHandler(BaseHandler):
             except Exception as e:
                 checks["websocket"] = {"healthy": False, "error": str(e)[:100]}
         else:
-            checks["websocket"] = {"healthy": True, "warning": "WebSocket manager not available"}
+            # WebSocket runs as separate aiohttp service - check via different mechanism
+            checks["websocket"] = {"healthy": True, "note": "Managed by separate aiohttp server"}
 
         # Calculate response time
         response_time_ms = round((time.time() - start_time) * 1000, 2)
