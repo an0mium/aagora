@@ -850,19 +850,7 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
         })
 
         # Send initial loop list
-        with self._active_loops_lock:
-            loops_data = [
-                {
-                    "loop_id": loop.loop_id,
-                    "name": loop.name,
-                    "started_at": loop.started_at,
-                    "cycle": loop.cycle,
-                    "phase": loop.phase,
-                    "path": loop.path,
-                }
-                for loop in self.active_loops.values()
-            ]
-
+        loops_data = self._get_loops_data()
         await ws.send_json({
             "type": "loop_list",
             "data": {"loops": loops_data, "count": len(loops_data)},
@@ -876,18 +864,7 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
                         msg_type = data.get("type")
 
                         if msg_type == "get_loops":
-                            with self._active_loops_lock:
-                                loops_data = [
-                                    {
-                                        "loop_id": loop.loop_id,
-                                        "name": loop.name,
-                                        "started_at": loop.started_at,
-                                        "cycle": loop.cycle,
-                                        "phase": loop.phase,
-                                        "path": loop.path,
-                                    }
-                                    for loop in self.active_loops.values()
-                                ]
+                            loops_data = self._get_loops_data()
                             await ws.send_json({
                                 "type": "loop_list",
                                 "data": {"loops": loops_data, "count": len(loops_data)},
