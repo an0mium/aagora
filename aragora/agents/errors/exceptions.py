@@ -38,7 +38,7 @@ class AgentError(AragoraError):
         recoverable: bool = True,
     ) -> None:
         # Build details dict for AragoraError
-        details = {}
+        details: dict[str, Any] = {}
         if agent_name:
             details["agent_name"] = agent_name
         if cause:

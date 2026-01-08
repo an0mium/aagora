@@ -8,7 +8,7 @@ urllib.parse_qs (list values) and aiohttp MultiDict (single values).
 
 import logging
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import AbstractSet, Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +69,11 @@ def parse_int_param(
         >>> offset = parse_int_param(query, "offset", default=0, min_val=0)
     """
     try:
-        values = query.get(key, [default])
-        if isinstance(values, list) and len(values) > 0:
+        values = query.get(key)
+        if values and isinstance(values, list) and len(values) > 0:
             val = int(values[0])
         else:
-            val = int(values)
+            return default
         return max(min_val, min(val, max_val))
     except (ValueError, IndexError, TypeError):
         return default
@@ -99,11 +99,11 @@ def parse_float_param(
         Parsed float clamped to [min_val, max_val], or default on error
     """
     try:
-        values = query.get(key, [default])
-        if isinstance(values, list) and len(values) > 0:
+        values = query.get(key)
+        if values and isinstance(values, list) and len(values) > 0:
             val = float(values[0])
         else:
-            val = float(values)
+            return default
         return max(min_val, min(val, max_val))
     except (ValueError, IndexError, TypeError):
         return default
@@ -251,7 +251,7 @@ def validate_sort_param(
     query: Any,
     key: str = "sort",
     default: str = "created_at",
-    allowed_columns: Optional[set] = None,
+    allowed_columns: Optional[AbstractSet[str]] = None,
 ) -> str:
     """Validate and parse a sort column parameter.
 
