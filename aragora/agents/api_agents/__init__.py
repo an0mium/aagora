@@ -28,10 +28,12 @@ from aragora.agents.api_agents.rate_limiter import (
     set_openrouter_tier,
 )
 from aragora.agents.api_agents.common import MAX_STREAM_BUFFER_SIZE
+from aragora.agents.api_agents.openai_compatible import OpenAICompatibleMixin
 
 __all__ = [
-    # Base class
+    # Base classes
     "APIAgent",
+    "OpenAICompatibleMixin",
     # Provider agents
     "GeminiAgent",
     "AnthropicAPIAgent",

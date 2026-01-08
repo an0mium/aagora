@@ -550,7 +550,8 @@ class TestAgentSelectorEloIntegration:
         rating.elo = 1800
         rating.domain_elos = {"coding": 1900}
         rating.win_rate = 0.9
-        elo.get_rating.return_value = rating
+        # Now uses get_ratings_batch which returns a dict
+        elo.get_ratings_batch.return_value = {"claude": rating, "gpt4": rating, "gemini": rating}
 
         selector.refresh_from_elo_system(elo)
 
@@ -561,16 +562,16 @@ class TestAgentSelectorEloIntegration:
     def test_refresh_from_elo_handles_missing_agent(self, selector):
         """refresh_from_elo_system handles agents not in ELO system."""
         elo = MagicMock()
-        elo.get_rating.return_value = None
+        elo.get_ratings_batch.return_value = {}  # Empty dict - no agents found
         selector.refresh_from_elo_system(elo)  # Should not raise
 
     def test_refresh_uses_stored_elo_system(self, selector):
         """refresh_from_elo_system uses stored system if none provided."""
         elo = MagicMock()
-        elo.get_rating.return_value = None
+        elo.get_ratings_batch.return_value = {}
         selector.elo_system = elo
         selector.refresh_from_elo_system()
-        elo.get_rating.assert_called()
+        elo.get_ratings_batch.assert_called()
 
 
 # ==============================================================================

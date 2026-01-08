@@ -1374,7 +1374,8 @@ class TestAgentSelectorRefresh:
         mock_rating.elo = 1700
         mock_rating.domain_elos = {"backend": 1800}
         mock_rating.win_rate = 0.75
-        mock_elo.get_rating.return_value = mock_rating
+        # Now uses get_ratings_batch which returns a dict
+        mock_elo.get_ratings_batch.return_value = {"test": mock_rating}
 
         selector = AgentSelector(elo_system=mock_elo)
         selector.register_agent(AgentProfile(
