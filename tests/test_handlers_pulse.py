@@ -17,10 +17,21 @@ from aragora.server.handlers.base import clear_cache
 
 @pytest.fixture(autouse=True)
 def clear_handler_cache():
-    """Clear cache before and after each test to ensure isolation."""
+    """Clear cache and reset pulse module state before and after each test."""
+    import sys
+
+    # Save and remove pulse modules to ensure fresh state
+    pulse_modules = [k for k in list(sys.modules.keys()) if 'aragora.pulse' in k]
+    saved = {k: sys.modules.pop(k) for k in pulse_modules if k in sys.modules}
+
     clear_cache()
     yield
     clear_cache()
+
+    # Restore original modules
+    for k, v in saved.items():
+        if k not in sys.modules:
+            sys.modules[k] = v
 
 
 @dataclass
