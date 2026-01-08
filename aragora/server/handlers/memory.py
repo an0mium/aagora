@@ -27,8 +27,8 @@ try:
     CONTINUUM_AVAILABLE = True
 except ImportError:
     CONTINUUM_AVAILABLE = False
-    ContinuumMemory = None
-    MemoryTier = None
+    ContinuumMemory = None  # type: ignore[misc, assignment]
+    MemoryTier = None  # type: ignore[misc, assignment]
 
 
 class MemoryHandler(BaseHandler):
