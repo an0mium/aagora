@@ -145,7 +145,7 @@ class ContinuumMemory:
         }
 
         # Sync tier manager settings with hyperparams
-        self._tier_manager.promotion_cooldown_hours = self.hyperparams["promotion_cooldown_hours"]
+        self._tier_manager.promotion_cooldown_hours = float(self.hyperparams["promotion_cooldown_hours"])
 
     @property
     def tier_manager(self) -> TierManager:
@@ -1124,7 +1124,7 @@ class ContinuumMemory:
         """
         results: Dict[str, int] = {}
         tiers_to_process = [tier] if tier else list(MemoryTier)
-        max_entries = self.hyperparams.get("max_entries_per_tier", {})
+        max_entries: Dict[str, int] = self.hyperparams.get("max_entries_per_tier", {})  # type: ignore
 
         with get_wal_connection(self.db_path) as conn:
             cursor = conn.cursor()
@@ -1207,7 +1207,7 @@ class ContinuumMemory:
                 FROM continuum_memory_archive
                 GROUP BY tier, archive_reason
             """)
-            by_tier_reason = {}
+            by_tier_reason: Dict[str, Dict[str, int]] = {}
             for row in cursor.fetchall():
                 tier, reason, count = row
                 if tier not in by_tier_reason:
