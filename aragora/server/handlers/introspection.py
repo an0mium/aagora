@@ -75,7 +75,7 @@ class IntrospectionHandler(BaseHandler):
             return self._get_agent_introspection(agent)
         return None
 
-    def _get_critique_store(self):
+    def _get_critique_store(self) -> Optional[object]:
         """Get or create a CritiqueStore instance."""
         if not CRITIQUE_STORE_AVAILABLE or not CritiqueStore:
             return None
@@ -87,7 +87,7 @@ class IntrospectionHandler(BaseHandler):
             return None
         return CritiqueStore(str(db_path))
 
-    def _get_persona_manager(self):
+    def _get_persona_manager(self) -> Optional[object]:
         """Get or create a PersonaManager instance."""
         if not PERSONA_MANAGER_AVAILABLE or not PersonaManager:
             return None

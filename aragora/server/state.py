@@ -5,6 +5,7 @@ Consolidates global state that was previously scattered across
 stream.py and unified_server.py to prevent inconsistencies.
 """
 
+import atexit
 import logging
 import threading
 import time
@@ -378,8 +379,21 @@ def get_state_manager() -> StateManager:
 
     if not registry.has(StateManager):
         registry.register_factory(StateManager, StateManager)
+        # Register atexit cleanup for the state manager
+        atexit.register(_shutdown_state_manager)
 
     return registry.resolve(StateManager)
+
+
+def _shutdown_state_manager() -> None:
+    """Atexit handler to cleanup StateManager resources."""
+    try:
+        registry = ServiceRegistry.get()
+        if registry.has(StateManager):
+            state_manager = registry.resolve(StateManager)
+            state_manager.shutdown()
+    except Exception as e:
+        logger.warning(f"Error during StateManager cleanup: {e}")
 
 
 def reset_state_manager() -> None:

@@ -631,9 +631,9 @@ class SystemHandler(BaseHandler):
 
             content, content_type = handle_openapi_request(format=format)
             return HandlerResult(
-                content=content,
+                status_code=200,
                 content_type=content_type,
-                status=200,
+                body=content.encode('utf-8') if isinstance(content, str) else content,
             )
         except ImportError:
             return error_response("OpenAPI module not available", 503)

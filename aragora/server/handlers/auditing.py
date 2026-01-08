@@ -358,16 +358,23 @@ class AuditingHandler(BaseHandler):
             model_type: Agent model type (optional, default: anthropic-api)
         """
         if not PROBER_AVAILABLE:
+            logger.warning("Capability probe requested but prober module not available")
             return error_response("Capability prober not available", 503)
 
+        start_time = time.time()
         try:
             # Parse and validate request
             parsed, err = AuditRequestParser.parse_capability_probe(handler, self._read_json_body)
             if err:
+                logger.info("Capability probe request validation failed")
                 return err
 
             agent_name = parsed['agent_name']
             model_type = parsed['model_type']
+            logger.info(
+                "Starting capability probe: agent=%s, model=%s, probe_types=%s, probes_per_type=%d",
+                agent_name, model_type, parsed['probe_types'], parsed['probes_per_type']
+            )
 
             from aragora.modes.prober import ProbeType, CapabilityProber
 
@@ -409,6 +416,10 @@ class AuditingHandler(BaseHandler):
                     probes_per_type=parsed['probes_per_type'],
                 ))
             except Exception as e:
+                logger.error(
+                    "Capability probe execution failed: agent=%s, error=%s",
+                    agent_name, str(e), exc_info=True
+                )
                 return error_response(f"Probe execution failed: {str(e)}", 500)
 
             # Transform results for response
@@ -421,6 +432,14 @@ class AuditingHandler(BaseHandler):
             # Build response
             passed_count = report.probes_run - report.vulnerabilities_found
             pass_rate = passed_count / report.probes_run if report.probes_run > 0 else 1.0
+            duration_ms = (time.time() - start_time) * 1000
+
+            logger.info(
+                "Capability probe completed: agent=%s, probes=%d, vulnerabilities=%d, "
+                "pass_rate=%.2f, duration_ms=%.1f",
+                agent_name, report.probes_run, report.vulnerabilities_found,
+                pass_rate, duration_ms
+            )
 
             return json_response({
                 "report_id": report.report_id,
@@ -445,6 +464,7 @@ class AuditingHandler(BaseHandler):
             })
 
         except Exception as e:
+            logger.error("Capability probe failed unexpectedly: %s", str(e), exc_info=True)
             return error_response(_safe_error_message(e, "capability_probe"), 500)
 
     def _transform_probe_results(self, by_type: dict) -> dict:
@@ -487,16 +507,23 @@ class AuditingHandler(BaseHandler):
                 CODE_ARCHITECTURE_AUDIT,
             )
         except ImportError:
+            logger.warning("Deep audit requested but module not available")
             return error_response("Deep audit module not available", 503)
 
+        start_time = time.time()
         try:
             # Parse and validate request
             parsed, err = AuditRequestParser.parse_deep_audit(handler, self._read_json_body)
             if err:
+                logger.info("Deep audit request validation failed")
                 return err
 
             task = parsed['task']
             context = parsed['context']
+            logger.info(
+                "Starting deep audit: task_len=%d, context_len=%d, audit_type=%s, rounds=%d",
+                len(task), len(context), parsed['audit_type'] or 'default', parsed['rounds']
+            )
 
             # Select config based on audit type or use parsed values
             config = self._get_audit_config(
@@ -514,15 +541,21 @@ class AuditingHandler(BaseHandler):
                 parsed['model_type'], parsed['agent_names'], default_names
             )
             if err:
+                logger.warning("Deep audit agent creation failed")
                 return err
 
             audit_id = f"audit-{uuid.uuid4().hex[:8]}"
-            start_time = time.time()
+            agent_names = [a.name for a in agents]
+            logger.debug("Deep audit agents created: %s", agent_names)
 
             # Run audit
             try:
                 verdict = run_async(DeepAuditOrchestrator(agents, config).run(task, context))
             except Exception as e:
+                logger.error(
+                    "Deep audit execution failed: audit_id=%s, error=%s",
+                    audit_id, str(e), exc_info=True
+                )
                 return error_response(f"Deep audit execution failed: {str(e)}", 500)
 
             duration_ms = (time.time() - start_time) * 1000
@@ -533,6 +566,13 @@ class AuditingHandler(BaseHandler):
             AuditResultRecorder.save_audit_report(
                 self.ctx.get("nomic_dir"), audit_id, task, context,
                 agents, verdict, config, duration_ms, elo_adjustments
+            )
+
+            logger.info(
+                "Deep audit completed: audit_id=%s, findings=%d, confidence=%.2f, "
+                "unanimous=%d, split=%d, duration_ms=%.1f",
+                audit_id, len(verdict.findings), verdict.confidence,
+                len(verdict.unanimous_issues), len(verdict.split_opinions), duration_ms
             )
 
             # Build response
@@ -572,6 +612,7 @@ class AuditingHandler(BaseHandler):
             })
 
         except Exception as e:
+            logger.error("Deep audit failed unexpectedly: %s", str(e), exc_info=True)
             return error_response(_safe_error_message(e, "deep_audit"), 500)
 
     def _get_audit_config(
@@ -682,8 +723,10 @@ class AuditingHandler(BaseHandler):
             focus_proposal: Optional specific proposal to analyze
         """
         if not REDTEAM_AVAILABLE:
+            logger.warning("Red team analysis requested but module not available")
             return error_response("Red team mode not available", 503)
 
+        start_time = time.time()
         try:
             data = self._read_json_body(handler)
             if data is None:
@@ -691,11 +734,15 @@ class AuditingHandler(BaseHandler):
 
             storage = self.ctx.get("storage")
             if not storage:
+                logger.warning("Red team analysis failed: storage not configured")
                 return error_response("Storage not configured", 500)
 
             debate_data = storage.get_by_slug(debate_id) or storage.get_by_id(debate_id)
             if not debate_data:
+                logger.info("Red team analysis: debate not found: %s", debate_id)
                 return error_response("Debate not found", 404)
+
+            logger.info("Starting red team analysis: debate_id=%s", debate_id)
 
             from aragora.modes.redteam import AttackType
 
@@ -721,6 +768,13 @@ class AuditingHandler(BaseHandler):
             # Calculate robustness based on finding severity
             avg_severity = sum(f.get('severity', 0.5) for f in findings) / max(len(findings), 1)
             robustness_score = max(0.0, 1.0 - avg_severity)
+            duration_ms = (time.time() - start_time) * 1000
+
+            logger.info(
+                "Red team analysis completed: debate_id=%s, session_id=%s, findings=%d, "
+                "robustness=%.2f, duration_ms=%.1f",
+                debate_id, session_id, len(findings), robustness_score, duration_ms
+            )
 
             return json_response({
                 "session_id": session_id,
@@ -735,6 +789,10 @@ class AuditingHandler(BaseHandler):
             })
 
         except Exception as e:
+            logger.error(
+                "Red team analysis failed: debate_id=%s, error=%s",
+                debate_id, str(e), exc_info=True
+            )
             return error_response(_safe_error_message(e, "red_team_analysis"), 500)
 
     # _read_json_body moved to BaseHandler.read_json_body

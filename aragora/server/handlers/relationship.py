@@ -12,7 +12,7 @@ import logging
 import re
 from pathlib import Path
 from functools import wraps
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, NamedTuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aragora.agents.grounded import RelationshipTracker as _RelationshipTrackerType
@@ -114,6 +114,37 @@ def determine_relationship_type(
     elif alliance_score > rivalry_score and alliance_score > threshold:
         return "alliance"
     return "neutral"
+
+
+class RelationshipScores(NamedTuple):
+    """Computed relationship scores and classification."""
+
+    rivalry_score: float
+    alliance_score: float
+    relationship_type: str
+
+
+def compute_relationship_scores(
+    debate_count: int, agreement_count: int, a_wins: int, b_wins: int
+) -> RelationshipScores:
+    """Compute all relationship scores and type in one call.
+
+    Combines rivalry score, alliance score, and relationship type computation
+    into a single function to avoid duplicate code patterns.
+
+    Args:
+        debate_count: Number of debates between the agents
+        agreement_count: Number of debates where they agreed
+        a_wins: Wins by agent A over agent B
+        b_wins: Wins by agent B over agent A
+
+    Returns:
+        RelationshipScores with rivalry_score, alliance_score, and relationship_type
+    """
+    rivalry = compute_rivalry_score(debate_count, agreement_count, a_wins, b_wins)
+    alliance = compute_alliance_score(debate_count, agreement_count)
+    rel_type = determine_relationship_type(rivalry, alliance)
+    return RelationshipScores(rivalry, alliance, rel_type)
 
 
 # =============================================================================
@@ -273,24 +304,21 @@ class RelationshipHandler(BaseHandler):
                 agent_relationship_counts[agent_b] = agent_relationship_counts.get(agent_b, 0) + 1
 
                 # Compute scores inline (avoids N+1 query)
-                rivalry_score = compute_rivalry_score(
+                scores = compute_relationship_scores(
                     debate_count, agreement_count, a_wins, b_wins
                 )
-                alliance_score = compute_alliance_score(
-                    debate_count, agreement_count
-                )
 
-                if rivalry_score > 0:
-                    rivalry_scores.append(rivalry_score)
-                    if rivalry_score > strongest_rivalry_score:
-                        strongest_rivalry_score = rivalry_score
-                        strongest_rivalry = {"agents": [agent_a, agent_b], "score": rivalry_score}
+                if scores.rivalry_score > 0:
+                    rivalry_scores.append(scores.rivalry_score)
+                    if scores.rivalry_score > strongest_rivalry_score:
+                        strongest_rivalry_score = scores.rivalry_score
+                        strongest_rivalry = {"agents": [agent_a, agent_b], "score": scores.rivalry_score}
 
-                if alliance_score > 0:
-                    alliance_scores.append(alliance_score)
-                    if alliance_score > strongest_alliance_score:
-                        strongest_alliance_score = alliance_score
-                        strongest_alliance = {"agents": [agent_a, agent_b], "score": alliance_score}
+                if scores.alliance_score > 0:
+                    alliance_scores.append(scores.alliance_score)
+                    if scores.alliance_score > strongest_alliance_score:
+                        strongest_alliance_score = scores.alliance_score
+                        strongest_alliance = {"agents": [agent_a, agent_b], "score": scores.alliance_score}
 
             # Find most connected agent
             most_connected = None
@@ -357,24 +385,20 @@ class RelationshipHandler(BaseHandler):
                         nodes_data[agent] = {"debate_count": 0, "rivals": 0, "allies": 0}
 
                 # Compute scores inline (avoids N+1 query)
-                rivalry_score = compute_rivalry_score(
+                scores = compute_relationship_scores(
                     debate_count, agreement_count, a_wins, b_wins
-                )
-                alliance_score = compute_alliance_score(
-                    debate_count, agreement_count
                 )
 
                 # Apply score filter
-                max_score = max(rivalry_score, alliance_score)
+                max_score = max(scores.rivalry_score, scores.alliance_score)
                 if max_score < min_score:
                     continue
 
-                # Determine relationship type and update node counters
-                rel_type = determine_relationship_type(rivalry_score, alliance_score)
-                if rel_type == "rivalry":
+                # Update node counters based on relationship type
+                if scores.relationship_type == "rivalry":
                     nodes_data[agent_a]["rivals"] += 1
                     nodes_data[agent_b]["rivals"] += 1
-                elif rel_type == "alliance":
+                elif scores.relationship_type == "alliance":
                     nodes_data[agent_a]["allies"] += 1
                     nodes_data[agent_b]["allies"] += 1
 
@@ -385,10 +409,10 @@ class RelationshipHandler(BaseHandler):
                 edges.append({
                     "source": agent_a,
                     "target": agent_b,
-                    "rivalry_score": round(rivalry_score, 3),
-                    "alliance_score": round(alliance_score, 3),
+                    "rivalry_score": round(scores.rivalry_score, 3),
+                    "alliance_score": round(scores.alliance_score, 3),
                     "debate_count": debate_count,
-                    "type": rel_type,
+                    "type": scores.relationship_type,
                 })
 
             # Build nodes list
@@ -527,18 +551,14 @@ class RelationshipHandler(BaseHandler):
                         }
 
                     # Compute scores inline (avoids N+1 query)
-                    rivalry_score = compute_rivalry_score(
+                    scores = compute_relationship_scores(
                         debate_count, agreement_count, a_wins, b_wins
                     )
-                    alliance_score = compute_alliance_score(
-                        debate_count, agreement_count
-                    )
 
-                    rel_type = determine_relationship_type(rivalry_score, alliance_score)
-                    if rel_type == "rivalry":
-                        rivalries.append(rivalry_score)
-                    elif rel_type == "alliance":
-                        alliances.append(alliance_score)
+                    if scores.relationship_type == "rivalry":
+                        rivalries.append(scores.rivalry_score)
+                    elif scores.relationship_type == "alliance":
+                        alliances.append(scores.alliance_score)
                     else:
                         neutral_count += 1
 

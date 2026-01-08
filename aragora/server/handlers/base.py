@@ -72,13 +72,13 @@ def get_db_connection(db_path: str) -> Generator[sqlite3.Connection, None, None]
     """Get a database connection with proper cleanup.
 
     Shared utility for handlers that need direct database access.
-    Uses DB_TIMEOUT_SECONDS for consistent timeout handling.
+    Uses DatabaseManager for connection pooling and WAL mode.
 
     Args:
         db_path: Path to the SQLite database file
 
     Yields:
-        sqlite3.Connection with timeout configured
+        sqlite3.Connection with WAL mode and timeout configured
 
     Example:
         with get_db_connection(self.db_path) as conn:
@@ -86,11 +86,10 @@ def get_db_connection(db_path: str) -> Generator[sqlite3.Connection, None, None]
             cursor.execute("SELECT * FROM table")
             rows = cursor.fetchall()
     """
-    conn = sqlite3.connect(db_path, timeout=DB_TIMEOUT_SECONDS)
-    try:
+    from aragora.storage.schema import DatabaseManager
+    manager = DatabaseManager.get_instance(db_path, DB_TIMEOUT_SECONDS)
+    with manager.fresh_connection() as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:

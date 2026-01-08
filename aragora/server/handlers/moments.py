@@ -91,7 +91,7 @@ class MomentsHandler(BaseHandler):
 
         return None
 
-    def _get_moment_detector(self):
+    def _get_moment_detector(self) -> Optional[object]:
         """Get moment detector from context or return None."""
         return self.ctx.get("moment_detector")
 

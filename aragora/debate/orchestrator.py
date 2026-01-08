@@ -25,6 +25,7 @@ from aragora.debate.convergence import (
 )
 from aragora.debate.disagreement import DisagreementReporter
 from aragora.debate.context_gatherer import ContextGatherer
+from aragora.debate.event_bridge import EventEmitterBridge
 from aragora.debate.memory_manager import MemoryManager
 from aragora.debate.optional_imports import OptionalImports
 from aragora.debate.prompt_builder import PromptBuilder
@@ -37,7 +38,9 @@ from aragora.debate.roles import (
     inject_role_into_prompt,
 )
 from aragora.debate.topology import TopologySelector
+from aragora.debate.judge_selector import JudgeSelector, JudgeScoringMixin
 from aragora.debate.sanitization import OutputSanitizer
+from aragora.reasoning.evidence_grounding import EvidenceGrounder
 from aragora.debate.security_barrier import SecurityBarrier, TelemetryVerifier
 from aragora.server.prometheus import record_debate_completed
 from aragora.spectate.stream import SpectatorStream
@@ -356,6 +359,14 @@ class Arena:
         AC = OptionalImports.get_argument_cartographer()
         self.cartographer = AC() if AC else None
 
+        # Event bridge for coordinating spectator/websocket/cartographer
+        self.event_bridge = EventEmitterBridge(
+            spectator=self.spectator,
+            event_emitter=self.event_emitter,
+            cartographer=self.cartographer,
+            loop_id=self.loop_id,
+        )
+
     def _init_trackers(
         self,
         position_tracker,
@@ -483,6 +494,12 @@ class Arena:
         ExtractorClass = OptionalImports.get_citation_extractor()
         if ExtractorClass:
             self.citation_extractor = ExtractorClass()
+
+        # Evidence grounder for creating grounded verdicts with citations
+        self.evidence_grounder = EvidenceGrounder(
+            evidence_pack=None,  # Set during research phase
+            citation_extractor=self.citation_extractor,
+        )
 
         # Initialize PromptBuilder for centralized prompt construction
         self.prompt_builder = PromptBuilder(
@@ -772,52 +789,20 @@ class Arena:
     def _get_calibration_weight(self, agent_name: str) -> float:
         """Get agent weight based on calibration score (0.5-1.5 range).
 
-        Uses calibration_score from ELO system to weight agent contributions.
-        Agents with better calibration (more accurate confidence estimates)
-        have higher weight in voting and selection decisions.
-
-        Returns:
-            Weight between 0.5 (uncalibrated/poor) and 1.5 (perfect calibration)
+        Delegates to JudgeScoringMixin. For new code, use:
+            JudgeScoringMixin(elo_system).get_calibration_weight(agent_name)
         """
-        if not self.elo_system:
-            return 1.0
-
-        try:
-            rating = self.elo_system.get_rating(agent_name)
-            # calibration_score is 0-1, with 0 for agents with < MIN_COUNT predictions
-            cal_score = rating.calibration_score
-            # Map 0-1 to 0.5-1.5 range: uncalibrated gets 0.5, perfect gets 1.5
-            return 0.5 + cal_score
-        except Exception as e:
-            logger.debug(f"Calibration weight lookup failed for {agent_name}: {e}")
-            return 1.0
+        scorer = JudgeScoringMixin(self.elo_system)
+        return scorer.get_calibration_weight(agent_name)
 
     def _compute_composite_judge_score(self, agent_name: str) -> float:
         """Compute composite score for judge selection (ELO + calibration).
 
-        Combines ELO ranking with calibration score for more nuanced judge selection.
-        Well-calibrated agents with high ELO make better judges.
-
-        Returns:
-            Composite score (higher is better)
+        Delegates to JudgeScoringMixin. For new code, use:
+            JudgeScoringMixin(elo_system).compute_composite_score(agent_name)
         """
-        if not self.elo_system:
-            return 0.0
-
-        try:
-            rating = self.elo_system.get_rating(agent_name)
-            # Normalize ELO: 1000 is baseline, 500 is typical deviation
-            elo_normalized = (rating.elo - 1000) / 500  # ~-1 to 3 range typically
-            elo_normalized = max(0, elo_normalized)  # Floor at 0
-
-            # Calibration score is already 0-1
-            cal_score = rating.calibration_score
-
-            # Weighted combination: 70% ELO, 30% calibration
-            return (elo_normalized * 0.7) + (cal_score * 0.3)
-        except Exception as e:
-            logger.debug(f"Composite score calculation failed for {agent_name}: {e}")
-            return 0.0
+        scorer = JudgeScoringMixin(self.elo_system)
+        return scorer.compute_composite_score(agent_name)
 
     def _select_critics_for_proposal(self, proposal_agent: str, all_critics: list[Agent]) -> list[Agent]:
         """Select which critics should critique the given proposal based on topology.
@@ -880,130 +865,13 @@ class Arena:
                 details=f"Processed {drained_count} audience events",
             )
 
-    def _notify_spectator(self, event_type: str, **kwargs):
-        """Helper method to emit spectator events and bridge to WebSocket.
+    def _notify_spectator(self, event_type: str, **kwargs) -> None:
+        """Delegate to event bridge for spectator/websocket emission."""
+        self.event_bridge.notify(event_type, **kwargs)
 
-        Emits to both SpectatorStream (console/file) and SyncEventEmitter (WebSocket)
-        to provide real-time updates to connected clients.
-        """
-        if self.spectator:
-            self.spectator.emit(event_type, **kwargs)
-
-        # Bridge to WebSocket if event_emitter is available
-        if self.event_emitter:
-            self._emit_spectator_to_websocket(event_type, **kwargs)
-
-    def _emit_spectator_to_websocket(self, event_type: str, **kwargs):
-        """Convert spectator event to StreamEvent and emit to WebSocket clients."""
-        try:
-            from aragora.server.stream import StreamEvent, StreamEventType
-
-            # Map spectator event types to StreamEventType
-            type_mapping = {
-                "debate_start": StreamEventType.DEBATE_START,
-                "debate_end": StreamEventType.DEBATE_END,
-                "round": StreamEventType.ROUND_START,
-                "round_start": StreamEventType.ROUND_START,
-                "propose": StreamEventType.AGENT_MESSAGE,
-                "proposal": StreamEventType.AGENT_MESSAGE,
-                "critique": StreamEventType.CRITIQUE,
-                "vote": StreamEventType.VOTE,
-                "consensus": StreamEventType.CONSENSUS,
-                "convergence": StreamEventType.CONSENSUS,
-                "judge": StreamEventType.AGENT_MESSAGE,
-                "memory_recall": StreamEventType.MEMORY_RECALL,
-                "audience_drain": StreamEventType.AUDIENCE_DRAIN,
-                "audience_summary": StreamEventType.AUDIENCE_SUMMARY,
-                "insight_extracted": StreamEventType.INSIGHT_EXTRACTED,
-                # Token streaming events
-                "token_start": StreamEventType.TOKEN_START,
-                "token_delta": StreamEventType.TOKEN_DELTA,
-                "token_end": StreamEventType.TOKEN_END,
-            }
-
-            stream_type = type_mapping.get(event_type)
-            if not stream_type:
-                return  # Skip unmapped event types
-
-            # Build StreamEvent from spectator kwargs
-            stream_event = StreamEvent(
-                type=stream_type,
-                data={
-                    "details": kwargs.get("details", ""),
-                    "metric": kwargs.get("metric"),
-                    "event_source": "spectator",
-                },
-                round=kwargs.get("round_number", 0),
-                agent=kwargs.get("agent", ""),
-                loop_id=getattr(self, 'loop_id', ''),
-            )
-            self.event_emitter.emit(stream_event)
-        except Exception as e:
-            logger.warning(f"Event emission error (non-fatal): {e}")
-
-        # Update ArgumentCartographer with this event
-        self._update_cartographer(event_type, **kwargs)
-
-    def _emit_moment_event(self, moment):
-        """Emit a significant moment event to WebSocket clients."""
-        if not self.event_emitter:
-            return
-        try:
-            from aragora.server.stream import StreamEvent, StreamEventType
-            self.event_emitter.emit(StreamEvent(
-                type=StreamEventType.MOMENT_DETECTED,
-                data=moment.to_dict(),
-                debate_id=self.loop_id or "unknown",
-            ))
-            logger.debug("Emitted moment event: %s for %s", moment.moment_type, moment.agent_name)
-        except Exception as e:
-            logger.warning("Failed to emit moment event: %s", e)
-
-    def _update_cartographer(self, event_type: str, **kwargs):
-        """Update the ArgumentCartographer graph with debate events."""
-        if not self.cartographer:
-            return
-        try:
-            agent = kwargs.get("agent", "")
-            details = kwargs.get("details", "")
-            round_num = kwargs.get("round_number", 0)
-
-            if event_type in ("propose", "proposal"):
-                # Record proposal/revision as a node
-                self.cartographer.update_from_message(
-                    agent=agent,
-                    content=details,
-                    role="proposer",
-                    round_num=round_num,
-                )
-            elif event_type == "critique":
-                # Extract target from details (format: "Critiqued {target}: ...")
-                target = ""
-                if "Critiqued " in details:
-                    target = details.split("Critiqued ")[1].split(":")[0]
-                severity = kwargs.get("metric", 0.5)
-                self.cartographer.update_from_critique(
-                    critic_agent=agent,
-                    target_agent=target,
-                    severity=severity if isinstance(severity, (int, float)) else 0.5,
-                    round_num=round_num,
-                    critique_text=details,
-                )
-            elif event_type == "vote":
-                vote_value = details.split(":")[-1].strip() if ":" in details else details
-                self.cartographer.update_from_vote(
-                    agent=agent,
-                    vote_value=vote_value,
-                    round_num=round_num,
-                )
-            elif event_type == "consensus":
-                result = details.split(":")[-1].strip() if ":" in details else details
-                self.cartographer.update_from_consensus(
-                    result=result,
-                    round_num=round_num,
-                )
-        except Exception as e:
-            logger.warning(f"Cartographer error (non-fatal): {e}")
+    def _emit_moment_event(self, moment) -> None:
+        """Delegate to event bridge for moment emission."""
+        self.event_bridge.emit_moment(moment)
 
     def _record_grounded_position(
         self, agent_name: str, content: str, debate_id: str, round_num: int,
@@ -1063,229 +931,30 @@ class Arena:
         reporter = DisagreementReporter()
         return reporter.generate_report(votes, critiques, winner)
 
-    def _link_evidence_to_claim(self, claim_text: str) -> tuple[list, float]:
-        """Link evidence snippets to a claim based on keyword matching.
-
-        Returns:
-            Tuple of (list of ScholarlyEvidence, grounding_score)
-        """
-        from aragora.reasoning.citations import (
-            ScholarlyEvidence,
-            CitationType,
-            CitationQuality,
-        )
-
-        if not self._research_evidence_pack or not self._research_evidence_pack.snippets:
-            return [], 0.0
-
-        # Extract keywords from claim
-        claim_lower = claim_text.lower()
-        claim_words = set(claim_lower.split())
-
-        matched_citations = []
-        for snippet in self._research_evidence_pack.snippets:
-            # Calculate relevance based on keyword overlap
-            snippet_words = set(snippet.snippet.lower().split())
-            snippet_words.update(set(snippet.title.lower().split()))
-
-            # Check for keyword overlap
-            overlap = claim_words.intersection(snippet_words)
-            if len(overlap) >= 2:  # At least 2 matching keywords
-                relevance = len(overlap) / max(len(claim_words), 1)
-
-                # Determine citation type based on source
-                source = snippet.source.lower()
-                if "github" in source:
-                    citation_type = CitationType.CODE_REPOSITORY
-                elif "doc" in source or "local" in source:
-                    citation_type = CitationType.DOCUMENTATION
-                else:
-                    citation_type = CitationType.WEB_PAGE
-
-                # Map reliability score to quality
-                if snippet.reliability_score >= 0.8:
-                    quality = CitationQuality.AUTHORITATIVE
-                elif snippet.reliability_score >= 0.6:
-                    quality = CitationQuality.REPUTABLE
-                elif snippet.reliability_score >= 0.4:
-                    quality = CitationQuality.MIXED
-                else:
-                    quality = CitationQuality.UNVERIFIED
-
-                evidence = ScholarlyEvidence(
-                    id=snippet.id,
-                    citation_type=citation_type,
-                    title=snippet.title,
-                    url=snippet.url,
-                    excerpt=snippet.snippet[:500],
-                    relevance_score=relevance,
-                    quality=quality,
-                    claim_id=claim_text[:50],  # Truncated claim as ID
-                    metadata=snippet.metadata,
-                )
-                matched_citations.append(evidence)
-
-        # Sort by relevance and take top 3
-        matched_citations.sort(key=lambda e: e.relevance_score, reverse=True)
-        top_citations = matched_citations[:3]
-
-        # Calculate grounding score based on evidence quality
-        if not top_citations:
-            return [], 0.0
-
-        # Average quality score weighted by relevance
-        total_weight = sum(e.relevance_score for e in top_citations)
-        if total_weight == 0:
-            return top_citations, 0.3  # Weak grounding
-
-        quality_scores = {
-            CitationQuality.PEER_REVIEWED: 1.0,
-            CitationQuality.AUTHORITATIVE: 0.9,
-            CitationQuality.REPUTABLE: 0.7,
-            CitationQuality.MIXED: 0.5,
-            CitationQuality.UNVERIFIED: 0.3,
-            CitationQuality.QUESTIONABLE: 0.1,
-        }
-
-        weighted_score = sum(
-            quality_scores.get(e.quality, 0.3) * e.relevance_score
-            for e in top_citations
-        ) / total_weight
-
-        return top_citations, weighted_score
-
     def _create_grounded_verdict(self, result: "DebateResult"):
         """Create a GroundedVerdict for the final answer.
 
         Heavy3-inspired: Wrap final answers with evidence grounding analysis.
-        Identifies claims that should be backed by evidence and links available citations.
+        Delegates to EvidenceGrounder for the actual grounding logic.
         """
-        if not self.citation_extractor or not result.final_answer:
+        if not result.final_answer:
             return None
 
-        try:
-            # Lazy import to avoid circular dependencies
-            from aragora.reasoning.citations import GroundedVerdict, CitedClaim
-
-            # Extract claims from the final answer
-            claims_text = self.citation_extractor.extract_claims(result.final_answer)
-
-            if not claims_text:
-                # No claims needing citations - return minimal grounded verdict
-                return GroundedVerdict(
-                    verdict=result.final_answer,
-                    confidence=result.confidence,
-                    grounding_score=1.0,  # No claims = fully grounded (nothing to cite)
-                )
-
-            # Create CitedClaim objects with linked evidence
-            cited_claims = []
-            all_citations = []
-            total_grounding = 0.0
-
-            for claim_text in claims_text:
-                # Link evidence to this claim
-                citations, claim_grounding = self._link_evidence_to_claim(claim_text)
-                all_citations.extend(citations)
-
-                claim = CitedClaim(
-                    claim_text=claim_text,
-                    confidence=result.confidence,
-                    grounding_score=claim_grounding,
-                    citations=citations,
-                )
-                cited_claims.append(claim)
-                total_grounding += claim_grounding
-
-            # Calculate overall grounding score
-            if cited_claims:
-                avg_grounding = total_grounding / len(cited_claims)
-            else:
-                # Fallback: penalize high claim density
-                answer_words = len(result.final_answer.split())
-                claim_density = len(claims_text) / max(answer_words / 100, 1)
-                avg_grounding = max(0.0, 1.0 - (claim_density * 0.2))
-
-            # Deduplicate citations by ID
-            seen_ids = set()
-            unique_citations = []
-            for citation in all_citations:
-                if citation.id not in seen_ids:
-                    seen_ids.add(citation.id)
-                    unique_citations.append(citation)
-
-            return GroundedVerdict(
-                verdict=result.final_answer,
-                confidence=result.confidence,
-                claims=cited_claims,
-                all_citations=unique_citations,
-                grounding_score=avg_grounding,
-            )
-
-        except Exception as e:
-            logger.warning(f"Error creating grounded verdict: {e}")
-            return None
+        return self.evidence_grounder.create_grounded_verdict(
+            final_answer=result.final_answer,
+            confidence=result.confidence,
+        )
 
     async def _verify_claims_formally(self, result: "DebateResult") -> None:
         """Verify decidable claims using Z3 SMT solver.
 
         For arithmetic, logic, and constraint claims, attempts formal verification
-        to provide machine-verified evidence. Results are stored in the grounded_verdict.
+        to provide machine-verified evidence. Delegates to EvidenceGrounder.
         """
-        if not result.grounded_verdict or not result.grounded_verdict.claims:
+        if not result.grounded_verdict:
             return
 
-        try:
-            from aragora.verification.formal import get_formal_verification_manager, FormalProofStatus
-        except ImportError:
-            return  # Formal verification not available
-
-        try:
-            manager = get_formal_verification_manager()
-            status = manager.status_report()
-
-            if not status.get("any_available"):
-                return  # No backends available
-
-            verified_count = 0
-            disproven_count = 0
-
-            for claim in result.grounded_verdict.claims[:5]:  # Verify top 5 claims
-                try:
-                    # Attempt formal verification
-                    proof_result = await manager.attempt_formal_verification(
-                        claim=claim.claim_text,
-                        claim_type="decidable",
-                        context=result.final_answer[:500] if result.final_answer else "",
-                        timeout_seconds=5.0,
-                    )
-
-                    if proof_result and proof_result.status == FormalProofStatus.PROOF_FOUND:
-                        claim.grounding_score = 1.0  # Formally verified
-                        claim.citations.append({
-                            "type": "formal_proof",
-                            "prover": proof_result.language.value,
-                            "verified": True,
-                        })
-                        verified_count += 1
-                    elif proof_result and proof_result.status == FormalProofStatus.PROOF_FAILED:
-                        claim.grounding_score = 0.0  # Disproven
-                        claim.citations.append({
-                            "type": "formal_proof",
-                            "prover": proof_result.language.value,
-                            "verified": False,
-                            "counterexample": proof_result.proof_text,  # proof_text contains counterexample
-                        })
-                        disproven_count += 1
-
-                except Exception as e:
-                    logger.info(f"  [formal] Verification skipped for claim: {e}")
-
-            if verified_count > 0 or disproven_count > 0:
-                logger.info(f"  [formal] Z3 verified {verified_count} claims, disproved {disproven_count}")
-
-        except Exception as e:
-            logger.warning(f"  [formal] Verification system error: {e}")
+        await self.evidence_grounder.verify_claims_formally(result.grounded_verdict)
 
     async def _fetch_historical_context(self, task: str, limit: int = 3) -> str:
         """Fetch similar past debates for historical context."""
@@ -1310,8 +979,9 @@ class Arena:
         Also includes pulse/trending context when available.
         """
         result = await self.context_gatherer.gather_all(task)
-        # Update local cache for backwards compatibility
+        # Update local cache and evidence grounder for backwards compatibility
         self._research_evidence_pack = self.context_gatherer.evidence_pack
+        self.evidence_grounder.set_evidence_pack(self.context_gatherer.evidence_pack)
         return result
 
     async def _gather_aragora_context(self, task: str) -> Optional[str]:
@@ -1327,8 +997,9 @@ class Arena:
         Delegates to ContextGatherer.gather_evidence_context().
         """
         result = await self.context_gatherer.gather_evidence_context(task)
-        # Update local cache for backwards compatibility
+        # Update local cache and evidence grounder for backwards compatibility
         self._research_evidence_pack = self.context_gatherer.evidence_pack
+        self.evidence_grounder.set_evidence_pack(self.context_gatherer.evidence_pack)
         return result
 
     async def _gather_trending_context(self) -> Optional[str]:
@@ -1788,105 +1459,42 @@ Respond with only: CONTINUE or STOP
         return not should_stop  # Return True to continue, False to stop
 
     async def _select_judge(self, proposals: dict[str, str], context: list[Message]) -> Agent:
-        """Select judge based on protocol.judge_selection setting."""
-        if self.protocol.judge_selection == "last":
-            # Legacy behavior - use synthesizer or last agent
-            synthesizers = [a for a in self.agents if a.role == "synthesizer"]
-            return synthesizers[0] if synthesizers else self._require_agents()[-1]
+        """Select judge based on protocol.judge_selection setting.
 
-        elif self.protocol.judge_selection == "random":
-            # Random selection from all agents
-            return random.choice(self._require_agents())
+        Delegates to JudgeSelector. For new code, use:
+            selector = JudgeSelector.from_protocol(protocol, agents, elo_system, ...)
+            judge = await selector.select_judge(proposals, context)
+        """
+        async def generate_wrapper(agent, prompt, ctx):
+            return await agent.generate(prompt, ctx)
 
-        elif self.protocol.judge_selection == "voted":
-            # Agents vote on who should judge
-            return await self._vote_for_judge(proposals, context)
-
-        elif self.protocol.judge_selection == "elo_ranked":
-            # Select highest ELO-rated agent as judge
-            if not self.elo_system:
-                logger.warning("elo_ranked judge selection requires elo_system; falling back to random")
-                return random.choice(self._require_agents())
-
-            # Get agent names participating in this debate
-            agent_names = [a.name for a in self.agents]
-
-            # Query ELO rankings for these agents
-            try:
-                leaderboard = self.elo_system.get_leaderboard(limit=len(agent_names))
-                # Filter to agents in this debate and find highest rated
-                for entry in leaderboard:
-                    if entry.get("agent") in agent_names:
-                        top_agent_name = entry["agent"]
-                        top_elo = entry.get("elo", 1500)
-                        judge = next((a for a in self.agents if a.name == top_agent_name), None)
-                        if judge:
-                            logger.debug(f"Selected {top_agent_name} (ELO: {top_elo}) as judge")
-                            return judge
-            except Exception as e:
-                logger.warning(f"ELO query failed: {e}; falling back to random")
-
-            # Fallback if no ELO data
-            return random.choice(self._require_agents())
-
-        elif self.protocol.judge_selection == "calibrated":
-            # Select based on composite score (ELO + calibration)
-            # Prefers well-calibrated agents with high ELO
-            if not self.elo_system:
-                logger.warning("calibrated judge selection requires elo_system; falling back to random")
-                return random.choice(self._require_agents())
-
-            # Score all agents and pick highest
-            agent_scores = []
-            for agent in self.agents:
-                score = self._compute_composite_judge_score(agent.name)
-                agent_scores.append((agent, score))
-
-            if agent_scores:
-                # Sort by composite score descending
-                agent_scores.sort(key=lambda x: x[1], reverse=True)
-                best_agent, best_score = agent_scores[0]
-                logger.debug(f"Selected {best_agent.name} (composite: {best_score:.3f}) as judge via calibration")
-                return best_agent
-
-            # Fallback if scoring failed
-            return random.choice(self._require_agents())
-
-        # Default fallback
-        return random.choice(self._require_agents())
+        selector = JudgeSelector(
+            agents=self._require_agents(),
+            elo_system=self.elo_system,
+            judge_selection=self.protocol.judge_selection,
+            generate_fn=generate_wrapper,
+            build_vote_prompt_fn=lambda candidates, props: self.prompt_builder.build_judge_vote_prompt(candidates, props),
+            sanitize_fn=OutputSanitizer.sanitize_agent_output,
+        )
+        return await selector.select_judge(proposals, context)
 
     async def _vote_for_judge(self, proposals: dict[str, str], context: list[Message]) -> Agent:
-        """Have agents vote on who should be the judge."""
-        vote_counts: dict[str, int] = {}
+        """Have agents vote on who should be the judge.
 
-        for agent in self.agents:
-            # Each agent votes for who should judge (can't vote for self)
-            other_agents = [a for a in self.agents if a.name != agent.name]
-            prompt = self._build_judge_vote_prompt(other_agents, proposals)
+        Delegates to JudgeSelector with voted strategy.
+        """
+        async def generate_wrapper(agent, prompt, ctx):
+            return await agent.generate(prompt, ctx)
 
-            try:
-                raw_response = await agent.generate(prompt, context)
-                response = OutputSanitizer.sanitize_agent_output(raw_response, agent.name)
-                # Parse vote from response - look for agent names
-                for other in other_agents:
-                    if other.name.lower() in response.lower():
-                        vote_counts[other.name] = vote_counts.get(other.name, 0) + 1
-                        break
-            except Exception as e:
-                logger.warning(f"Judge vote error for {agent.name}: {e}")
-
-        # Select agent with most votes, random tiebreaker
-        if vote_counts:
-            max_votes = max(vote_counts.values())
-            candidates = [name for name, count in vote_counts.items() if count == max_votes]
-            winner_name = random.choice(candidates)
-            winner = next((a for a in self.agents if a.name == winner_name), None)
-            if winner:
-                return winner
-            logger.warning(f"vote_for_judge_winner_not_found name={winner_name}")
-
-        # Fallback to random if voting fails or winner not found
-        return random.choice(self._require_agents())
+        selector = JudgeSelector(
+            agents=self._require_agents(),
+            elo_system=self.elo_system,
+            judge_selection="voted",
+            generate_fn=generate_wrapper,
+            build_vote_prompt_fn=lambda candidates, props: self.prompt_builder.build_judge_vote_prompt(candidates, props),
+            sanitize_fn=OutputSanitizer.sanitize_agent_output,
+        )
+        return await selector.select_judge(proposals, context)
 
     def _build_judge_vote_prompt(self, candidates: list[Agent], proposals: dict[str, str]) -> str:
         """Build prompt for voting on who should judge."""

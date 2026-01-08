@@ -22,7 +22,7 @@ _record_cache_hit = None
 _record_cache_miss = None
 
 
-def _get_metrics():
+def _get_metrics() -> tuple:
     """Lazy load metrics functions."""
     global _record_cache_hit, _record_cache_miss
     if _record_cache_hit is None:

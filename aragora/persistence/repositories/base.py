@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Generator, Generic, List, Optional, TypeVar
 
 from aragora.config import DB_TIMEOUT_SECONDS
+from aragora.storage.schema import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,8 @@ class BaseRepository(ABC, Generic[T]):
         self._db_path = Path(db_path)
         self._timeout = timeout
         self._use_wal = use_wal
+        # Use centralized DatabaseManager for connection pooling
+        self._db_manager = DatabaseManager.get_instance(str(self._db_path), timeout)
         self._ensure_schema()
 
     @property
@@ -173,32 +176,33 @@ class BaseRepository(ABC, Generic[T]):
         """
         Get a database connection with proper configuration.
 
+        Uses DatabaseManager for connection pooling and WAL mode.
+
         Args:
             readonly: If True, opens connection in read-only mode.
+                     Note: read-only mode bypasses connection pooling.
 
         Yields:
             Configured SQLite connection.
         """
         if readonly:
+            # Read-only mode uses direct connection (no pooling)
             uri = f"file:{self._db_path}?mode=ro"
             conn = sqlite3.connect(
                 uri,
                 uri=True,
                 timeout=self._timeout,
             )
+            try:
+                conn.row_factory = sqlite3.Row
+                yield conn
+            finally:
+                conn.close()
         else:
-            conn = sqlite3.connect(
-                str(self._db_path),
-                timeout=self._timeout,
-            )
-
-        try:
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL" if self._use_wal else "")
-            conn.execute("PRAGMA busy_timeout=%d" % int(self._timeout * 1000))
-            yield conn
-        finally:
-            conn.close()
+            # Use pooled connection from DatabaseManager
+            with self._db_manager.fresh_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                yield conn
 
     @contextmanager
     def _transaction(self) -> Generator[sqlite3.Connection, None, None]:

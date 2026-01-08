@@ -6,7 +6,7 @@ import pytest
 from aragora.server.openapi import (
     API_VERSION,
     COMMON_SCHEMAS,
-    ENDPOINTS,
+    ALL_ENDPOINTS,
     generate_openapi_schema,
     get_openapi_json,
     get_openapi_yaml,
@@ -82,58 +82,58 @@ class TestEndpoints:
 
     def test_health_endpoint_defined(self):
         """Health endpoint is defined."""
-        assert "/api/health" in ENDPOINTS
-        assert "get" in ENDPOINTS["/api/health"]
+        assert "/api/health" in ALL_ENDPOINTS
+        assert "get" in ALL_ENDPOINTS["/api/health"]
 
     def test_agents_endpoint_defined(self):
         """Agents endpoint is defined."""
-        assert "/api/agents" in ENDPOINTS
-        endpoint = ENDPOINTS["/api/agents"]
+        assert "/api/agents" in ALL_ENDPOINTS
+        endpoint = ALL_ENDPOINTS["/api/agents"]
         assert "get" in endpoint
         assert endpoint["get"]["tags"] == ["Agents"]
 
     def test_debates_endpoint_defined(self):
         """Debates endpoint is defined."""
-        assert "/api/debates" in ENDPOINTS
-        assert "/api/debates/{id}" in ENDPOINTS
-        assert "/api/debates/{id}/messages" in ENDPOINTS
+        assert "/api/debates" in ALL_ENDPOINTS
+        assert "/api/debates/{id}" in ALL_ENDPOINTS
+        assert "/api/debates/{id}/messages" in ALL_ENDPOINTS
 
     def test_leaderboard_endpoint_defined(self):
         """Leaderboard endpoint is defined."""
-        assert "/api/leaderboard" in ENDPOINTS
-        endpoint = ENDPOINTS["/api/leaderboard"]
+        assert "/api/leaderboard" in ALL_ENDPOINTS
+        endpoint = ALL_ENDPOINTS["/api/leaderboard"]
         assert "limit" in str(endpoint)
 
     def test_analytics_endpoints_defined(self):
         """Analytics endpoints are defined."""
-        assert "/api/analytics/disagreement" in ENDPOINTS
-        assert "/api/analytics/consensus" in ENDPOINTS
+        assert "/api/analytics/disagreement" in ALL_ENDPOINTS
+        assert "/api/analytics/consensus" in ALL_ENDPOINTS
 
     def test_pulse_endpoints_defined(self):
         """Pulse endpoints are defined."""
-        assert "/api/pulse/trending" in ENDPOINTS
-        assert "/api/pulse/suggest" in ENDPOINTS
+        assert "/api/pulse/trending" in ALL_ENDPOINTS
+        assert "/api/pulse/suggest" in ALL_ENDPOINTS
 
     def test_metrics_endpoints_defined(self):
         """Metrics endpoints are defined."""
-        assert "/api/metrics" in ENDPOINTS
-        assert "/api/metrics/prometheus" in ENDPOINTS
+        assert "/api/metrics" in ALL_ENDPOINTS
+        assert "/api/metrics/prometheus" in ALL_ENDPOINTS
 
     def test_endpoint_has_tags(self):
         """All endpoints have tags."""
-        for path, methods in ENDPOINTS.items():
+        for path, methods in ALL_ENDPOINTS.items():
             for method, spec in methods.items():
                 assert "tags" in spec, f"{path} {method} missing tags"
 
     def test_endpoint_has_summary(self):
         """All endpoints have summary."""
-        for path, methods in ENDPOINTS.items():
+        for path, methods in ALL_ENDPOINTS.items():
             for method, spec in methods.items():
                 assert "summary" in spec, f"{path} {method} missing summary"
 
     def test_endpoint_has_responses(self):
         """All endpoints have responses."""
-        for path, methods in ENDPOINTS.items():
+        for path, methods in ALL_ENDPOINTS.items():
             for method, spec in methods.items():
                 assert "responses" in spec, f"{path} {method} missing responses"
 
