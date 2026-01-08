@@ -149,7 +149,7 @@ def serve_static_file(
 
         handler.send_response(200)
         handler.send_header('Content-Type', content_type)
-        handler.send_header('Content-Length', len(content))
+        handler.send_header('Content-Length', str(len(content)))
 
         # Add optional headers
         if add_cors_headers:
@@ -212,7 +212,7 @@ def serve_audio_file(
 
         handler.send_response(200)
         handler.send_header('Content-Type', content_type)
-        handler.send_header('Content-Length', len(content))
+        handler.send_header('Content-Length', str(len(content)))
         handler.send_header(
             'Content-Disposition',
             f'inline; filename="{debate_id}{ext}"'

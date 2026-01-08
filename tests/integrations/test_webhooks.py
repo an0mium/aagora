@@ -19,7 +19,9 @@ from aragora.integrations.webhooks import (
     sign_payload,
     load_webhook_configs,
     DEFAULT_EVENT_TYPES,
+    shutdown_dispatcher,
 )
+from aragora.server.handlers.base import clear_cache
 
 
 class TestAragoraJSONEncoder(unittest.TestCase):
@@ -31,12 +33,38 @@ class TestAragoraJSONEncoder(unittest.TestCase):
         parsed = json.loads(result)
         self.assertEqual(parsed["agents"], ["alice", "bob", "charlie"])
 
+    def test_encodes_frozenset_as_sorted_list(self):
+        data = {"tags": frozenset(["z", "a", "m"])}
+        result = json.dumps(data, cls=AragoraJSONEncoder)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["tags"], ["a", "m", "z"])
+
     def test_encodes_datetime_as_iso(self):
         dt = datetime(2024, 1, 15, 12, 30, 45)
         data = {"timestamp": dt}
         result = json.dumps(data, cls=AragoraJSONEncoder)
         parsed = json.loads(result)
         self.assertEqual(parsed["timestamp"], "2024-01-15T12:30:45")
+
+    def test_encodes_object_with_to_dict(self):
+        class CustomObj:
+            def to_dict(self):
+                return {"custom": "value", "id": 42}
+
+        data = {"obj": CustomObj()}
+        result = json.dumps(data, cls=AragoraJSONEncoder)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["obj"], {"custom": "value", "id": 42})
+
+    def test_fallback_to_str_for_unknown_types(self):
+        class UnserializableObj:
+            def __str__(self):
+                return "UnserializableObj<123>"
+
+        data = {"obj": UnserializableObj()}
+        result = json.dumps(data, cls=AragoraJSONEncoder)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["obj"], "UnserializableObj<123>")
 
     def test_encodes_nested_structures(self):
         data = {
@@ -119,6 +147,33 @@ class TestWebhookConfig(unittest.TestCase):
         })
         self.assertEqual(cfg.event_types, set(DEFAULT_EVENT_TYPES))
 
+    def test_from_dict_event_types_already_set(self):
+        """event_types that's already a set should pass through."""
+        cfg = WebhookConfig.from_dict({
+            "name": "test",
+            "url": "http://x",
+            "event_types": {"debate_start", "consensus"}  # Already a set
+        })
+        self.assertEqual(cfg.event_types, {"debate_start", "consensus"})
+
+    def test_from_dict_loop_ids_already_set(self):
+        """loop_ids that's already a set should pass through."""
+        cfg = WebhookConfig.from_dict({
+            "name": "test",
+            "url": "http://x",
+            "loop_ids": {"loop-1", "loop-2"}  # Already a set
+        })
+        self.assertEqual(cfg.loop_ids, {"loop-1", "loop-2"})
+
+    def test_from_dict_invalid_loop_ids_type_uses_none(self):
+        """Invalid loop_ids type should default to None (all loops)."""
+        cfg = WebhookConfig.from_dict({
+            "name": "test",
+            "url": "http://x",
+            "loop_ids": "not-a-list"  # Invalid type
+        })
+        self.assertIsNone(cfg.loop_ids)
+
 
 class TestLoadWebhookConfigs(unittest.TestCase):
     def test_loads_from_env_inline(self):
@@ -144,6 +199,79 @@ class TestLoadWebhookConfigs(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             configs = load_webhook_configs()
             self.assertEqual(configs, [])
+
+    def test_returns_empty_when_inline_not_array(self):
+        """ARAGORA_WEBHOOKS must be a JSON array."""
+        with patch.dict(os.environ, {"ARAGORA_WEBHOOKS": '{"name": "test", "url": "http://x"}'}, clear=False):
+            configs = load_webhook_configs()
+            self.assertEqual(configs, [])
+
+    def test_loads_from_config_file(self):
+        """Should load configs from ARAGORA_WEBHOOKS_CONFIG file path."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump([{"name": "file-test", "url": "http://file-test.com"}], f)
+            config_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"ARAGORA_WEBHOOKS_CONFIG": config_path}, clear=True):
+                configs = load_webhook_configs()
+                self.assertEqual(len(configs), 1)
+                self.assertEqual(configs[0].name, "file-test")
+        finally:
+            os.unlink(config_path)
+
+    def test_returns_empty_when_config_file_not_found(self):
+        """Should return empty list if config file doesn't exist."""
+        with patch.dict(os.environ, {"ARAGORA_WEBHOOKS_CONFIG": "/nonexistent/path.json"}, clear=True):
+            configs = load_webhook_configs()
+            self.assertEqual(configs, [])
+
+    def test_returns_empty_when_config_file_not_array(self):
+        """Config file must contain a JSON array."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump({"name": "test", "url": "http://x"}, f)  # Object, not array
+            config_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"ARAGORA_WEBHOOKS_CONFIG": config_path}, clear=True):
+                configs = load_webhook_configs()
+                self.assertEqual(configs, [])
+        finally:
+            os.unlink(config_path)
+
+    def test_skips_invalid_configs_in_file(self):
+        """Should skip invalid individual configs in file."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump([
+                {"name": "good", "url": "http://good.com"},
+                {"invalid": "config"},  # Missing required fields
+            ], f)
+            config_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"ARAGORA_WEBHOOKS_CONFIG": config_path}, clear=True):
+                configs = load_webhook_configs()
+                self.assertEqual(len(configs), 1)
+                self.assertEqual(configs[0].name, "good")
+        finally:
+            os.unlink(config_path)
+
+    def test_returns_empty_on_config_file_parse_error(self):
+        """Should return empty list if config file contains invalid JSON."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write("not valid json {]")
+            config_path = f.name
+
+        try:
+            with patch.dict(os.environ, {"ARAGORA_WEBHOOKS_CONFIG": config_path}, clear=True):
+                configs = load_webhook_configs()
+                self.assertEqual(configs, [])
+        finally:
+            os.unlink(config_path)
 
 
 class TestEventFiltering(unittest.TestCase):
@@ -313,6 +441,9 @@ class TestRetryLogic(unittest.TestCase):
     """Tests for webhook retry behavior."""
 
     def setUp(self):
+        # Clear any global state from previous tests
+        shutdown_dispatcher()
+        clear_cache()
         self.received = []
         self.port = 19877
         self.server = None
@@ -324,6 +455,9 @@ class TestRetryLogic(unittest.TestCase):
             self.server.shutdown()
             self.server.server_close()
             self.server = None
+        # Clean up global state
+        shutdown_dispatcher()
+        clear_cache()
 
     def _start_server(self, status_codes):
         """Start server that returns different status codes for each request."""

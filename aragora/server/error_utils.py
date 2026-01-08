@@ -105,9 +105,9 @@ class APIError(Exception):
         # Initialize exception base
         super().__init__(self.message)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
-        result = {
+        result: dict[str, Any] = {
             "code": self.code.value if isinstance(self.code, ErrorCode) else self.code,
             "message": self.message,
             "status": self.status,
@@ -531,7 +531,7 @@ def with_error_context(operation: str, **default_context: Any) -> Callable[[F], 
 
 def log_and_suppress(
     operation: str, default_value: Any = None, **context: Any
-) -> "SuppressingContext":
+) -> "ErrorContext":
     """Context manager that logs errors but returns a default value.
 
     Useful for optional operations that shouldn't fail the request.

@@ -15,6 +15,14 @@ from aragora.server.handlers.pulse import PulseHandler
 from aragora.server.handlers.base import clear_cache
 
 
+@pytest.fixture(autouse=True)
+def clear_handler_cache():
+    """Clear cache before and after each test to ensure isolation."""
+    clear_cache()
+    yield
+    clear_cache()
+
+
 @dataclass
 class MockTrendingTopic:
     """Mock trending topic object."""

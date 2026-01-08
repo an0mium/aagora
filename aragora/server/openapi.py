@@ -125,8 +125,8 @@ COMMON_SCHEMAS = {
 # =============================================================================
 
 # Helper functions for common response patterns
-def _ok_response(description: str, schema_ref: str = None):
-    resp = {"description": description}
+def _ok_response(description: str, schema_ref: str = None) -> dict:
+    resp: dict = {"description": description}
     if schema_ref:
         resp["content"] = {"application/json": {"schema": {"$ref": f"#/components/schemas/{schema_ref}"}}}
     return resp
