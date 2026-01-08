@@ -9,7 +9,10 @@ import csv
 import html
 import io
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
+
+# Type alias for csv.writer return type (csv._writer is internal)
+CSVWriter = Any
 
 
 @dataclass
@@ -56,7 +59,7 @@ def format_debate_csv(debate: dict, table: str = "summary") -> ExportResult:
     )
 
 
-def _write_messages_csv(writer: csv.writer, debate: dict) -> None:
+def _write_messages_csv(writer: CSVWriter, debate: dict) -> None:
     """Write messages timeline to CSV."""
     writer.writerow(["round", "agent", "role", "content", "timestamp"])
     for msg in debate.get("messages", []):
@@ -69,7 +72,7 @@ def _write_messages_csv(writer: csv.writer, debate: dict) -> None:
         ])
 
 
-def _write_critiques_csv(writer: csv.writer, debate: dict) -> None:
+def _write_critiques_csv(writer: CSVWriter, debate: dict) -> None:
     """Write critiques to CSV."""
     writer.writerow(["round", "critic", "target", "severity", "summary", "timestamp"])
     for critique in debate.get("critiques", []):
@@ -83,7 +86,7 @@ def _write_critiques_csv(writer: csv.writer, debate: dict) -> None:
         ])
 
 
-def _write_votes_csv(writer: csv.writer, debate: dict) -> None:
+def _write_votes_csv(writer: CSVWriter, debate: dict) -> None:
     """Write votes to CSV."""
     writer.writerow(["round", "voter", "choice", "reason", "timestamp"])
     for vote in debate.get("votes", []):
@@ -96,7 +99,7 @@ def _write_votes_csv(writer: csv.writer, debate: dict) -> None:
         ])
 
 
-def _write_summary_csv(writer: csv.writer, debate: dict) -> None:
+def _write_summary_csv(writer: CSVWriter, debate: dict) -> None:
     """Write summary statistics to CSV."""
     writer.writerow(["field", "value"])
     writer.writerow(["debate_id", debate.get("slug", debate.get("id", ""))])
