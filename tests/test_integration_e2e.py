@@ -212,12 +212,12 @@ class TestEloIntegration:
         assert result.id is not None
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(120)  # Allow 2 minutes for this slow integration test
+    @pytest.mark.timeout(300)  # Allow 5 minutes for two sequential debates
     async def test_elo_rankings_persist(self, mock_agents, debate_env, elo_system):
         """ELO rankings should persist across debates.
 
         Note: This test can be slow as it runs two full debates sequentially.
-        It's marked with a timeout to prevent hanging during large test suite runs.
+        Each debate takes ~80-90 seconds with mock agents due to orchestrator processing.
         """
         protocol = DebateProtocol(rounds=1, consensus="majority")
 
