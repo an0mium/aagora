@@ -36,6 +36,7 @@ from aragora.config import (
 )
 from aragora.ranking.database import EloDatabase
 from aragora.ranking.leaderboard_engine import LeaderboardEngine
+from aragora.ranking.calibration_engine import CalibrationEngine, DomainCalibrationEngine
 from aragora.ranking.relationships import RelationshipTracker, RelationshipStats, RelationshipMetrics
 from aragora.ranking.redteam import RedTeamIntegrator, RedTeamResult, VulnerabilitySummary
 from aragora.ranking.elo_core import (
@@ -202,6 +203,10 @@ class EloSystem:
             rating_cache=self._rating_cache,
             rating_factory=self._rating_from_row,
         )
+
+        # Calibration engines for tournament and domain-specific calibration
+        self._calibration_engine = CalibrationEngine(db_path=db_path, elo_system=self)
+        self._domain_calibration_engine = DomainCalibrationEngine(db_path=db_path, elo_system=self)
 
     @property
     def relationship_tracker(self) -> RelationshipTracker:
@@ -955,82 +960,18 @@ class EloSystem:
         predicted_winner: str,
         confidence: float,
     ) -> None:
-        """
-        Record an agent's prediction for a tournament winner.
-
-        Args:
-            tournament_id: Unique tournament identifier
-            predictor_agent: Agent making the prediction
-            predicted_winner: Agent predicted to win
-            confidence: Confidence level (0.0 to 1.0)
-        """
-        with self._db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO calibration_predictions
-                    (tournament_id, predictor_agent, predicted_winner, confidence)
-                VALUES (?, ?, ?, ?)
-                """,
-                (tournament_id, predictor_agent, predicted_winner, min(1.0, max(0.0, confidence))),
-            )
-            conn.commit()
+        """Record an agent's prediction for a tournament winner. Delegates to CalibrationEngine."""
+        self._calibration_engine.record_winner_prediction(
+            tournament_id, predictor_agent, predicted_winner, confidence
+        )
 
     def resolve_tournament_calibration(
         self,
         tournament_id: str,
         actual_winner: str,
     ) -> dict[str, float]:
-        """
-        Resolve a tournament and update calibration scores for predictors.
-
-        Uses Brier score: (predicted_probability - actual_outcome)^2
-        Lower Brier = better calibration.
-
-        Args:
-            tournament_id: Tournament that completed
-            actual_winner: Agent who actually won
-
-        Returns:
-            Dict of predictor_agent -> brier_score for this prediction
-        """
-        with self._db.connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT predictor_agent, predicted_winner, confidence
-                FROM calibration_predictions
-                WHERE tournament_id = ?
-                """,
-                (tournament_id,),
-            )
-            predictions = cursor.fetchall()
-
-        brier_scores = {}
-
-        # Batch load all predictor ratings upfront (avoids N+1 query)
-        predictor_names = [p[0] for p in predictions]
-        ratings = self.get_ratings_batch(predictor_names)
-
-        now = datetime.now().isoformat()
-        for predictor, predicted, confidence in predictions:
-            # Brier score: (confidence - outcome)^2 where outcome is 1 if correct, 0 if wrong
-            correct = 1.0 if predicted == actual_winner else 0.0
-            brier = (confidence - correct) ** 2
-            brier_scores[predictor] = brier
-
-            # Update the predictor's calibration stats in memory
-            rating = ratings[predictor]
-            rating.calibration_total += 1
-            if predicted == actual_winner:
-                rating.calibration_correct += 1
-            rating.calibration_brier_sum += brier
-            rating.updated_at = now
-
-        # Batch save all updated ratings in single transaction
-        self._save_ratings_batch(list(ratings.values()))
-
-        return brier_scores
+        """Resolve tournament and update calibration scores. Delegates to CalibrationEngine."""
+        return self._calibration_engine.resolve_tournament(tournament_id, actual_winner)
 
     def get_calibration_leaderboard(self, limit: int = 20, use_cache: bool = True) -> list[AgentRating]:
         """
