@@ -8,7 +8,7 @@ to improve maintainability and allow independent testing.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class ContextGatherer:
 
     def __init__(
         self,
-        evidence_store_callback: Optional[callable] = None,
+        evidence_store_callback: Optional[Callable[..., Any]] = None,
         prompt_builder: Optional[Any] = None,
         project_root: Optional[Path] = None,
     ):
@@ -143,7 +143,7 @@ class ContextGatherer:
             for doc_name in key_docs:
                 doc_path = docs_dir / doc_name
                 content = await loop.run_in_executor(
-                    None, lambda p=doc_path: _read_file_sync(p, 3000)
+                    None, lambda p=doc_path: _read_file_sync(p, 3000)  # type: ignore[misc]
                 )
                 if content:
                     aragora_context_parts.append(f"### {doc_name}\n{content}")
@@ -229,14 +229,14 @@ class ContextGatherer:
             )
 
             if evidence_pack.snippets:
-                self._research_evidence_pack = evidence_pack
+                self._research_evidence_pack = evidence_pack  # type: ignore[assignment]
 
                 # Update prompt builder if available
                 if self._prompt_builder:
                     self._prompt_builder.set_evidence_pack(evidence_pack)
 
                 # Store evidence via callback if provided
-                if self._evidence_store_callback:
+                if self._evidence_store_callback and callable(self._evidence_store_callback):
                     self._evidence_store_callback(evidence_pack.snippets, task)
 
                 return f"## EVIDENCE CONTEXT\n{evidence_pack.to_context_string()}"

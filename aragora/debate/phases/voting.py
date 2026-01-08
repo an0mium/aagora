@@ -10,7 +10,7 @@ Provides utilities for:
 """
 
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 
@@ -367,7 +367,7 @@ class VotingPhase:
             logger.debug(f"vote_grouping_merged groups={vote_groups}")
 
         # Count votes with weights
-        vote_counts: Counter = Counter()
+        vote_counts: defaultdict[str, float] = defaultdict(float)
         total_weighted = 0.0
 
         for vote in votes:

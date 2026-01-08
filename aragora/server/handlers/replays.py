@@ -22,6 +22,7 @@ from .base import (
     get_int_param,
     ttl_cache,
     safe_json_parse,
+    handle_errors,
 )
 from aragora.config import (
     DB_TIMEOUT_SECONDS,
@@ -81,37 +82,36 @@ class ReplaysHandler(BaseHandler):
         return None
 
     @ttl_cache(ttl_seconds=CACHE_TTL_REPLAYS_LIST, key_prefix="replays_list", skip_first=True)
+    @handle_errors("replays list retrieval")
     def _list_replays(self, nomic_dir: Optional[Path]) -> HandlerResult:
         """List available replay directories."""
         if not nomic_dir:
             return json_response([])
 
-        try:
-            replays_dir = nomic_dir / "replays"
-            if not replays_dir.exists():
-                return json_response([])
+        replays_dir = nomic_dir / "replays"
+        if not replays_dir.exists():
+            return json_response([])
 
-            replays = []
-            for replay_path in replays_dir.iterdir():
-                if replay_path.is_dir():
-                    meta_file = replay_path / "meta.json"
-                    if meta_file.exists():
-                        try:
-                            meta = json.loads(meta_file.read_text())
-                            replays.append({
-                                "id": replay_path.name,
-                                "topic": meta.get("topic", replay_path.name),
-                                "agents": [a.get("name") for a in meta.get("agents", [])],
-                                "schema_version": meta.get("schema_version", "1.0"),
-                            })
-                        except json.JSONDecodeError:
-                            # Skip malformed meta files
-                            continue
+        replays = []
+        for replay_path in replays_dir.iterdir():
+            if replay_path.is_dir():
+                meta_file = replay_path / "meta.json"
+                if meta_file.exists():
+                    try:
+                        meta = json.loads(meta_file.read_text())
+                        replays.append({
+                            "id": replay_path.name,
+                            "topic": meta.get("topic", replay_path.name),
+                            "agents": [a.get("name") for a in meta.get("agents", [])],
+                            "schema_version": meta.get("schema_version", "1.0"),
+                        })
+                    except json.JSONDecodeError:
+                        # Skip malformed meta files
+                        continue
 
-            return json_response(sorted(replays, key=lambda x: x["id"], reverse=True))
-        except Exception as e:
-            return error_response(_safe_error_message(e, "list_replays"), 500)
+        return json_response(sorted(replays, key=lambda x: x["id"], reverse=True))
 
+    @handle_errors("replay retrieval")
     def _get_replay(
         self, nomic_dir: Optional[Path], replay_id: str, offset: int = 0, limit: int = 1000
     ) -> HandlerResult:
@@ -129,55 +129,53 @@ class ReplaysHandler(BaseHandler):
         if not nomic_dir:
             return error_response("Replays not configured", 503)
 
-        try:
-            replay_dir = nomic_dir / "replays" / replay_id
-            if not replay_dir.exists():
-                return error_response(f"Replay not found: {replay_id}", 404)
+        replay_dir = nomic_dir / "replays" / replay_id
+        if not replay_dir.exists():
+            return error_response(f"Replay not found: {replay_id}", 404)
 
-            # Load meta
-            meta_file = replay_dir / "meta.json"
-            meta = {}
-            if meta_file.exists():
-                try:
-                    meta = json.loads(meta_file.read_text())
-                except json.JSONDecodeError:
-                    meta = {"error": "Failed to parse meta.json"}
+        # Load meta
+        meta_file = replay_dir / "meta.json"
+        meta = {}
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text())
+            except json.JSONDecodeError:
+                meta = {"error": "Failed to parse meta.json"}
 
-            # Stream events with pagination (bounded memory usage)
-            events_file = replay_dir / "events.jsonl"
-            events: list[dict[str, Any]] = []
-            total_events = 0
-            if events_file.exists():
-                with open(events_file, 'r') as f:
-                    for i, line in enumerate(f):
-                        total_events += 1
-                        # Skip until we reach offset
-                        if i < offset:
+        # Stream events with pagination (bounded memory usage)
+        events_file = replay_dir / "events.jsonl"
+        events: list[dict[str, Any]] = []
+        total_events = 0
+        if events_file.exists():
+            with open(events_file, 'r') as f:
+                for i, line in enumerate(f):
+                    total_events += 1
+                    # Skip until we reach offset
+                    if i < offset:
+                        continue
+                    # Stop after limit
+                    if len(events) >= limit:
+                        continue  # Keep counting total
+                    line = line.strip()
+                    if line:
+                        try:
+                            events.append(json.loads(line))
+                        except json.JSONDecodeError:
                             continue
-                        # Stop after limit
-                        if len(events) >= limit:
-                            continue  # Keep counting total
-                        line = line.strip()
-                        if line:
-                            try:
-                                events.append(json.loads(line))
-                            except json.JSONDecodeError:
-                                continue
 
-            return json_response({
-                "id": replay_id,
-                "meta": meta,
-                "events": events,
-                "event_count": len(events),
-                "total_events": total_events,
-                "offset": offset,
-                "limit": limit,
-                "has_more": offset + len(events) < total_events,
-            })
-        except Exception as e:
-            return error_response(_safe_error_message(e, "get_replay"), 500)
+        return json_response({
+            "id": replay_id,
+            "meta": meta,
+            "events": events,
+            "event_count": len(events),
+            "total_events": total_events,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + len(events) < total_events,
+        })
 
     @ttl_cache(ttl_seconds=CACHE_TTL_LEARNING_EVOLUTION, key_prefix="learning_evolution", skip_first=True)
+    @handle_errors("learning evolution retrieval")
     def _get_learning_evolution(
         self, nomic_dir: Optional[Path], limit: int
     ) -> HandlerResult:
@@ -185,11 +183,11 @@ class ReplaysHandler(BaseHandler):
         if not nomic_dir:
             return json_response({"patterns": [], "count": 0})
 
-        try:
-            db_path = nomic_dir / "meta_learning.db"
-            if not db_path.exists():
-                return json_response({"patterns": [], "count": 0})
+        db_path = nomic_dir / "meta_learning.db"
+        if not db_path.exists():
+            return json_response({"patterns": [], "count": 0})
 
+        try:
             db = MemoryDatabase(str(db_path))
             with db.connection() as conn:
                 conn.row_factory = sqlite3.Row
@@ -210,9 +208,7 @@ class ReplaysHandler(BaseHandler):
             # Table may not exist yet
             if "no such table" in str(e):
                 return json_response({"patterns": [], "count": 0})
-            return error_response(_safe_error_message(e, "learning_evolution"), 500)
-        except Exception as e:
-            return error_response(_safe_error_message(e, "learning_evolution"), 500)
+            raise
 
     @ttl_cache(ttl_seconds=CACHE_TTL_META_LEARNING, key_prefix="meta_learning_stats", skip_first=True)
     def _get_meta_learning_stats(

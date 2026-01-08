@@ -14,7 +14,7 @@ rating mutation operations.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from aragora.config import ELO_INITIAL_RATING
 from aragora.utils.json_helpers import safe_json_loads
@@ -65,7 +65,7 @@ class LeaderboardEngine:
         leaderboard_cache: Optional["TTLCache"] = None,
         stats_cache: Optional["TTLCache"] = None,
         rating_cache: Optional["TTLCache"] = None,
-        rating_factory: Optional[callable] = None,
+        rating_factory: Optional[Callable[..., Any]] = None,
     ):
         """
         Initialize the leaderboard engine.
@@ -128,7 +128,7 @@ class LeaderboardEngine:
                 )
             rows = cursor.fetchall()
 
-        return [self._rating_factory(row) for row in rows]
+        return [self._rating_factory(row) for row in rows] if callable(self._rating_factory) else []
 
     def get_cached_leaderboard(
         self,
@@ -248,10 +248,10 @@ class LeaderboardEngine:
             )
             rows = cursor.fetchall()
 
-        matches = []
+        matches: list[dict[str, Any]] = []
         for row in rows:
-            elo_changes = safe_json_loads(row[4], {})
-            participants = safe_json_loads(row[2], [])
+            elo_changes: dict[str, Any] = safe_json_loads(row[4], {})
+            participants: list[str] = safe_json_loads(row[2], [])
             matches.append({
                 "debate_id": row[0],
                 "winner": row[1],
