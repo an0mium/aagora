@@ -10,7 +10,7 @@ Transforms debate outcomes into actionable development artifacts:
 
 from aragora.pipeline.pr_generator import PRGenerator, DecisionMemo, PatchPlan
 from aragora.pipeline.risk_register import RiskRegister, Risk
-from aragora.pipeline.test_plan import (
+from aragora.pipeline.verification_plan import (
     VerificationPlan,
     VerificationCase,
     VerificationPlanGenerator,

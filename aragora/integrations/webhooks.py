@@ -31,12 +31,19 @@ def _safe_log(level: int, msg: str) -> None:
     """Log a message safely, ignoring errors during interpreter shutdown.
 
     During atexit or interpreter shutdown, the logging module may be
-    partially torn down, causing ValueError or other exceptions.
+    partially torn down, causing ValueError or other exceptions. The
+    stream handlers may also have closed streams even if handlers exist.
     """
     try:
-        if logging.root.handlers:  # Check if logging is still functional
-            logger.log(level, msg)
-    except (ValueError, RuntimeError, AttributeError):
+        # Check if logging is still functional and streams are open
+        if not logging.root.handlers:
+            return
+        # Verify at least one handler has a valid stream
+        for handler in logging.root.handlers:
+            if hasattr(handler, 'stream') and handler.stream and not handler.stream.closed:
+                logger.log(level, msg)
+                return
+    except (ValueError, RuntimeError, AttributeError, OSError):
         # Logging system is shutting down - silently ignore
         pass
 

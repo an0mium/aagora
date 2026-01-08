@@ -1,5 +1,5 @@
 """
-Tests for aragora.pipeline.test_plan module.
+Tests for aragora.pipeline.verification_plan module.
 
 Tests the VerificationCase, VerificationPlan, and VerificationPlanGenerator classes for:
 - Dataclass creation and serialization
@@ -12,7 +12,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import MagicMock
 
-from aragora.pipeline.test_plan import (
+from aragora.pipeline.verification_plan import (
     VerificationCase,
     VerificationPlan,
     VerificationPlanGenerator,
