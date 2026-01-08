@@ -913,6 +913,20 @@ class CritiqueStore:
                 """
                 cursor.execute(sql, [datetime.now().isoformat(), agent_name])
 
+                # Log reputation changes at debug level
+                change_types = []
+                if proposal_made:
+                    change_types.append("proposal_made")
+                if proposal_accepted:
+                    change_types.append("proposal_accepted")
+                if critique_given:
+                    change_types.append("critique_given")
+                if critique_valuable:
+                    change_types.append("critique_valuable")
+                logger.debug(
+                    f"[reputation] Updated {agent_name}: {', '.join(change_types)}"
+                )
+
             conn.commit()
 
     @ttl_cache(ttl_seconds=CACHE_TTL_ALL_REPUTATIONS, key_prefix="all_reputations", skip_first=True)

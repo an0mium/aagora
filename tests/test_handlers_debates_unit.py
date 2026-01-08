@@ -10,7 +10,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aragora.server.handlers.debates import DebatesHandler
-from aragora.server.handlers.base import HandlerResult
+from aragora.server.handlers.base import HandlerResult, clear_cache
+
+
+@pytest.fixture(autouse=True)
+def clear_handler_cache():
+    """Clear cache before each test to ensure isolation."""
+    clear_cache()
+    yield
+    clear_cache()
 
 
 def parse_body(result: HandlerResult) -> dict:
@@ -118,7 +126,7 @@ class TestListDebates:
 
     def test_returns_debates_list(self) -> None:
         """Test successful debate listing."""
-        self.mock_storage.list_debates.return_value = [
+        self.mock_storage.list_recent.return_value = [
             {"id": "debate-1", "title": "Test 1"},
             {"id": "debate-2", "title": "Test 2"},
         ]
@@ -132,7 +140,7 @@ class TestListDebates:
 
     def test_returns_empty_list(self) -> None:
         """Test empty debate list."""
-        self.mock_storage.list_debates.return_value = []
+        self.mock_storage.list_recent.return_value = []
 
         result = self.handler._list_debates(None, limit=20)
 
@@ -143,7 +151,7 @@ class TestListDebates:
 
     def test_handles_storage_error(self) -> None:
         """Test storage error handling."""
-        self.mock_storage.list_debates.side_effect = Exception("Database error")
+        self.mock_storage.list_recent.side_effect = Exception("Database error")
 
         result = self.handler._list_debates(None, limit=20)
 
@@ -326,7 +334,7 @@ class TestHandle:
 
     def test_routes_to_list_debates(self) -> None:
         """Test routing to list debates."""
-        self.mock_storage.list_debates.return_value = []
+        self.mock_storage.list_recent.return_value = []
 
         result = self.handler.handle("/api/debates", {}, None)
 
@@ -379,16 +387,16 @@ class TestHandle:
 
     def test_uses_limit_parameter(self) -> None:
         """Test limit parameter is used for list."""
-        self.mock_storage.list_debates.return_value = []
+        self.mock_storage.list_recent.return_value = []
 
         self.handler.handle("/api/debates", {"limit": ["50"]}, None)
 
-        self.mock_storage.list_debates.assert_called_once_with(limit=50)
+        self.mock_storage.list_recent.assert_called_once_with(limit=50)
 
     def test_caps_limit_at_100(self) -> None:
         """Test limit is capped at 100."""
-        self.mock_storage.list_debates.return_value = []
+        self.mock_storage.list_recent.return_value = []
 
         self.handler.handle("/api/debates", {"limit": ["500"]}, None)
 
-        self.mock_storage.list_debates.assert_called_once_with(limit=100)
+        self.mock_storage.list_recent.assert_called_once_with(limit=100)

@@ -588,15 +588,25 @@ class ContinuumMemory:
             # Use TierManager for decision
             tm_current = MemoryTier(current_tier.value)
             if not self._tier_manager.should_promote(tm_current, surprise_score, last_promotion):
+                logger.debug(
+                    f"[memory] Promotion denied for {id}: tier={current_tier.value}, "
+                    f"surprise={surprise_score:.3f}, last_promotion={last_promotion}"
+                )
                 return None
 
             # Get next tier using TierManager
             tm_new = self._tier_manager.get_next_tier(tm_current, "faster")
             if tm_new is None:
+                logger.debug(f"[memory] No faster tier available for {id} (already at {current_tier.value})")
                 return None
 
             new_tier = MemoryTier(tm_new.value)
             now = datetime.now().isoformat()
+
+            logger.info(
+                f"[memory] Promoting {id}: {current_tier.value} -> {new_tier.value} "
+                f"(surprise={surprise_score:.3f})"
+            )
 
             # Update tier
             cursor.execute(
@@ -650,15 +660,25 @@ class ContinuumMemory:
             # Use TierManager for decision
             tm_current = MemoryTier(current_tier.value)
             if not self._tier_manager.should_demote(tm_current, surprise_score, update_count):
+                logger.debug(
+                    f"[memory] Demotion denied for {id}: tier={current_tier.value}, "
+                    f"surprise={surprise_score:.3f}, updates={update_count}"
+                )
                 return None
 
             # Get next tier using TierManager
             tm_new = self._tier_manager.get_next_tier(tm_current, "slower")
             if tm_new is None:
+                logger.debug(f"[memory] No slower tier available for {id} (already at {current_tier.value})")
                 return None
 
             new_tier = MemoryTier(tm_new.value)
             now = datetime.now().isoformat()
+
+            logger.info(
+                f"[memory] Demoting {id}: {current_tier.value} -> {new_tier.value} "
+                f"(surprise={surprise_score:.3f}, updates={update_count})"
+            )
 
             # Update tier
             cursor.execute(
@@ -757,6 +777,12 @@ class ContinuumMemory:
 
             conn.commit()
 
+        if promoted_count > 0:
+            logger.info(
+                f"[memory] Batch promoted {promoted_count}/{len(ids)} entries: "
+                f"{from_tier.value} -> {to_tier.value}"
+            )
+
         return promoted_count
 
     def _demote_batch(
@@ -824,6 +850,12 @@ class ContinuumMemory:
 
             conn.commit()
 
+        if demoted_count > 0:
+            logger.info(
+                f"[memory] Batch demoted {demoted_count}/{len(ids)} entries: "
+                f"{from_tier.value} -> {to_tier.value}"
+            )
+
         return demoted_count
 
     def consolidate(self) -> Dict[str, int]:
@@ -841,6 +873,7 @@ class ContinuumMemory:
         Returns:
             Dict with counts of promotions and demotions
         """
+        logger.debug("[memory] Starting tier consolidation")
         promotions = 0
         demotions = 0
 
@@ -911,6 +944,13 @@ class ContinuumMemory:
             logger.debug(
                 f"Demoted {count}/{len(ids)} entries from {from_tier.value} to {to_tier.value}"
             )
+
+        if promotions > 0 or demotions > 0:
+            logger.info(
+                f"[memory] Consolidation complete: {promotions} promotions, {demotions} demotions"
+            )
+        else:
+            logger.debug("[memory] Consolidation complete: no tier changes")
 
         return {"promotions": promotions, "demotions": demotions}
 

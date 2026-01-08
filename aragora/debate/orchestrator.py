@@ -55,6 +55,113 @@ from aragora.debate.context import DebateContext
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ArenaConfig:
+    """Configuration for Arena debate orchestration.
+
+    Groups optional dependencies and settings that can be passed to Arena.
+    This allows for cleaner initialization and easier testing.
+
+    Initialization Flow
+    -------------------
+    Arena initialization follows a layered architecture pattern:
+
+    1. **Core Configuration** (_init_core):
+       - Sets up environment, agents, protocol, spectator
+       - Initializes circuit breaker for fault tolerance
+       - Configures loop scoping for multi-debate sessions
+
+    2. **Tracking Subsystems** (_init_trackers):
+       - Position and belief tracking (PositionTracker, PositionLedger)
+       - ELO rating system for agent ranking
+       - Persona manager for agent specialization
+       - Flip detector for position reversals
+       - Relationship tracker for agent interactions
+       - Moment detector for significant events
+
+    3. **User Participation** (_init_user_participation):
+       - Sets up event queue for user votes/suggestions
+       - Subscribes to event emitter for real-time participation
+
+    4. **Roles and Stances** (_init_roles_and_stances):
+       - Initializes cognitive role rotation (Heavy3-inspired)
+       - Sets up initial agent stances
+
+    5. **Convergence Detection** (_init_convergence):
+       - Configures semantic similarity backend
+       - Sets up convergence thresholds
+
+    6. **Phase Classes** (_init_phases):
+       - ContextInitializer, ProposalPhase, DebateRoundsPhase
+       - ConsensusPhase, AnalyticsPhase, FeedbackPhase, VotingPhase
+
+    Dependency Injection
+    --------------------
+    Most subsystems are optional and can be injected for testing:
+
+    - Memory systems: critique_store, continuum_memory, debate_embeddings
+    - Tracking: elo_system, position_ledger, relationship_tracker
+    - Events: event_emitter, spectator
+    - Recording: recorder, evidence_collector
+
+    Example
+    -------
+    Basic usage with minimal configuration::
+
+        config = ArenaConfig(loop_id="debate-123")
+        arena = Arena.from_config(env, agents, protocol, config)
+
+    Full production setup with all subsystems::
+
+        config = ArenaConfig(
+            loop_id="debate-123",
+            strict_loop_scoping=True,
+            memory=critique_store,
+            continuum_memory=continuum,
+            elo_system=elo,
+            event_emitter=emitter,
+            spectator=stream,
+        )
+        arena = Arena.from_config(env, agents, protocol, config)
+    """
+
+    # Identification
+    loop_id: str = ""
+
+    # Behavior flags
+    strict_loop_scoping: bool = False
+
+    # Core subsystems (typically injected)
+    memory: Optional[object] = None  # CritiqueStore
+    event_hooks: Optional[dict] = None
+    event_emitter: Optional[object] = None
+    spectator: Optional[SpectatorStream] = None
+    debate_embeddings: Optional[object] = None  # DebateEmbeddingsDatabase
+    insight_store: Optional[object] = None  # InsightStore
+    recorder: Optional[object] = None  # ReplayRecorder
+    circuit_breaker: Optional[CircuitBreaker] = None
+    evidence_collector: Optional[object] = None
+
+    # Agent configuration
+    agent_weights: Optional[dict] = None
+
+    # Tracking subsystems
+    position_tracker: Optional[object] = None
+    position_ledger: Optional[object] = None
+    elo_system: Optional[object] = None
+    persona_manager: Optional[object] = None
+    dissent_retriever: Optional[object] = None
+    flip_detector: Optional[object] = None
+    calibration_tracker: Optional[object] = None
+    continuum_memory: Optional[object] = None
+    relationship_tracker: Optional[object] = None
+    moment_detector: Optional[object] = None
+
+    # Fork/continuation support
+    initial_messages: Optional[list] = None
+    trending_topic: Optional[object] = None
+
+
 class Arena:
     """
     Orchestrates multi-agent debates.
@@ -142,6 +249,67 @@ class Arena:
 
         # Initialize phase classes for orchestrator decomposition
         self._init_phases()
+
+    @classmethod
+    def from_config(
+        cls,
+        environment: Environment,
+        agents: list[Agent],
+        protocol: DebateProtocol = None,
+        config: ArenaConfig = None,
+    ) -> "Arena":
+        """Create an Arena from an ArenaConfig.
+
+        This factory method provides a cleaner way to create Arena instances
+        when using dependency injection or configuration objects.
+
+        Args:
+            environment: The debate environment with task description
+            agents: List of agents participating in the debate
+            protocol: Optional debate protocol (defaults to DebateProtocol())
+            config: Optional ArenaConfig with dependencies and settings
+
+        Returns:
+            Configured Arena instance
+
+        Example:
+            config = ArenaConfig(
+                loop_id="debate-123",
+                elo_system=elo,
+                memory=critique_store,
+            )
+            arena = Arena.from_config(env, agents, protocol, config)
+        """
+        config = config or ArenaConfig()
+        return cls(
+            environment=environment,
+            agents=agents,
+            protocol=protocol,
+            memory=config.memory,
+            event_hooks=config.event_hooks,
+            event_emitter=config.event_emitter,
+            spectator=config.spectator,
+            debate_embeddings=config.debate_embeddings,
+            insight_store=config.insight_store,
+            recorder=config.recorder,
+            agent_weights=config.agent_weights,
+            position_tracker=config.position_tracker,
+            position_ledger=config.position_ledger,
+            elo_system=config.elo_system,
+            persona_manager=config.persona_manager,
+            dissent_retriever=config.dissent_retriever,
+            flip_detector=config.flip_detector,
+            calibration_tracker=config.calibration_tracker,
+            continuum_memory=config.continuum_memory,
+            relationship_tracker=config.relationship_tracker,
+            moment_detector=config.moment_detector,
+            loop_id=config.loop_id,
+            strict_loop_scoping=config.strict_loop_scoping,
+            circuit_breaker=config.circuit_breaker,
+            initial_messages=config.initial_messages,
+            trending_topic=config.trending_topic,
+            evidence_collector=config.evidence_collector,
+        )
 
     def _init_core(
         self,

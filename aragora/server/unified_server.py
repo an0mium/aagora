@@ -48,7 +48,13 @@ from aragora.config import (
     ALLOWED_AGENT_TYPES,
 )
 from aragora.server.error_utils import safe_error_message as _safe_error_message
-from aragora.server.validation import SAFE_ID_PATTERN, validate_id
+from aragora.server.validation import (
+    SAFE_ID_PATTERN,
+    validate_id,
+    safe_query_int,
+    safe_query_float,
+)
+from aragora.server.handlers.base import invalidate_leaderboard_cache
 
 # Import utilities from extracted modules
 from aragora.server.http_utils import (
@@ -311,20 +317,18 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):
         return client_ip
 
     def _safe_int(self, query: dict, key: str, default: int, max_val: int = 100) -> int:
-        """Safely parse integer query param with bounds checking."""
-        try:
-            val = int(query.get(key, [default])[0])
-            return min(max(val, 1), max_val)
-        except (ValueError, IndexError, TypeError):
-            return default
+        """Safely parse integer query param with bounds checking.
+
+        Delegates to shared safe_query_int from validation module.
+        """
+        return safe_query_int(query, key, default, min_val=1, max_val=max_val)
 
     def _safe_float(self, query: dict, key: str, default: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
-        """Safely parse float query param with bounds checking."""
-        try:
-            val = float(query.get(key, [default])[0])
-            return min(max(val, min_val), max_val)
-        except (ValueError, IndexError, TypeError):
-            return default
+        """Safely parse float query param with bounds checking.
+
+        Delegates to shared safe_query_float from validation module.
+        """
+        return safe_query_float(query, key, default, min_val=min_val, max_val=max_val)
 
     def _safe_string(self, value: str, max_len: int = 500, pattern: Optional[str] = None) -> Optional[str]:
         """Safely validate string parameter with length and pattern checks.
@@ -1064,6 +1068,7 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):
                 elo_adjustments[agent_name] = elo_adjustments.get(agent_name, 0) - 1
 
         # Record adjustments
+        elo_updated = False
         for agent_name, adjustment in elo_adjustments.items():
             try:
                 if adjustment > 0:
@@ -1075,8 +1080,13 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):
                         critical_vulnerabilities=0,
                         session_id=audit_id
                     )
+                    elo_updated = True
             except Exception as e:
                 logger.warning(f"Failed to record audit ELO result for {agent_name}: {e}")
+
+        # Invalidate leaderboard cache after ELO updates
+        if elo_updated:
+            invalidate_leaderboard_cache()
 
         return elo_adjustments
 

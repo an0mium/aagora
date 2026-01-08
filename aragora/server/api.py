@@ -15,7 +15,10 @@ from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
 # Safe ID pattern for slugs (allows dots for slugs like "rate-limiter-2026-01-01")
-from aragora.server.validation import SAFE_ID_PATTERN_WITH_DOTS as SAFE_ID_PATTERN
+from aragora.server.validation import (
+    SAFE_ID_PATTERN_WITH_DOTS as SAFE_ID_PATTERN,
+    parse_int_param,
+)
 
 # Configure module logger
 logger = logging.getLogger(__name__)
@@ -53,10 +56,7 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
                 return
             self._get_debate(slug)
         elif path == '/api/debates':
-            try:
-                limit = min(int(query.get('limit', [20])[0]), 100)  # Cap at 100
-            except (ValueError, IndexError):
-                limit = 20
+            limit = parse_int_param(query, 'limit', default=20, min_val=1, max_val=100)
             self._list_debates(limit)
         elif path.startswith('/api/replays/'):
             debate_id = path.split('/')[-1]
@@ -65,10 +65,7 @@ class DebateAPIHandler(BaseHTTPRequestHandler):
                 return
             self._get_replay(debate_id)
         elif path == '/api/replays':
-            try:
-                limit = min(int(query.get('limit', [20])[0]), 100)  # Cap at 100
-            except (ValueError, IndexError):
-                limit = 20
+            limit = parse_int_param(query, 'limit', default=20, min_val=1, max_val=100)
             self._list_replays(limit)
         elif path == '/api/health':
             self._health_check()

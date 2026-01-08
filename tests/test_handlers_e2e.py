@@ -61,7 +61,7 @@ def temp_nomic_dir():
 def mock_storage():
     """Create a mock DebateStorage."""
     storage = Mock()
-    storage.list_debates.return_value = [
+    storage.list_recent.return_value = [
         {"id": "debate-1", "slug": "test-debate", "task": "Test task", "created_at": "2026-01-05"},
         {"id": "debate-2", "slug": "another-debate", "task": "Another task", "created_at": "2026-01-04"},
     ]
@@ -240,7 +240,7 @@ class TestDebatesHandlerE2E:
     def test_list_debates_with_limit(self, debates_handler, mock_storage):
         """Test /api/debates respects limit parameter."""
         debates_handler.handle("/api/debates", {"limit": 5}, None)
-        mock_storage.list_debates.assert_called_with(limit=5)
+        mock_storage.list_recent.assert_called_with(limit=5)
 
     def test_debate_by_slug_returns_object(self, debates_handler):
         """Test /api/debates/{slug} returns debate details."""
@@ -548,7 +548,7 @@ class TestAnalyticsHandlerE2E:
     def mock_storage_with_debates(self):
         """Create mock storage with debate data."""
         storage = Mock()
-        storage.list_debates.return_value = [
+        storage.list_recent.return_value = [
             {
                 "id": "d1",
                 "result": {
@@ -1142,7 +1142,7 @@ class TestDebatesHandlerEdgeCases:
     def test_empty_debate_list(self, debates_handler_with_mock):
         """Test listing debates when storage is empty."""
         handler, storage = debates_handler_with_mock
-        storage.list_debates.return_value = []
+        storage.list_recent.return_value = []
 
         result = handler.handle("/api/debates", {}, None)
 
@@ -1154,17 +1154,17 @@ class TestDebatesHandlerEdgeCases:
     def test_limit_param_zero(self, debates_handler_with_mock):
         """Test limit parameter of zero is handled."""
         handler, storage = debates_handler_with_mock
-        storage.list_debates.return_value = []
+        storage.list_recent.return_value = []
 
         result = handler.handle("/api/debates", {"limit": "0"}, None)
 
         assert result.status_code == 200
-        storage.list_debates.assert_called_with(limit=0)
+        storage.list_recent.assert_called_with(limit=0)
 
     def test_limit_param_negative(self, debates_handler_with_mock):
         """Test negative limit parameter defaults gracefully."""
         handler, storage = debates_handler_with_mock
-        storage.list_debates.return_value = []
+        storage.list_recent.return_value = []
 
         result = handler.handle("/api/debates", {"limit": "-1"}, None)
 
@@ -1174,13 +1174,13 @@ class TestDebatesHandlerEdgeCases:
     def test_limit_param_exceeds_max(self, debates_handler_with_mock):
         """Test limit parameter is capped at 100."""
         handler, storage = debates_handler_with_mock
-        storage.list_debates.return_value = []
+        storage.list_recent.return_value = []
 
         result = handler.handle("/api/debates", {"limit": "500"}, None)
 
         assert result.status_code == 200
         # Limit should be capped at 100
-        storage.list_debates.assert_called_with(limit=100)
+        storage.list_recent.assert_called_with(limit=100)
 
     def test_export_empty_debate(self, debates_handler_with_mock):
         """Test exporting debate with no messages."""

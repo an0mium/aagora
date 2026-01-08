@@ -20,6 +20,7 @@ from .base import (
     HandlerResult,
     json_response,
     error_response,
+    invalidate_leaderboard_cache,
 )
 from aragora.server.validation import validate_debate_id, validate_agent_name, validate_id
 from aragora.utils.optional_imports import try_import_class
@@ -216,6 +217,8 @@ class AuditResultRecorder:
                 critical_vulnerabilities=report.critical_count,
                 session_id=report_id
             )
+            # Invalidate leaderboard cache after ELO update
+            invalidate_leaderboard_cache()
         except Exception as e:
             logger.warning(f"Failed to record ELO result for capability probe: {e}")
 

@@ -10,10 +10,8 @@ For new code, prefer importing directly from the package:
     from aragora.agents.errors.decorators import with_error_handling
 """
 
-# Re-export everything from the errors package for backward compatibility
-from aragora.agents.errors import *  # noqa: F401, F403
-
-# Also import specific symbols to ensure they're available
+# Explicit re-exports from the errors package for backward compatibility
+# (Avoid wildcard imports for better IDE analysis and explicit dependencies)
 from aragora.agents.errors import (  # noqa: F401
     # Type variable
     T,

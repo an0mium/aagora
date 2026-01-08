@@ -148,6 +148,60 @@ class OpenRouterRateLimiter:
                 "api_remaining": self._api_remaining,
             }
 
+    def request(self, timeout: float = 30.0) -> "RateLimitContext":
+        """Context manager for rate-limited API requests.
+
+        Provides cleaner async with syntax for acquiring and optionally
+        releasing rate limit tokens.
+
+        Usage:
+            async with limiter.request() as acquired:
+                if acquired:
+                    response = await make_api_call()
+                else:
+                    raise TimeoutError("Rate limit timeout")
+
+            # Or with auto-release on error:
+            async with limiter.request() as ctx:
+                if ctx:
+                    try:
+                        response = await make_api_call()
+                    except Exception:
+                        ctx.release_on_error()
+                        raise
+        """
+        return RateLimitContext(self, timeout)
+
+
+class RateLimitContext:
+    """Async context manager for rate limit acquisition.
+
+    Acquires a rate limit token on entry and optionally releases on error.
+    """
+
+    def __init__(self, limiter: OpenRouterRateLimiter, timeout: float):
+        self._limiter = limiter
+        self._timeout = timeout
+        self._acquired = False
+
+    async def __aenter__(self) -> "RateLimitContext":
+        """Acquire rate limit on context entry."""
+        self._acquired = await self._limiter.acquire(self._timeout)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit context (no automatic release)."""
+        pass
+
+    def __bool__(self) -> bool:
+        """Check if rate limit was acquired."""
+        return self._acquired
+
+    def release_on_error(self) -> None:
+        """Release the token back on request error."""
+        if self._acquired:
+            self._limiter.release_on_error()
+
 
 # Use ServiceRegistry for rate limiter singleton management
 _openrouter_limiter_lock = threading.Lock()
@@ -183,6 +237,7 @@ __all__ = [
     "OpenRouterTier",
     "OPENROUTER_TIERS",
     "OpenRouterRateLimiter",
+    "RateLimitContext",
     "get_openrouter_limiter",
     "set_openrouter_tier",
 ]

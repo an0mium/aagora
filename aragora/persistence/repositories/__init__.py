@@ -5,38 +5,29 @@ Provides database abstraction layer for data access, separating persistence
 logic from business logic. Each repository handles a single entity type.
 
 Usage:
-    from aragora.persistence.repositories import DebateRepository
+    from aragora.persistence.repositories import DebateRepository, MemoryRepository
 
+    # Debate repository
     repo = DebateRepository()
     debate = repo.get("debate-123")
     repo.save(debate)
 
-Unit of Work for transactions:
-    from aragora.persistence.repositories import UnitOfWork
-
-    with UnitOfWork.sync("/path/to/db.db") as uow:
-        result = uow.execute_one("SELECT * FROM debates WHERE id = ?", (id,))
-        uow.execute("UPDATE debates SET view_count = ? WHERE id = ?", (10, id))
-        # Auto-commits on success, rolls back on exception
+    # Memory repository
+    mem_repo = MemoryRepository()
+    memory = mem_repo.add_memory("claude", "Learned something", memory_type="insight")
+    memories = mem_repo.retrieve("claude", query="testing", limit=5)
 
 Benefits:
 - Testable: Repositories can be mocked or use in-memory databases
 - Consistent: Common patterns for CRUD operations
 - Decoupled: Business logic doesn't know about SQLite internals
-- Observable: Query metrics and slow query detection
+- Type-safe: Entity classes with validation
 """
 
 from .base import BaseRepository, RepositoryError, EntityNotFoundError
 from .debate import DebateRepository, DebateEntity, DebateMetadata
 from .elo import EloRepository, RatingEntity, MatchEntity, LeaderboardEntry
-from .unit_of_work import (
-    UnitOfWork,
-    TransactionMetrics,
-    QueryMetrics,
-    InstrumentedConnection,
-    batch_insert,
-    batch_update,
-)
+from .memory import MemoryRepository, MemoryEntity, RetrievedMemory, ReflectionSchedule
 
 __all__ = [
     # Base
@@ -52,11 +43,9 @@ __all__ = [
     "RatingEntity",
     "MatchEntity",
     "LeaderboardEntry",
-    # Unit of Work
-    "UnitOfWork",
-    "TransactionMetrics",
-    "QueryMetrics",
-    "InstrumentedConnection",
-    "batch_insert",
-    "batch_update",
+    # Memory
+    "MemoryRepository",
+    "MemoryEntity",
+    "RetrievedMemory",
+    "ReflectionSchedule",
 ]

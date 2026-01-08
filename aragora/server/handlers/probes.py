@@ -22,6 +22,7 @@ from .base import (
     json_response,
     error_response,
     handle_errors,
+    invalidate_leaderboard_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -314,6 +315,8 @@ class ProbesHandler(BaseHandler):
                     critical_vulnerabilities=report.critical_count,
                     session_id=report_id
                 )
+                # Invalidate leaderboard cache after ELO update
+                invalidate_leaderboard_cache()
             except Exception as e:
                 logger.warning(
                     "ELO update failed for agent %s (non-fatal): %s: %s",

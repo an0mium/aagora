@@ -9,12 +9,14 @@ across ContinuumMemory, CritiqueStore, and DebateEmbeddings systems.
 import hashlib
 import logging
 import time
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
     from aragora.core import DebateResult
     from aragora.memory.continuum import ContinuumMemory
     from aragora.memory.critique_store import CritiqueStore
+    from aragora.memory.embeddings import DebateEmbeddingsDatabase
+    from aragora.spectate.stream import SpectatorStream
 
 from aragora.memory.continuum import MemoryTier
 
@@ -34,12 +36,12 @@ class MemoryManager:
         self,
         continuum_memory: Optional["ContinuumMemory"] = None,
         critique_store: Optional["CritiqueStore"] = None,
-        debate_embeddings=None,
+        debate_embeddings: Optional["DebateEmbeddingsDatabase"] = None,
         domain_extractor: Optional[Callable[[], str]] = None,
-        event_emitter=None,
-        spectator=None,
+        event_emitter: Optional[Any] = None,  # SyncEventEmitter - avoid circular import
+        spectator: Optional["SpectatorStream"] = None,
         loop_id: str = "",
-    ):
+    ) -> None:
         """Initialize memory manager with memory systems.
 
         Args:
@@ -60,7 +62,7 @@ class MemoryManager:
         self.loop_id = loop_id
 
         # Track retrieved memory IDs for outcome updates
-        self._retrieved_ids: list = []
+        self._retrieved_ids: list[str] = []
 
         # Pattern cache: (timestamp, formatted_patterns) - TTL 5 minutes
         self._patterns_cache: tuple[float, str] | None = None
@@ -361,7 +363,7 @@ class MemoryManager:
             except Exception as e:
                 logger.debug(f"Spectator notification error: {e}")
 
-    def track_retrieved_ids(self, ids: list) -> None:
+    def track_retrieved_ids(self, ids: list[str]) -> None:
         """Track retrieved memory IDs for later outcome updates.
 
         Args:
@@ -372,3 +374,8 @@ class MemoryManager:
     def clear_retrieved_ids(self) -> None:
         """Clear tracked retrieved IDs."""
         self._retrieved_ids = []
+
+    @property
+    def retrieved_ids(self) -> list[str]:
+        """Get list of currently tracked memory IDs."""
+        return self._retrieved_ids.copy()

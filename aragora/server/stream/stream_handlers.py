@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from aragora.server.validation import safe_query_int, safe_query_float
+
 if TYPE_CHECKING:
     import aiohttp.web
 
@@ -74,7 +76,7 @@ class StreamAPIHandlersMixin:
             )
 
         try:
-            limit = int(request.query.get("limit", 10))
+            limit = safe_query_int(request.query, "limit", default=10, max_val=100)
             agents = self.elo_system.get_leaderboard(limit=limit)
             agent_data = [
                 {
@@ -112,7 +114,7 @@ class StreamAPIHandlersMixin:
             )
 
         try:
-            limit = int(request.query.get("limit", 10))
+            limit = safe_query_int(request.query, "limit", default=10, max_val=100)
             matches = self.elo_system.get_recent_matches(limit=limit)
             return web.json_response(
                 {"matches": matches, "count": len(matches)},
@@ -142,7 +144,7 @@ class StreamAPIHandlersMixin:
             )
 
         try:
-            limit = int(request.query.get("limit", 10))
+            limit = safe_query_int(request.query, "limit", default=10, max_val=100)
             insights = self.insight_store.get_recent_insights(limit=limit)
             return web.json_response(
                 {"insights": insights, "count": len(insights)},
@@ -193,7 +195,7 @@ class StreamAPIHandlersMixin:
             )
 
         try:
-            limit = int(request.query.get("limit", 10))
+            limit = safe_query_int(request.query, "limit", default=10, max_val=100)
             flips = self.flip_detector.get_recent_flips(limit=limit)
             return web.json_response(
                 {"flips": flips, "count": len(flips)},
@@ -523,8 +525,8 @@ class StreamAPIHandlersMixin:
             )
 
         try:
-            min_confidence = float(request.query.get("min_confidence", 0.3))
-            limit = int(request.query.get("limit", 10))
+            min_confidence = safe_query_float(request.query, "min_confidence", default=0.3, min_val=0.0, max_val=1.0)
+            limit = safe_query_int(request.query, "limit", default=10, max_val=100)
             traits = self.persona_manager.get_emergent_traits(min_confidence=min_confidence, limit=limit) if hasattr(self.persona_manager, 'get_emergent_traits') else []
             return web.json_response(
                 {"traits": traits, "count": len(traits)},
@@ -749,8 +751,8 @@ class StreamAPIHandlersMixin:
             # Cluster suggestions
             clusters = cluster_suggestions(
                 suggestions,
-                similarity_threshold=float(request.query.get("threshold", 0.6)),
-                max_clusters=int(request.query.get("max_clusters", 5)),
+                similarity_threshold=safe_query_float(request.query, "threshold", default=0.6, min_val=0.0, max_val=1.0),
+                max_clusters=safe_query_int(request.query, "max_clusters", default=5, min_val=1, max_val=50),
             )
 
             return web.json_response(

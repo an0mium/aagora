@@ -629,3 +629,211 @@ def validate_agent_name_with_version(agent: str) -> Tuple[bool, Optional[str]]:
         Tuple of (is_valid, error_message)
     """
     return validate_path_segment(agent, "agent name", SAFE_ID_PATTERN_WITH_DOTS)
+
+
+# =============================================================================
+# Query Parameter Parsing Functions
+# =============================================================================
+# These functions provide safe parsing of URL query parameters with bounds
+# checking and proper error handling. They work with the parse_qs format
+# (dict with list values) used by urllib.parse.
+
+def parse_int_param(
+    query: Dict[str, list],
+    key: str,
+    default: int,
+    min_val: int = 1,
+    max_val: int = 100,
+) -> int:
+    """Safely parse an integer query parameter with bounds checking.
+
+    Args:
+        query: Query dict from parse_qs (values are lists)
+        key: Parameter name
+        default: Default value if missing or invalid
+        min_val: Minimum allowed value (default 1)
+        max_val: Maximum allowed value (default 100)
+
+    Returns:
+        Parsed integer clamped to [min_val, max_val], or default on error
+
+    Example:
+        >>> query = parse_qs("limit=50&offset=10")
+        >>> limit = parse_int_param(query, "limit", default=20, max_val=100)
+        >>> offset = parse_int_param(query, "offset", default=0, min_val=0)
+    """
+    try:
+        values = query.get(key, [default])
+        if isinstance(values, list) and len(values) > 0:
+            val = int(values[0])
+        else:
+            val = int(values)
+        return max(min_val, min(val, max_val))
+    except (ValueError, IndexError, TypeError):
+        return default
+
+
+def parse_float_param(
+    query: Dict[str, list],
+    key: str,
+    default: float,
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+) -> float:
+    """Safely parse a float query parameter with bounds checking.
+
+    Args:
+        query: Query dict from parse_qs (values are lists)
+        key: Parameter name
+        default: Default value if missing or invalid
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+
+    Returns:
+        Parsed float clamped to [min_val, max_val], or default on error
+    """
+    try:
+        values = query.get(key, [default])
+        if isinstance(values, list) and len(values) > 0:
+            val = float(values[0])
+        else:
+            val = float(values)
+        return max(min_val, min(val, max_val))
+    except (ValueError, IndexError, TypeError):
+        return default
+
+
+def parse_bool_param(
+    query: Dict[str, list],
+    key: str,
+    default: bool = False,
+) -> bool:
+    """Safely parse a boolean query parameter.
+
+    Recognizes: "true", "1", "yes" as True; "false", "0", "no" as False.
+
+    Args:
+        query: Query dict from parse_qs (values are lists)
+        key: Parameter name
+        default: Default value if missing or invalid
+
+    Returns:
+        Parsed boolean or default
+    """
+    try:
+        values = query.get(key, [])
+        if not values:
+            return default
+        val = values[0].lower() if isinstance(values, list) else str(values).lower()
+        if val in ("true", "1", "yes"):
+            return True
+        if val in ("false", "0", "no"):
+            return False
+        return default
+    except (AttributeError, IndexError, TypeError):
+        return default
+
+
+def parse_string_param(
+    query: Dict[str, list],
+    key: str,
+    default: str = "",
+    max_length: int = 500,
+    allowed_values: Optional[set] = None,
+) -> str:
+    """Safely parse a string query parameter with validation.
+
+    Args:
+        query: Query dict from parse_qs (values are lists)
+        key: Parameter name
+        default: Default value if missing or invalid
+        max_length: Maximum string length (truncates if exceeded)
+        allowed_values: Optional set of allowed values (returns default if not in set)
+
+    Returns:
+        Parsed and validated string, or default
+    """
+    try:
+        values = query.get(key, [default])
+        if isinstance(values, list) and len(values) > 0:
+            val = str(values[0])[:max_length]
+        else:
+            val = str(values)[:max_length]
+
+        if allowed_values is not None and val not in allowed_values:
+            return default
+        return val
+    except (IndexError, TypeError):
+        return default
+
+
+# =============================================================================
+# Simple Query Value Parsing (for aiohttp-style query dicts)
+# =============================================================================
+# These functions work with query dicts where .get() returns a single string
+# value, as used by aiohttp's MultiDict.
+
+def safe_query_int(
+    query: Any,
+    key: str,
+    default: int,
+    min_val: int = 1,
+    max_val: int = 100,
+) -> int:
+    """Safely parse an integer from a query dict with bounds checking.
+
+    Works with both urllib.parse_qs (list values) and aiohttp MultiDict
+    (single string values).
+
+    Args:
+        query: Query dict (aiohttp MultiDict or parse_qs result)
+        key: Parameter name
+        default: Default value if missing or invalid
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+
+    Returns:
+        Parsed integer clamped to bounds, or default on error
+    """
+    try:
+        raw = query.get(key, default)
+        # Handle parse_qs list format
+        if isinstance(raw, list):
+            raw = raw[0] if raw else default
+        val = int(raw)
+        return max(min_val, min(val, max_val))
+    except (ValueError, IndexError, TypeError):
+        return default
+
+
+def safe_query_float(
+    query: Any,
+    key: str,
+    default: float,
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+) -> float:
+    """Safely parse a float from a query dict with bounds checking.
+
+    Works with both urllib.parse_qs (list values) and aiohttp MultiDict
+    (single string values).
+
+    Args:
+        query: Query dict (aiohttp MultiDict or parse_qs result)
+        key: Parameter name
+        default: Default value if missing or invalid
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+
+    Returns:
+        Parsed float clamped to bounds, or default on error
+    """
+    try:
+        raw = query.get(key, default)
+        # Handle parse_qs list format
+        if isinstance(raw, list):
+            raw = raw[0] if raw else default
+        val = float(raw)
+        return max(min_val, min(val, max_val))
+    except (ValueError, IndexError, TypeError):
+        return default
