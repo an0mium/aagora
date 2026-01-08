@@ -100,7 +100,7 @@ def list_response(
             "total": N  # if include_total
         }
     """
-    data = {item_key: items}
+    data: dict[str, Any] = {item_key: items}
     if include_total:
         data["total"] = len(items)
     if extra:

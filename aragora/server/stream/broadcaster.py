@@ -604,7 +604,7 @@ class WebSocketBroadcaster:
             Dict with counts of cleaned items per component
         """
         return {
-            "rate_limiters": self.client_manager._cleanup_stale_rate_limiters() or 0,
+            "rate_limiters": self.client_manager._cleanup_stale_rate_limiters() or 0,  # type: ignore[attr-defined, func-returns-value]
             "debate_states": self.debate_state_cache.cleanup_stale(),
             "loops": self.loop_registry.cleanup_stale(),
         }

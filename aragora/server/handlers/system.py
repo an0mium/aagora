@@ -577,10 +577,10 @@ class SystemHandler(BaseHandler):
                 custom_modes = loader.load_all()
                 for mode in custom_modes:
                     modes.append({
-                        "slug": mode.slug,
-                        "name": mode.name,
+                        "slug": getattr(mode, 'name', '').lower().replace(" ", "-"),
+                        "name": getattr(mode, 'name', ''),
                         "type": "custom",
-                        "description": mode.description,
+                        "description": getattr(mode, 'description', ''),
                     })
         except Exception as e:
             logger.debug(f"Could not load custom modes: {e}")

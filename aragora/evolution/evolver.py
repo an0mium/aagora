@@ -365,8 +365,8 @@ class PromptEvolver:
         Falls back to append strategy if LLM is unavailable.
         """
         import os
-        import requests
-        from requests.adapters import HTTPAdapter
+        import requests  # type: ignore[import-untyped]
+        from requests.adapters import HTTPAdapter  # type: ignore[import-untyped]
         from urllib3.util.retry import Retry
 
         api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")

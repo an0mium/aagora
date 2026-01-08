@@ -208,9 +208,9 @@ class InsightsHandler(BaseHandler):
 
         return evidence[:15]  # Limit to 15 evidence items
 
-    def _extract_patterns_from_content(self, content: str) -> list:
+    def _extract_patterns_from_content(self, content: str) -> list[dict[str, str | int]]:
         """Extract argumentation patterns from content."""
-        patterns = []
+        patterns: list[dict[str, str | int]] = []
 
         content_lower = content.lower()
 
