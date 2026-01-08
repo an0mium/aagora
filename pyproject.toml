@@ -143,14 +143,27 @@ module = [
     "aragora.persistence.db_config",
     "aragora.persistence.models",
     "aragora.server.validation",
+    "aragora.protocols",
+    "aragora.ranking.elo_core",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 
-# Moderate settings for server handlers
+# Moderate settings - check untyped defs but don't require annotations
 [[tool.mypy.overrides]]
-module = "aragora.server.handlers.*"
+module = [
+    "aragora.server.handlers.*",
+    "aragora.ranking.elo",
+    "aragora.ranking.relationships",
+    "aragora.agents.base",
+    "aragora.agents.registry",
+    "aragora.debate.context",
+    "aragora.debate.protocol",
+    "aragora.debate.roles",
+    "aragora.templates",
+    "aragora.exceptions",
+]
 check_untyped_defs = true
 
 # Allow untyped for complex modules (can be tightened later)
