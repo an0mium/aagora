@@ -23,6 +23,7 @@ from .base import (
     HandlerResult,
     json_response,
     error_response,
+    handle_errors,
     require_storage,
     get_int_param,
     ttl_cache,
@@ -1017,6 +1018,13 @@ class DebatesHandler(BaseHandler):
             if debate_id:
                 return self._fork_debate(handler, debate_id)
 
+        if path.endswith("/verify"):
+            debate_id, err = self._extract_debate_id(path)
+            if err:
+                return error_response(err, 400)
+            if debate_id:
+                return self._verify_outcome(handler, debate_id)
+
         return None
 
     @require_storage
@@ -1127,3 +1135,51 @@ class DebatesHandler(BaseHandler):
 
         except Exception as e:
             return error_response(f"Failed to create fork: {e}", 500)
+
+    @handle_errors("verify debate outcome")
+    def _verify_outcome(self, handler, debate_id: str) -> HandlerResult:
+        """Record verification of whether a debate's winning position was correct.
+
+        POST body:
+            correct: bool - whether the winning position was actually correct
+            source: str - verification source (default: "manual")
+
+        Completes the truth-grounding feedback loop by linking positions to outcomes.
+        """
+        body = self.read_json_body(handler)
+        if body is None:
+            return error_response("Invalid or missing JSON body", 400)
+
+        correct = body.get('correct', False)
+        source = body.get('source', 'manual')
+
+        # Get position tracker from context
+        position_tracker = self.ctx.get("position_tracker")
+
+        if position_tracker:
+            position_tracker.record_verification(debate_id, correct, source)
+            return json_response({
+                "status": "verified",
+                "debate_id": debate_id,
+                "correct": correct,
+                "source": source,
+            })
+
+        # Try to create a temporary tracker
+        try:
+            from aragora.agents.truth_grounding import PositionTracker
+            nomic_dir = self.get_nomic_dir()
+            if nomic_dir:
+                db_path = nomic_dir / "aragora_positions.db"
+                if db_path.exists():
+                    tracker = PositionTracker(db_path=str(db_path))
+                    tracker.record_verification(debate_id, correct, source)
+                    return json_response({
+                        "status": "verified",
+                        "debate_id": debate_id,
+                        "correct": correct,
+                        "source": source,
+                    })
+            return error_response("Position tracking not configured", 503)
+        except ImportError:
+            return error_response("PositionTracker module not available", 503)
