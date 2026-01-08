@@ -642,7 +642,7 @@ class CritiqueStore:
                 FROM patterns
                 WHERE success_count >= ?
             """
-            params = [decay_halflife_days, min_success]
+            params: list[float | int | str] = [decay_halflife_days, min_success]
 
             if issue_type:
                 base_sql += " AND issue_type = ?"

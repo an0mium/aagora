@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 import traceback
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
@@ -228,7 +228,7 @@ class LogContext:
 
     def __init__(self, **fields: Any):
         self._fields = fields
-        self._token = None
+        self._token: Optional[Token[Dict[str, Any]]] = None
 
     def __enter__(self) -> "LogContext":
         # Merge with existing context

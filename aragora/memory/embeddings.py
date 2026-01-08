@@ -170,7 +170,7 @@ class EmbeddingProvider:
         # Process results, replacing exceptions with zero vectors
         embeddings = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.warning(f"embed_batch: failed to embed text {i}: {result}")
                 # Return zero vector to maintain alignment
                 embeddings.append([0.0] * self.dimension)

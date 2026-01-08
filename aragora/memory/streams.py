@@ -60,7 +60,7 @@ def get_embedding_provider() -> Optional["EmbeddingProvider"]:
 
         registry = ServiceRegistry.get()
         if registry.has(EmbeddingProviderService):
-            return registry.resolve(EmbeddingProviderService)
+            return registry.resolve(EmbeddingProviderService)  # type: ignore[return-value]
     except ImportError:
         pass
 
