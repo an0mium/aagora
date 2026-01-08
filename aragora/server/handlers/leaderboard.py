@@ -29,6 +29,7 @@ from .base import (
     error_response,
     get_int_param,
     get_string_param,
+    get_agent_name,
     ttl_cache,
     validate_path_segment,
     SAFE_ID_PATTERN,
@@ -148,7 +149,7 @@ class LeaderboardViewHandler(BaseHandler):
                 detector = FlipDetector(str(get_db_path(DatabaseType.POSITIONS, nomic_dir)))
                 agent_names = []
                 for agent in rankings:
-                    name = agent.get("name") if isinstance(agent, dict) else getattr(agent, "name", None)
+                    name = get_agent_name(agent)
                     if name:
                         agent_names.append(name)
 

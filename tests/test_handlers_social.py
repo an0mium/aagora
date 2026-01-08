@@ -208,21 +208,43 @@ class TestThreadSafety:
 
 
 class TestSafeErrorMessage:
-    """Tests for safe error message generation."""
+    """Tests for safe error message generation (using centralized error_utils)."""
 
     def test_default_hides_details(self):
-        """Without debug mode, error details are hidden."""
-        with patch.dict('os.environ', {}, clear=True):
-            msg = _safe_error_message(ValueError("secret data"), "Operation")
-            assert "secret data" not in msg
-            assert "Operation failed: ValueError" in msg
+        """Error details are hidden from user-facing messages."""
+        msg = _safe_error_message(ValueError("secret data"), "Operation")
+        # Centralized function returns sanitized user-friendly messages
+        assert "secret data" not in msg
+        # The message should be a generic safe error (not exposing internals)
+        assert isinstance(msg, str)
+        assert len(msg) > 0
+        # ValueError maps to "Invalid data format"
+        assert msg == "Invalid data format"
 
-    def test_debug_mode_shows_details(self):
-        """With debug mode, error details are shown."""
-        with patch.dict('os.environ', {'ARAGORA_DEBUG': '1'}):
-            msg = _safe_error_message(ValueError("details"), "Operation")
-            assert "details" in msg
-            assert "ValueError" in msg
+    def test_returns_safe_message(self):
+        """Returns a user-safe error message."""
+        msg = _safe_error_message(Exception("internal error"), "Operation")
+        # Should not expose the raw exception message
+        assert "internal error" not in msg
+        # Generic Exception maps to "An error occurred"
+        assert msg == "An error occurred"
+
+    def test_maps_file_not_found(self):
+        """FileNotFoundError maps to 'Resource not found'."""
+        msg = _safe_error_message(FileNotFoundError("sensitive/path.txt"), "Operation")
+        assert "sensitive" not in msg
+        assert msg == "Resource not found"
+
+    def test_maps_timeout_error(self):
+        """TimeoutError maps to 'Operation timed out'."""
+        msg = _safe_error_message(TimeoutError("connection details"), "Operation")
+        assert msg == "Operation timed out"
+
+    def test_maps_permission_error(self):
+        """PermissionError maps to 'Access denied'."""
+        msg = _safe_error_message(PermissionError("/etc/passwd"), "Operation")
+        assert "/etc" not in msg
+        assert msg == "Access denied"
 
 
 # =============================================================================

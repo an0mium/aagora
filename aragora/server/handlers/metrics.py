@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Optional
 
 from aragora.config import DB_ELO_PATH, DB_INSIGHTS_PATH
-from .base import BaseHandler, HandlerResult, json_response, error_response, _cache, get_cache_stats
+from .base import BaseHandler, HandlerResult, json_response, error_response
+from .cache import _cache, get_cache_stats
 from ..prometheus import (
     get_metrics_output,
     is_prometheus_available,

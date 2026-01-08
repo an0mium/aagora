@@ -755,165 +755,20 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):
             if self._try_modular_handler(path, {}):
                 return
 
-        if path == '/api/documents/upload':
-            self._upload_document()
-        elif path == '/api/debate':
+        # NOTE: /api/documents/upload is now handled by DocumentHandler
+        if path == '/api/debate':
             self._start_debate()
         # NOTE: Broadcast, publishing, laboratory, routing, verification, probes,
         # plugins, insights routes are NOW HANDLED BY modular handlers (BroadcastHandler,
         # LaboratoryHandler, RoutingHandler, VerificationHandler, ProbesHandler,
         # PluginsHandler, AuditingHandler, InsightsHandler)
-        elif path.startswith('/api/debates/') and path.endswith('/verify'):
-            debate_id = self._extract_path_segment(path, 3, "debate_id")
-            if debate_id:
-                self._verify_debate_outcome(debate_id)
+        # NOTE: /api/debates/{id}/verify is now handled by DebatesHandler
         elif path == '/api/auth/revoke':
             self._revoke_token()
         else:
             self.send_error(404, f"Unknown POST endpoint: {path}")
 
-    def _upload_document(self) -> None:
-        """Handle document upload. Rate limited by auth and IP-based limits."""
-        # Rate limit uploads (auth-based when enabled)
-        if not self._check_rate_limit():
-            return
-
-        # IP-based upload rate limiting (always active, prevents DoS)
-        if not self._check_upload_rate_limit():
-            return
-
-        if not self.document_store:
-            self._send_json({"error": "Document storage not configured"}, status=500)
-            return
-
-        # Get content length with validation
-        try:
-            content_length = int(self.headers.get('Content-Length', '0'))
-        except ValueError:
-            self._send_json({"error": "Invalid Content-Length header"}, status=400)
-            return
-
-        if content_length == 0:
-            self._send_json({"error": "No content provided"}, status=400)
-            return
-
-        # Check max size (10MB)
-        max_size = 10 * 1024 * 1024
-        if content_length > max_size:
-            self._send_json({"error": "File too large. Max size: 10MB"}, status=413)
-            return
-
-        content_type = self.headers.get('Content-Type', '')
-
-        # Handle multipart form data
-        if 'multipart/form-data' in content_type:
-            # Parse boundary
-            boundary = None
-            for part in content_type.split(';'):
-                if 'boundary=' in part:
-                    # Use maxsplit=1 to handle boundaries containing '='
-                    parts = part.split('=', 1)
-                    if len(parts) == 2 and parts[1].strip():
-                        boundary = parts[1].strip()
-                    break
-
-            if not boundary:
-                self._send_json({"error": "No boundary in multipart data"}, status=400)
-                return
-
-            # Read body
-            body = self.rfile.read(content_length)
-
-            # Parse multipart - simple implementation with DoS protection
-            boundary_bytes = f'--{boundary}'.encode()
-            parts = body.split(boundary_bytes)
-
-            # Enforce MAX_MULTIPART_PARTS to prevent DoS
-            if len(parts) > MAX_MULTIPART_PARTS:
-                self._send_json({"error": f"Too many multipart parts. Max: {MAX_MULTIPART_PARTS}"}, status=400)
-                return
-
-            file_content = None
-            filename = None
-
-            for part in parts:
-                if b'Content-Disposition' not in part:
-                    continue
-
-                # Extract filename
-                try:
-                    header_end = part.index(b'\r\n\r\n')
-                    headers_raw = part[:header_end].decode('utf-8', errors='ignore')
-                    file_data = part[header_end + 4:]
-
-                    # Remove trailing boundary markers
-                    if file_data.endswith(b'--\r\n'):
-                        file_data = file_data[:-4]
-                    elif file_data.endswith(b'\r\n'):
-                        file_data = file_data[:-2]
-
-                    # Extract filename from headers with path traversal protection
-                    if 'filename="' in headers_raw:
-                        start = headers_raw.index('filename="') + 10
-                        end = headers_raw.index('"', start)
-                        raw_filename = headers_raw[start:end]
-                        # Sanitize: extract basename only, reject path traversal attempts
-                        import os
-                        filename = os.path.basename(raw_filename)
-                        # Reject null bytes, control chars, and suspicious patterns
-                        if not filename or '\x00' in filename or '..' in filename:
-                            continue
-                        # Reject filenames that are just dots or whitespace
-                        if filename.strip('.').strip() == '':
-                            continue
-                        file_content = file_data
-                        break
-                except (ValueError, IndexError):
-                    continue
-
-            if not file_content or not filename:
-                self._send_json({"error": "No file found in upload"}, status=400)
-                return
-
-        else:
-            # Raw file upload - get filename from header with path traversal protection
-            import os
-            raw_filename = self.headers.get('X-Filename', 'document.txt')
-            filename = os.path.basename(raw_filename)
-            # Reject null bytes, control chars, and suspicious patterns
-            if not filename or '\x00' in filename or '..' in filename:
-                self._send_json({"error": "Invalid filename"}, status=400)
-                return
-            file_content = self.rfile.read(content_length)
-
-        # Validate file extension
-        ext = '.' + filename.split('.')[-1].lower() if '.' in filename else ''
-        if ext not in SUPPORTED_EXTENSIONS:
-            self._send_json({
-                "error": f"Unsupported file type: {ext}",
-                "supported": list(SUPPORTED_EXTENSIONS)
-            }, status=400)
-            return
-
-        # Parse document
-        try:
-            doc = parse_document(file_content, filename)
-            doc_id = self.document_store.add(doc)
-
-            self._send_json({
-                "success": True,
-                "document": {
-                    "id": doc_id,
-                    "filename": doc.filename,
-                    "word_count": doc.word_count,
-                    "page_count": doc.page_count,
-                    "preview": doc.preview,
-                }
-            })
-        except ImportError as e:
-            self._send_json({"error": _safe_error_message(e, "document_import")}, status=400)
-        except Exception as e:
-            self._send_json({"error": _safe_error_message(e, "document_parsing")}, status=500)
+    # NOTE: _upload_document moved to handlers/documents.py (DocumentHandler)
 
     def _start_debate(self) -> None:
         """Start an ad-hoc debate with specified question.
@@ -977,129 +832,17 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):
         # Send response
         self._send_json(response.to_dict(), status=response.status_code)
 
-    def _list_documents(self) -> None:
-        """List all uploaded documents."""
-        if not self.document_store:
-            self._send_json({"documents": [], "error": "Document storage not configured"})
-            return
-
-        docs = self.document_store.list_all()
-        self._send_json({"documents": docs, "count": len(docs)})
-
+    # NOTE: _list_documents moved to handlers/documents.py (DocumentHandler)
     # NOTE: Insights methods moved to handlers/insights.py (InsightsHandler)
     # NOTE: _run_capability_probe moved to handlers/probes.py (ProbesHandler)
     # NOTE: Deep audit methods moved to handlers/auditing.py (AuditingHandler)
     # NOTE: Red team methods moved to handlers/auditing.py (AuditingHandler)
-
-    def _verify_debate_outcome(self, debate_id: str) -> None:
-        """Record verification of whether a debate's winning position was correct.
-
-        POST body:
-            correct: Boolean - whether the winning position was actually correct
-            source: String - verification source (default: "manual")
-
-        Completes the truth-grounding feedback loop by linking positions to outcomes.
-        """
-        if not self._check_rate_limit():
-            return
-
-        content_length = self._validate_content_length()
-        if content_length is None:
-            return  # Error already sent
-
-        try:
-            body = self.rfile.read(content_length)
-            data = json.loads(body) if body else {}
-
-            correct = data.get('correct', False)
-            source = data.get('source', 'manual')
-
-            # Use position_tracker if available
-            if hasattr(self, 'position_tracker') and self.position_tracker:
-                self.position_tracker.record_verification(debate_id, correct, source)
-                self._send_json({
-                    "status": "verified",
-                    "debate_id": debate_id,
-                    "correct": correct,
-                    "source": source,
-                })
-            else:
-                # Try to create a temporary tracker
-                try:
-                    from aragora.agents.truth_grounding import PositionTracker
-                    db_path = self.nomic_dir / "aragora_positions.db" if self.nomic_dir else None
-                    if db_path and db_path.exists():
-                        tracker = PositionTracker(db_path=str(db_path))
-                        tracker.record_verification(debate_id, correct, source)
-                        self._send_json({
-                            "status": "verified",
-                            "debate_id": debate_id,
-                            "correct": correct,
-                            "source": source,
-                        })
-                    else:
-                        self._send_json({"error": "Position tracking not configured"}, status=503)
-                except ImportError:
-                    self._send_json({"error": "PositionTracker module not available"}, status=503)
-
-        except json.JSONDecodeError:
-            self._send_json({"error": "Invalid JSON body"}, status=400)
-        except Exception as e:
-            self._send_json({"error": _safe_error_message(e, "verify_debate")}, status=500)
-
-    # Tournament methods moved to TournamentHandler
-    # Best team combinations moved to RoutingHandler
-    # Evolution history moved to EvolutionHandler
-
-    def _serve_audio(self, debate_id: str) -> None:
-        """Serve audio file for a debate with security checks.
-
-        GET /audio/{debate_id}.mp3
-        """
-        if not self.audio_store:
-            self.send_error(404, "Audio storage not configured")
-            return
-
-        # Validate debate_id format (prevent path traversal)
-        if not debate_id or '..' in debate_id or '/' in debate_id or '\\' in debate_id:
-            self.send_error(400, "Invalid debate ID")
-            return
-
-        # Get audio file path
-        audio_path = self.audio_store.get_path(debate_id)
-        if not audio_path or not audio_path.exists():
-            self.send_error(404, "Audio not found")
-            return
-
-        # Security: Ensure file is within audio storage directory
-        try:
-            audio_path_resolved = audio_path.resolve()
-            storage_dir_resolved = self.audio_store.storage_dir.resolve()
-            if not str(audio_path_resolved).startswith(str(storage_dir_resolved)):
-                logger.warning(f"Audio path traversal attempt: {debate_id}")
-                self.send_error(403, "Access denied")
-                return
-        except (ValueError, OSError):
-            self.send_error(400, "Invalid path")
-            return
-
-        try:
-            content = audio_path.read_bytes()
-            self.send_response(200)
-            self.send_header('Content-Type', 'audio/mpeg')
-            self.send_header('Content-Length', len(content))
-            self.send_header('Accept-Ranges', 'bytes')
-            self.send_header('Cache-Control', 'public, max-age=86400')  # Cache for 1 day
-            self._add_cors_headers()
-            self.end_headers()
-            self.wfile.write(content)
-        except Exception as e:
-            logger.error(f"Failed to serve audio {debate_id}: {e}")
-            self.send_error(500, "Failed to read audio file")
-
+    # NOTE: _verify_debate_outcome moved to handlers/debates.py (DebatesHandler)
+    # NOTE: Tournament methods moved to TournamentHandler
+    # NOTE: Best team combinations moved to RoutingHandler
+    # NOTE: Evolution history moved to EvolutionHandler
+    # NOTE: _serve_audio moved to handlers/audio.py (AudioHandler)
     # NOTE: Podcast and social publishing methods moved to handlers/broadcast.py (BroadcastHandler)
-    # _get_podcast_feed, _get_podcast_episodes, _publish_to_twitter
-    # _get_youtube_auth_url, _handle_youtube_callback, _get_youtube_status, _publish_to_youtube
 
     def _serve_file(self, filename: str) -> None:
         """Serve a static file with path traversal protection."""

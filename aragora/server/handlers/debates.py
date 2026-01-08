@@ -427,245 +427,26 @@ class DebatesHandler(BaseHandler):
 
     def _format_csv(self, debate: dict, table: str) -> HandlerResult:
         """Format debate as CSV for the specified table type."""
-        import csv
-        import io
+        from aragora.server.debate_export import format_debate_csv
 
-        valid_tables = {"messages", "critiques", "votes", "summary"}
-        if table not in valid_tables:
-            table = "summary"
-
-        output = io.StringIO()
-        writer = csv.writer(output)
-
-        if table == "messages":
-            # Export messages timeline
-            writer.writerow(["round", "agent", "role", "content", "timestamp"])
-            for msg in debate.get("messages", []):
-                writer.writerow([
-                    msg.get("round", ""),
-                    msg.get("agent", ""),
-                    msg.get("role", ""),
-                    msg.get("content", "")[:1000],  # Truncate for CSV
-                    msg.get("timestamp", ""),
-                ])
-
-        elif table == "critiques":
-            # Export critiques
-            writer.writerow(["round", "critic", "target", "severity", "summary", "timestamp"])
-            for critique in debate.get("critiques", []):
-                writer.writerow([
-                    critique.get("round", ""),
-                    critique.get("critic", ""),
-                    critique.get("target", ""),
-                    critique.get("severity", ""),
-                    critique.get("summary", "")[:500],
-                    critique.get("timestamp", ""),
-                ])
-
-        elif table == "votes":
-            # Export votes
-            writer.writerow(["round", "voter", "choice", "reason", "timestamp"])
-            for vote in debate.get("votes", []):
-                writer.writerow([
-                    vote.get("round", ""),
-                    vote.get("voter", ""),
-                    vote.get("choice", ""),
-                    vote.get("reason", "")[:500],
-                    vote.get("timestamp", ""),
-                ])
-
-        else:  # summary
-            # Export summary statistics
-            writer.writerow(["field", "value"])
-            writer.writerow(["debate_id", debate.get("slug", debate.get("id", ""))])
-            writer.writerow(["topic", debate.get("topic", "")])
-            writer.writerow(["started_at", debate.get("started_at", "")])
-            writer.writerow(["ended_at", debate.get("ended_at", "")])
-            writer.writerow(["rounds_used", debate.get("rounds_used", 0)])
-            writer.writerow(["consensus_reached", debate.get("consensus_reached", False)])
-            writer.writerow(["final_answer", debate.get("final_answer", "")[:1000]])
-            writer.writerow(["message_count", len(debate.get("messages", []))])
-            writer.writerow(["critique_count", len(debate.get("critiques", []))])
-            writer.writerow(["vote_count", len(debate.get("votes", []))])
-
-        csv_content = output.getvalue()
+        result = format_debate_csv(debate, table)
         return HandlerResult(
             status_code=200,
-            content_type="text/csv; charset=utf-8",
-            body=csv_content.encode("utf-8"),
-            headers={"Content-Disposition": f'attachment; filename="debate-{debate.get("slug", "export")}-{table}.csv"'},
+            content_type=result.content_type,
+            body=result.content,
+            headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
         )
 
     def _format_html(self, debate: dict) -> HandlerResult:
         """Format debate as standalone HTML page."""
-        import html
+        from aragora.server.debate_export import format_debate_html
 
-        debate_id = debate.get("slug", debate.get("id", "export"))
-        topic = html.escape(debate.get("topic", "Untitled Debate"))
-        messages = debate.get("messages", [])
-        critiques = debate.get("critiques", [])
-        consensus = debate.get("consensus_reached", False)
-        final_answer = html.escape(debate.get("final_answer", "")[:2000])
-
-        # Build message timeline HTML
-        messages_html = ""
-        for msg in messages[:50]:  # Limit to 50 messages for performance
-            agent = html.escape(msg.get("agent", "unknown"))
-            content = html.escape(msg.get("content", "")[:500])
-            role = msg.get("role", "speaker")
-            round_num = msg.get("round", 0)
-            messages_html += f'''
-            <div class="message {role}">
-                <div class="message-header">
-                    <span class="agent">{agent}</span>
-                    <span class="round">Round {round_num}</span>
-                </div>
-                <div class="message-content">{content}</div>
-            </div>'''
-
-        html_content = f'''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aragora Debate: {topic}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: #1a1a2e;
-            color: #eee;
-        }}
-        .container {{
-            max-width: 900px;
-            margin: 0 auto;
-        }}
-        h1 {{
-            color: #4CAF50;
-            border-bottom: 2px solid #4CAF50;
-            padding-bottom: 10px;
-        }}
-        .stats {{
-            display: flex;
-            gap: 20px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }}
-        .stat {{
-            background: #16213e;
-            padding: 15px 25px;
-            border-radius: 8px;
-            border: 1px solid #0f3460;
-        }}
-        .stat-value {{
-            font-size: 24px;
-            font-weight: bold;
-            color: #4CAF50;
-        }}
-        .stat-label {{
-            font-size: 12px;
-            color: #888;
-            text-transform: uppercase;
-        }}
-        .timeline {{
-            margin-top: 20px;
-        }}
-        .message {{
-            background: #16213e;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 8px;
-            border-left: 4px solid #4CAF50;
-        }}
-        .message.critic {{
-            border-left-color: #FF5722;
-        }}
-        .message.judge {{
-            border-left-color: #2196F3;
-        }}
-        .message-header {{
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-        }}
-        .agent {{
-            font-weight: bold;
-            color: #4CAF50;
-        }}
-        .round {{
-            color: #888;
-            font-size: 12px;
-        }}
-        .message-content {{
-            line-height: 1.5;
-            white-space: pre-wrap;
-        }}
-        .consensus {{
-            background: #1b4d3e;
-            border: 2px solid #4CAF50;
-            padding: 20px;
-            margin-top: 20px;
-            border-radius: 8px;
-        }}
-        .consensus h2 {{
-            color: #4CAF50;
-            margin-top: 0;
-        }}
-        .no-consensus {{
-            background: #4d1b1b;
-            border-color: #FF5722;
-        }}
-        .no-consensus h2 {{
-            color: #FF5722;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🏛️ {topic}</h1>
-
-        <div class="stats">
-            <div class="stat">
-                <div class="stat-value">{len(messages)}</div>
-                <div class="stat-label">Messages</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">{len(critiques)}</div>
-                <div class="stat-label">Critiques</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">{debate.get("rounds_used", 0)}</div>
-                <div class="stat-label">Rounds</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">{"✓" if consensus else "✗"}</div>
-                <div class="stat-label">Consensus</div>
-            </div>
-        </div>
-
-        <div class="timeline">
-            <h2>Debate Timeline</h2>
-            {messages_html if messages_html else "<p>No messages recorded.</p>"}
-        </div>
-
-        <div class="consensus {"" if consensus else "no-consensus"}">
-            <h2>{"Final Consensus" if consensus else "No Consensus Reached"}</h2>
-            <p>{final_answer if final_answer else "No final answer recorded."}</p>
-        </div>
-
-        <p style="color: #666; text-align: center; margin-top: 40px;">
-            Exported from Aragora • {debate.get("ended_at", "")[:10] if debate.get("ended_at") else "In progress"}
-        </p>
-    </div>
-</body>
-</html>'''
-
+        result = format_debate_html(debate)
         return HandlerResult(
             status_code=200,
-            content_type="text/html; charset=utf-8",
-            body=html_content.encode("utf-8"),
-            headers={"Content-Disposition": f'attachment; filename="debate-{debate_id}.html"'},
+            content_type=result.content_type,
+            body=result.content,
+            headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
         )
 
     @require_storage

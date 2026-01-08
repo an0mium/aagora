@@ -42,6 +42,7 @@ from .base import (
     error_response,
     get_int_param,
     get_string_param,
+    get_agent_name,
     ttl_cache,
     handle_errors,
     validate_path_segment,
@@ -274,7 +275,7 @@ class AgentsHandler(BaseHandler):
                     # Extract all agent names first
                     agent_names = []
                     for agent in rankings:
-                        name = agent.get("name") if isinstance(agent, dict) else getattr(agent, "name", None)
+                        name = get_agent_name(agent)
                         if name:
                             agent_names.append(name)
 
@@ -303,7 +304,7 @@ class AgentsHandler(BaseHandler):
                 # FlipDetector not available - set degraded flag so clients know
                 logger.debug("FlipDetector import failed - consistency scores unavailable")
                 for agent in rankings:
-                    name = agent.get("name") if isinstance(agent, dict) else getattr(agent, "name", None)
+                    name = get_agent_name(agent)
                     if name:
                         consistency_map[name] = {
                             "consistency": None,
@@ -315,12 +316,11 @@ class AgentsHandler(BaseHandler):
             # Enhance rankings with consistency data
             enhanced_rankings = []
             for agent in rankings:
+                agent_name = get_agent_name(agent) or "unknown"
                 if isinstance(agent, dict):
                     agent_dict = agent.copy()
-                    agent_name = agent.get("agent_name") or agent.get("name")
                 else:
-                    # AgentRating uses agent_name, not name
-                    agent_name = getattr(agent, "agent_name", None) or getattr(agent, "name", "unknown")
+                    # AgentRating object - convert to dict
                     agent_dict = {
                         "name": agent_name,
                         "agent_name": agent_name,

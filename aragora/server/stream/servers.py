@@ -117,6 +117,19 @@ TRUSTED_PROXIES = frozenset(
     p.strip() for p in os.getenv('ARAGORA_TRUSTED_PROXIES', '127.0.0.1,::1,localhost').split(',')
 )
 
+# =============================================================================
+# WebSocket Security Configuration
+# =============================================================================
+
+# Connection rate limiting per IP
+WS_CONNECTIONS_PER_IP_PER_MINUTE = int(os.getenv('ARAGORA_WS_CONN_RATE', '30'))
+
+# Token revalidation interval for long-lived connections (5 minutes)
+WS_TOKEN_REVALIDATION_INTERVAL = 300.0
+
+# Maximum connections per IP (concurrent)
+WS_MAX_CONNECTIONS_PER_IP = int(os.getenv('ARAGORA_WS_MAX_PER_IP', '10'))
+
 
 # =============================================================================
 # NOTE: Core streaming classes are now in submodules for better organization:
@@ -190,6 +203,14 @@ class DebateStreamServer:
         self._client_ids: OrderedDict[int, str] = OrderedDict()  # websocket id -> secure client_id
         self._MAX_CLIENT_IDS = 10000  # Max tracked clients
 
+        # WebSocket connection rate limiting per IP
+        self._ws_conn_rate: dict[str, list[float]] = {}  # ip -> list of connection timestamps
+        self._ws_conn_rate_lock = threading.Lock()
+        self._ws_conn_per_ip: dict[str, int] = {}  # ip -> current connection count
+
+        # Token revalidation tracking for long-lived connections
+        self._ws_token_validated: dict[int, float] = {}  # ws_id -> last validation time
+
         # Subscribe to emitter to maintain debate states
         self._emitter.subscribe(self._update_debate_state)
 
@@ -262,6 +283,115 @@ class DebateStreamServer:
             return False
 
         return auth_config.validate_token(token, loop_id)
+
+    def _extract_ws_ip(self, websocket) -> str:
+        """Extract client IP address from WebSocket connection.
+
+        Handles X-Forwarded-For header from trusted proxies.
+
+        Args:
+            websocket: The WebSocket connection object
+
+        Returns:
+            Client IP address string
+        """
+        try:
+            # Get direct connection IP
+            if hasattr(websocket, 'remote_address'):
+                direct_ip = websocket.remote_address[0] if websocket.remote_address else "unknown"
+            else:
+                direct_ip = "unknown"
+
+            # Check X-Forwarded-For if from trusted proxy
+            if direct_ip in TRUSTED_PROXIES:
+                headers = None
+                if hasattr(websocket, 'request') and hasattr(websocket.request, 'headers'):
+                    headers = websocket.request.headers
+                elif hasattr(websocket, 'request_headers'):
+                    headers = websocket.request_headers
+
+                if headers:
+                    xff = headers.get("X-Forwarded-For", "")
+                    if xff:
+                        # Take first IP (original client)
+                        return xff.split(",")[0].strip()
+
+            return direct_ip
+        except Exception:
+            return "unknown"
+
+    def _check_ws_connection_rate(self, ip: str) -> tuple[bool, str]:
+        """Check if IP is within WebSocket connection rate limit.
+
+        Args:
+            ip: Client IP address
+
+        Returns:
+            Tuple of (allowed: bool, error_message: str)
+        """
+        if ip == "unknown":
+            return True, ""  # Can't rate limit unknown IPs
+
+        now = time.time()
+        window_start = now - 60.0  # 1 minute window
+
+        with self._ws_conn_rate_lock:
+            # Clean old timestamps
+            if ip in self._ws_conn_rate:
+                self._ws_conn_rate[ip] = [
+                    ts for ts in self._ws_conn_rate[ip] if ts > window_start
+                ]
+            else:
+                self._ws_conn_rate[ip] = []
+
+            # Check rate
+            if len(self._ws_conn_rate[ip]) >= WS_CONNECTIONS_PER_IP_PER_MINUTE:
+                return False, f"Connection rate limit exceeded ({WS_CONNECTIONS_PER_IP_PER_MINUTE}/min)"
+
+            # Check concurrent connections
+            current_count = self._ws_conn_per_ip.get(ip, 0)
+            if current_count >= WS_MAX_CONNECTIONS_PER_IP:
+                return False, f"Max concurrent connections exceeded ({WS_MAX_CONNECTIONS_PER_IP})"
+
+            # Record connection
+            self._ws_conn_rate[ip].append(now)
+            self._ws_conn_per_ip[ip] = current_count + 1
+
+            return True, ""
+
+    def _release_ws_connection(self, ip: str) -> None:
+        """Release a WebSocket connection slot for an IP.
+
+        Args:
+            ip: Client IP address
+        """
+        if ip == "unknown":
+            return
+
+        with self._ws_conn_rate_lock:
+            current = self._ws_conn_per_ip.get(ip, 0)
+            if current > 0:
+                self._ws_conn_per_ip[ip] = current - 1
+
+    def _should_revalidate_token(self, ws_id: int) -> bool:
+        """Check if token should be revalidated for a connection.
+
+        Args:
+            ws_id: WebSocket connection ID
+
+        Returns:
+            True if token needs revalidation
+        """
+        last_validated = self._ws_token_validated.get(ws_id, 0)
+        return (time.time() - last_validated) > WS_TOKEN_REVALIDATION_INTERVAL
+
+    def _mark_token_validated(self, ws_id: int) -> None:
+        """Mark token as validated for a connection.
+
+        Args:
+            ws_id: WebSocket connection ID
+        """
+        self._ws_token_validated[ws_id] = time.time()
 
     def _cleanup_stale_entries(self) -> None:
         """Remove stale entries from all tracking dicts."""
@@ -562,10 +692,21 @@ class DebateStreamServer:
 
     async def handler(self, websocket) -> None:
         """Handle a WebSocket connection with origin validation."""
+        # Extract client IP for rate limiting
+        client_ip = self._extract_ws_ip(websocket)
+
+        # Check connection rate limit before accepting
+        rate_allowed, rate_error = self._check_ws_connection_rate(client_ip)
+        if not rate_allowed:
+            logger.warning(f"[ws] Connection rejected for {client_ip}: {rate_error}")
+            await websocket.close(4029, rate_error)
+            return
+
         # Validate origin for security
         origin = self._extract_ws_origin(websocket)
         if origin and origin not in WS_ALLOWED_ORIGINS:
             # Reject connection from unauthorized origin
+            self._release_ws_connection(client_ip)
             await websocket.close(4003, "Origin not allowed")
             return
 
@@ -585,8 +726,13 @@ class DebateStreamServer:
         self._client_ids[ws_id] = client_id
 
         self.clients.add(websocket)
+
+        # Mark initial token validation time
+        if is_authenticated:
+            self._mark_token_validated(ws_id)
+
         logger.info(
-            f"[ws] Client {client_id[:8]}... connected "
+            f"[ws] Client {client_id[:8]}... connected from {client_ip} "
             f"(authenticated={is_authenticated}, total_clients={len(self.clients)})"
         )
         try:
@@ -666,6 +812,18 @@ class DebateStreamServer:
                             }))
                             continue
 
+                        # Periodic token revalidation for long-lived connections
+                        if is_authenticated and ws_token and self._should_revalidate_token(ws_id):
+                            if not auth_config.validate_token(ws_token):
+                                is_authenticated = False
+                                logger.warning(f"[ws] Token invalidated for client {client_id[:8]}...")
+                                await websocket.send(json.dumps({
+                                    "type": "auth_revoked",
+                                    "data": {"message": "Token has been revoked or expired", "code": 401}
+                                }))
+                                continue
+                            self._mark_token_validated(ws_id)
+
                         stored_client_id = self._client_ids.get(ws_id, secrets.token_urlsafe(16))
                         loop_id = data.get("loop_id", "")
 
@@ -734,7 +892,7 @@ class DebateStreamServer:
         finally:
             self.clients.discard(websocket)
             logger.info(
-                f"[ws] Client {client_id[:8]}... disconnected "
+                f"[ws] Client {client_id[:8]}... disconnected from {client_ip} "
                 f"(remaining_clients={len(self.clients)})"
             )
             # Clean up secure client ID mapping and rate limiters
@@ -743,6 +901,12 @@ class DebateStreamServer:
                 with self._rate_limiters_lock:
                     self._rate_limiters.pop(stored_client_id, None)
                     self._rate_limiter_last_access.pop(stored_client_id, None)
+
+            # Release connection slot for this IP
+            self._release_ws_connection(client_ip)
+
+            # Clean up token validation tracker
+            self._ws_token_validated.pop(ws_id, None)
 
     async def start(self) -> None:
         """Start the WebSocket server."""

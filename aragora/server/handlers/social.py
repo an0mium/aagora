@@ -21,8 +21,10 @@ from .base import (
     HandlerResult,
     json_response,
     error_response,
+    get_host_header,
     SAFE_SLUG_PATTERN,
 )
+from aragora.server.error_utils import safe_error_message as _safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +61,6 @@ def _validate_oauth_state(state: str) -> bool:
             expiry = _oauth_states.pop(state)
             return time.time() < expiry
         return False
-
-
-def _safe_error_message(e: Exception, context: str) -> str:
-    """Generate safe error message without exposing internals."""
-    error_type = type(e).__name__
-    if os.environ.get("ARAGORA_DEBUG"):
-        return f"{context}: {error_type}: {str(e)}"
-    return f"{context} failed: {error_type}"
 
 
 def _run_async(coro):
@@ -140,7 +134,7 @@ class SocialMediaHandler(BaseHandler):
             }, status=400)
 
         # Validate Host header against whitelist (prevent open redirect)
-        host = handler.headers.get('Host', 'localhost:8080') if handler else 'localhost:8080'
+        host = get_host_header(handler)
         if host not in ALLOWED_OAUTH_HOSTS:
             logger.warning(f"OAuth auth request with untrusted host: {host}")
             return error_response("Untrusted host for OAuth redirect", status=400)
@@ -177,7 +171,7 @@ class SocialMediaHandler(BaseHandler):
             return error_response("YouTube connector not initialized", status=500)
 
         # Validate Host header against whitelist (prevent open redirect)
-        host = handler.headers.get('Host', 'localhost:8080') if handler else 'localhost:8080'
+        host = get_host_header(handler)
         if host not in ALLOWED_OAUTH_HOSTS:
             logger.warning(f"OAuth callback with untrusted host: {host}")
             return error_response("Untrusted host for OAuth redirect", status=400)
@@ -254,7 +248,7 @@ class SocialMediaHandler(BaseHandler):
         include_audio = options.get("include_audio_link", True)
         thread_mode = options.get("thread_mode", False)
 
-        host = handler.headers.get('Host', 'localhost:8080') if handler else 'localhost:8080'
+        host = get_host_header(handler)
         scheme = 'https' if handler and handler.headers.get('X-Forwarded-Proto') == 'https' else 'http'
         debate_url = f"{scheme}://{host}/debates/{debate_id}"
 

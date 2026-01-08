@@ -438,3 +438,117 @@ class ErrorFormatter:
             return "client_error"
         else:
             return "server_error"
+
+
+# =============================================================================
+# Error Context Utilities
+# =============================================================================
+
+class ErrorContext:
+    """Context manager that adds context to exceptions.
+
+    Wraps operations with additional context for better debugging.
+    On exception, logs the context and optionally re-raises with enriched info.
+
+    Example:
+        with ErrorContext("loading debate", debate_id=debate_id):
+            debate = storage.get_debate(debate_id)
+
+        # Or as decorator:
+        @with_error_context("agent creation")
+        def create_agent(spec):
+            ...
+    """
+
+    def __init__(
+        self,
+        operation: str,
+        reraise: bool = True,
+        log_level: str = "error",
+        **context_data,
+    ):
+        """Initialize error context.
+
+        Args:
+            operation: Description of the operation (e.g., "loading debate")
+            reraise: Whether to re-raise the exception (default True)
+            log_level: Log level for error messages ("error", "warning", "debug")
+            **context_data: Additional context (e.g., debate_id="abc123")
+        """
+        self.operation = operation
+        self.reraise = reraise
+        self.log_level = log_level
+        self.context_data = context_data
+        self.exception: Optional[Exception] = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_val is not None:
+            self.exception = exc_val
+
+            # Format context for logging
+            context_str = ", ".join(f"{k}={v}" for k, v in self.context_data.items())
+            full_context = f"{self.operation}"
+            if context_str:
+                full_context += f" ({context_str})"
+
+            # Log with appropriate level
+            log_func = getattr(logger, self.log_level, logger.error)
+            log_func(
+                f"Error during {full_context}: {type(exc_val).__name__}: {exc_val}",
+                exc_info=self.log_level == "error",
+            )
+
+            if not self.reraise:
+                return True  # Suppress exception
+
+        return False  # Propagate exception
+
+
+def with_error_context(operation: str, **default_context):
+    """Decorator version of ErrorContext.
+
+    Example:
+        @with_error_context("debate creation", phase="initialization")
+        def create_debate(config):
+            ...
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # Merge default context with any runtime context
+            context = {**default_context}
+            with ErrorContext(operation, **context):
+                return func(*args, **kwargs)
+        wrapper.__name__ = func.__name__
+        wrapper.__doc__ = func.__doc__
+        return wrapper
+    return decorator
+
+
+def log_and_suppress(operation: str, default_value=None, **context):
+    """Context manager that logs errors but returns a default value.
+
+    Useful for optional operations that shouldn't fail the request.
+
+    Example:
+        with log_and_suppress("fetching metadata", default_value={}) as ctx:
+            metadata = fetch_metadata(id)
+        # If fetch fails, metadata = {}
+    """
+    class SuppressingContext(ErrorContext):
+        def __init__(self):
+            super().__init__(operation, reraise=False, log_level="warning", **context)
+            self.result = default_value
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if exc_val is not None:
+                super().__exit__(exc_type, exc_val, exc_tb)
+                return True
+            return False
+
+    return SuppressingContext()

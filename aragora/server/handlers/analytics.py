@@ -90,6 +90,7 @@ class AnalyticsHandler(BaseHandler):
 
             return json_response({"stats": stats})
         except Exception as e:
+            logger.error("Error in disagreement stats: %s: %s", type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get disagreement stats: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS, key_prefix="analytics_roles", skip_first=True)
@@ -116,6 +117,7 @@ class AnalyticsHandler(BaseHandler):
 
             return json_response({"stats": stats})
         except Exception as e:
+            logger.error("Error in role rotation stats: %s: %s", type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get role rotation stats: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS, key_prefix="analytics_early_stop", skip_first=True)
@@ -151,6 +153,7 @@ class AnalyticsHandler(BaseHandler):
 
             return json_response({"stats": stats})
         except Exception as e:
+            logger.error("Error in early stop stats: %s: %s", type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get early stop stats: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS_RANKING, key_prefix="analytics_ranking", skip_first=True)
@@ -176,6 +179,7 @@ class AnalyticsHandler(BaseHandler):
 
             return json_response({"stats": stats})
         except Exception as e:
+            logger.error("Error in ranking stats: %s: %s", type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get ranking stats: {e}", 500)
 
     @ttl_cache(ttl_seconds=CACHE_TTL_ANALYTICS_DEBATES, key_prefix="analytics_debates", skip_first=True)
@@ -216,4 +220,5 @@ class AnalyticsHandler(BaseHandler):
 
             return json_response({"stats": stats})
         except Exception as e:
+            logger.error("Error in memory stats: %s: %s", type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get memory stats: {e}", 500)

@@ -249,3 +249,282 @@ class TestQueryParamSecurityScenarios:
         query = {"limit": ["-100"]}
         result = parse_int_param(query, "limit", default=20, min_val=1, max_val=100)
         assert result == 1
+
+
+# =============================================================================
+# Tests for Handler Validation Decorators
+# =============================================================================
+
+from aragora.server.validation import (
+    validate_request,
+    validate_post_body,
+    validate_query_params,
+    validate_debate_id,
+    validate_agent_name,
+    DEBATE_START_SCHEMA,
+)
+
+
+class MockHandler:
+    """Mock handler class for testing decorators."""
+    pass
+
+
+class TestValidateRequestDecorator:
+    """Tests for @validate_request decorator."""
+
+    def test_no_validation_passes(self):
+        """Handler without validation requirements passes through."""
+        class Handler(MockHandler):
+            @validate_request()
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/test", {}, None)
+        assert result == {"success": True}
+
+    def test_required_param_missing(self):
+        """Missing required parameter returns error."""
+        class Handler(MockHandler):
+            @validate_request(required_params=["task"])
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/test", {}, None)
+        assert result["status"] == 400
+        assert "Missing required parameter: task" in result["error"]
+
+    def test_required_param_present(self):
+        """Present required parameter passes."""
+        class Handler(MockHandler):
+            @validate_request(required_params=["task"])
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/test", {"task": "test"}, None)
+        assert result == {"success": True}
+
+    def test_required_param_empty_list(self):
+        """Empty list for required param returns error."""
+        class Handler(MockHandler):
+            @validate_request(required_params=["agents"])
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/test", {"agents": []}, None)
+        assert result["status"] == 400
+
+    def test_path_validator_valid(self):
+        """Valid path segment passes validation."""
+        class Handler(MockHandler):
+            @validate_request(path_validators={"debate_id": validate_debate_id})
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/debates/valid-id-123", {}, None)
+        assert result == {"success": True}
+
+    def test_path_validator_invalid(self):
+        """Invalid path segment returns error."""
+        class Handler(MockHandler):
+            @validate_request(path_validators={"debate_id": validate_debate_id})
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/debates/../../../etc/passwd", {}, None)
+        assert result["status"] == 400
+
+    def test_schema_validation_valid(self):
+        """Valid body passes schema validation."""
+        class Handler(MockHandler):
+            @validate_request(schema=DEBATE_START_SCHEMA)
+            def handle(self, path, query, body, handler):
+                return {"success": True, "task": body["task"]}
+
+        h = Handler()
+        result = h.handle("/api/debates", {}, {"task": "Test debate task"}, None)
+        assert result["success"] is True
+        assert result["task"] == "Test debate task"
+
+    def test_schema_validation_missing_required(self):
+        """Missing required field in body returns error."""
+        class Handler(MockHandler):
+            @validate_request(schema=DEBATE_START_SCHEMA)
+            def handle(self, path, query, body, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("/api/debates", {}, {}, None)
+        assert result["status"] == 400
+        assert "task" in result["error"].lower()
+
+
+class TestValidatePostBodyDecorator:
+    """Tests for @validate_post_body decorator."""
+
+    def test_valid_body_passes(self):
+        """Valid body passes validation."""
+        class Handler(MockHandler):
+            @validate_post_body(DEBATE_START_SCHEMA)
+            def handle(self, body, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"task": "Test task"}, None)
+        assert result == {"success": True}
+
+    def test_invalid_body_type_returns_error(self):
+        """Non-dict body returns error."""
+        class Handler(MockHandler):
+            @validate_post_body(DEBATE_START_SCHEMA)
+            def handle(self, body, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle("not a dict", None)
+        assert result["status"] == 400
+        assert "JSON object" in result["error"]
+
+    def test_missing_required_field_returns_error(self):
+        """Missing required field returns error."""
+        class Handler(MockHandler):
+            @validate_post_body(DEBATE_START_SCHEMA)
+            def handle(self, body, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"rounds": 3}, None)  # Missing 'task'
+        assert result["status"] == 400
+
+    def test_field_too_long_returns_error(self):
+        """Field exceeding max length returns error."""
+        class Handler(MockHandler):
+            @validate_post_body(DEBATE_START_SCHEMA)
+            def handle(self, body, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"task": "x" * 3000}, None)  # Exceeds 2000 char limit
+        assert result["status"] == 400
+
+
+class TestValidateQueryParamsDecorator:
+    """Tests for @validate_query_params decorator."""
+
+    def test_required_params_present(self):
+        """All required params present passes."""
+        class Handler(MockHandler):
+            @validate_query_params(required=["agent", "limit"])
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"agent": "claude", "limit": "10"}, None)
+        assert result == {"success": True}
+
+    def test_required_param_missing(self):
+        """Missing required param returns error."""
+        class Handler(MockHandler):
+            @validate_query_params(required=["agent"])
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({}, None)
+        assert result["status"] == 400
+        assert "agent" in result["error"]
+
+    def test_int_param_in_bounds(self):
+        """Int param within bounds passes."""
+        class Handler(MockHandler):
+            @validate_query_params(int_params={"limit": (10, 1, 100)})
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"limit": "50"}, None)
+        assert result == {"success": True}
+
+    def test_int_param_out_of_bounds(self):
+        """Int param out of bounds returns error."""
+        class Handler(MockHandler):
+            @validate_query_params(int_params={"limit": (10, 1, 100)})
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"limit": "500"}, None)
+        assert result["status"] == 400
+        assert "limit" in result["error"]
+
+    def test_int_param_invalid_type(self):
+        """Non-integer int param returns error."""
+        class Handler(MockHandler):
+            @validate_query_params(int_params={"limit": (10, 1, 100)})
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"limit": "not-a-number"}, None)
+        assert result["status"] == 400
+        assert "integer" in result["error"]
+
+    def test_string_param_too_long(self):
+        """String param exceeding max length returns error."""
+        class Handler(MockHandler):
+            @validate_query_params(string_params={"sort": ("created_at", 20)})
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"sort": "x" * 30}, None)
+        assert result["status"] == 400
+        assert "exceeds" in result["error"]
+
+    def test_string_param_within_length(self):
+        """String param within length passes."""
+        class Handler(MockHandler):
+            @validate_query_params(string_params={"sort": ("created_at", 20)})
+            def handle(self, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        result = h.handle({"sort": "name"}, None)
+        assert result == {"success": True}
+
+
+class TestValidationDecoratorCombinations:
+    """Tests for combining multiple validation decorators."""
+
+    def test_combined_validation(self):
+        """Multiple validation constraints can be combined."""
+        class Handler(MockHandler):
+            @validate_request(required_params=["mode"])
+            @validate_query_params(int_params={"limit": (10, 1, 100)})
+            def handle(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        # Missing required param
+        result = h.handle("/api/test", {"limit": "50"}, None)
+        assert result["status"] == 400
+
+        # Valid params
+        result = h.handle("/api/test", {"mode": "test", "limit": "50"}, None)
+        assert result == {"success": True}
+
+    def test_decorator_preserves_function_name(self):
+        """Decorator preserves the original function name."""
+        class Handler(MockHandler):
+            @validate_request()
+            def my_handler_name(self, path, query, handler):
+                return {"success": True}
+
+        h = Handler()
+        assert h.my_handler_name.__name__ == "my_handler_name"

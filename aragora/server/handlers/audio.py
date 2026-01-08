@@ -16,8 +16,10 @@ from .base import (
     json_response,
     error_response,
     get_int_param,
+    get_host_header,
     validate_debate_id,
 )
+from aragora.server.error_utils import safe_error_message as _safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +32,6 @@ except ImportError:
     PodcastFeedGenerator = None
     PodcastConfig = None
     PodcastEpisode = None
-
-
-def _safe_error_message(e: Exception, context: str) -> str:
-    """Generate safe error message without exposing internals."""
-    import os
-    error_type = type(e).__name__
-    if os.environ.get("ARAGORA_DEBUG"):
-        return f"{context}: {error_type}: {str(e)}"
-    return f"{context} failed: {error_type}"
 
 
 class AudioHandler(BaseHandler):
@@ -158,7 +151,7 @@ class AudioHandler(BaseHandler):
             generator = PodcastFeedGenerator(config)
 
             # Get host for URLs
-            host = handler.headers.get('Host', 'localhost:8080') if handler else 'localhost:8080'
+            host = get_host_header(handler)
             scheme = 'https' if handler and handler.headers.get('X-Forwarded-Proto') == 'https' else 'http'
 
             for i, debate in enumerate(debates_with_audio):
@@ -201,7 +194,7 @@ class AudioHandler(BaseHandler):
             storage = self.get_storage()
             episodes = []
 
-            host = handler.headers.get('Host', 'localhost:8080') if handler else 'localhost:8080'
+            host = get_host_header(handler)
             scheme = 'https' if handler and handler.headers.get('X-Forwarded-Proto') == 'https' else 'http'
 
             for audio_meta in audio_store.list_all()[:limit]:

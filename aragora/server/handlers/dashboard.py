@@ -225,7 +225,7 @@ class DashboardHandler(BaseHandler):
             patterns["early_stopping"]["full_duration"] = full_duration
 
         except Exception as e:
-            logger.debug(f"Single-pass processing error: {e}")
+            logger.warning("Single-pass processing error: %s: %s", type(e).__name__, e)
 
         return summary, activity, patterns
 
@@ -261,7 +261,7 @@ class DashboardHandler(BaseHandler):
                     if avg_conf is not None:
                         summary["avg_confidence"] = round(avg_conf, 3)
         except Exception as e:
-            logger.debug(f"SQL summary metrics error: {e}")
+            logger.warning("SQL summary metrics error: %s: %s", type(e).__name__, e)
 
         return summary
 
@@ -290,7 +290,7 @@ class DashboardHandler(BaseHandler):
                     activity["debates_last_period"] = row[0] or 0
                     activity["consensus_last_period"] = row[1] or 0
         except Exception as e:
-            logger.debug(f"SQL recent activity error: {e}")
+            logger.warning("SQL recent activity error: %s: %s", type(e).__name__, e)
 
         return activity
 
@@ -327,7 +327,7 @@ class DashboardHandler(BaseHandler):
                             sum(confidences) / len(confidences), 3
                         )
         except Exception as e:
-            logger.debug(f"Summary metrics error: {e}")
+            logger.warning("Summary metrics error: %s: %s", type(e).__name__, e)
 
         return summary
 
@@ -375,7 +375,7 @@ class DashboardHandler(BaseHandler):
                         domain_counts, key=domain_counts.get
                     )
         except Exception as e:
-            logger.debug(f"Recent activity error: {e}")
+            logger.warning("Recent activity error: %s: %s", type(e).__name__, e)
 
         return activity
 
@@ -414,7 +414,7 @@ class DashboardHandler(BaseHandler):
                         sum(r["elo"] for r in all_ratings) / len(all_ratings), 1
                     )
         except Exception as e:
-            logger.debug(f"Agent performance error: {e}")
+            logger.warning("Agent performance error: %s: %s", type(e).__name__, e)
 
         return performance
 
@@ -458,7 +458,7 @@ class DashboardHandler(BaseHandler):
                 patterns["early_stopping"]["early_stopped"] = early_stopped
                 patterns["early_stopping"]["full_duration"] = full_duration
         except Exception as e:
-            logger.debug(f"Debate patterns error: {e}")
+            logger.warning("Debate patterns error: %s: %s", type(e).__name__, e)
 
         return patterns
 
@@ -499,7 +499,7 @@ class DashboardHandler(BaseHandler):
         except ImportError:
             logger.debug("Consensus memory not available")
         except Exception as e:
-            logger.debug(f"Consensus insights error: {e}")
+            logger.warning("Consensus insights error: %s: %s", type(e).__name__, e)
 
         return insights
 
@@ -527,6 +527,6 @@ class DashboardHandler(BaseHandler):
                 health["cache_entries"] = len(_cache)
 
         except Exception as e:
-            logger.debug(f"System health error: {e}")
+            logger.warning("System health error: %s: %s", type(e).__name__, e)
 
         return health

@@ -45,6 +45,19 @@ from .cache import (
     CacheConfig,
     CACHE_INVALIDATION_MAP,
 )
+from .request_logging import (
+    REQUEST_ID_HEADER,
+    RequestContext,
+    generate_request_id,
+    hash_token,
+    sanitize_headers,
+    sanitize_params,
+    log_request,
+    log_response,
+    request_logging,
+    get_current_request_id,
+    set_current_request_id,
+)
 
 __all__ = [
     # Auth
@@ -68,4 +81,16 @@ __all__ = [
     "get_cache_stats",
     "CacheConfig",
     "CACHE_INVALIDATION_MAP",
+    # Request logging
+    "REQUEST_ID_HEADER",
+    "RequestContext",
+    "generate_request_id",
+    "hash_token",
+    "sanitize_headers",
+    "sanitize_params",
+    "log_request",
+    "log_response",
+    "request_logging",
+    "get_current_request_id",
+    "set_current_request_id",
 ]

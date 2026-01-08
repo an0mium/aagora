@@ -17,6 +17,7 @@ from .base import (
     error_response,
     SAFE_SLUG_PATTERN,
 )
+from aragora.server.error_utils import safe_error_message as _safe_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,6 @@ try:
 except ImportError:
     MUTAGEN_AVAILABLE = False
     MP3 = None
-
-
-def _safe_error_message(e: Exception, context: str) -> str:
-    """Generate safe error message without exposing internals."""
-    error_type = type(e).__name__
-    if os.environ.get("ARAGORA_DEBUG"):
-        return f"{context}: {error_type}: {str(e)}"
-    return f"{context} failed: {error_type}"
 
 
 def _run_async(coro):

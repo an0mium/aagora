@@ -12,6 +12,8 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from .base import (
@@ -22,6 +24,44 @@ logger = logging.getLogger(__name__)
 
 # DoS protection
 MAX_MULTIPART_PARTS = 10
+MAX_FILENAME_LENGTH = 255
+MIN_FILE_SIZE = 1  # Minimum 1 byte
+
+
+class UploadErrorCode(Enum):
+    """Specific error codes for upload failures."""
+    RATE_LIMITED = "rate_limited"
+    FILE_TOO_LARGE = "file_too_large"
+    FILE_TOO_SMALL = "file_too_small"
+    INVALID_CONTENT_LENGTH = "invalid_content_length"
+    NO_CONTENT = "no_content"
+    UNSUPPORTED_FORMAT = "unsupported_format"
+    INVALID_FILENAME = "invalid_filename"
+    FILENAME_TOO_LONG = "filename_too_long"
+    CORRUPTED_UPLOAD = "corrupted_upload"
+    MULTIPART_PARSE_ERROR = "multipart_parse_error"
+    MISSING_BOUNDARY = "missing_boundary"
+    STORAGE_NOT_CONFIGURED = "storage_not_configured"
+    PARSING_FAILED = "parsing_failed"
+    STORAGE_FAILED = "storage_failed"
+
+
+@dataclass
+class UploadError:
+    """Structured upload error response."""
+    code: UploadErrorCode
+    message: str
+    details: Optional[dict] = None
+
+    def to_response(self, status: int = 400) -> HandlerResult:
+        """Convert to error response."""
+        payload = {
+            "error": self.message,
+            "error_code": self.code.value,
+        }
+        if self.details:
+            payload["details"] = self.details
+        return json_response(payload, status=status)
 
 
 class DocumentHandler(BaseHandler):
@@ -175,6 +215,7 @@ class DocumentHandler(BaseHandler):
         """Handle document upload. Rate limited by IP.
 
         Accepts multipart/form-data or raw file upload with X-Filename header.
+        Returns structured error codes for client handling.
         """
         # Check rate limit
         rate_limit_error = self._check_upload_rate_limit(handler)
@@ -183,49 +224,100 @@ class DocumentHandler(BaseHandler):
 
         store = self.get_document_store()
         if not store:
-            return error_response("Document storage not configured", 500)
+            return UploadError(
+                UploadErrorCode.STORAGE_NOT_CONFIGURED,
+                "Document storage not configured"
+            ).to_response(500)
 
-        # Get content length
+        # Get and validate content length
         try:
             content_length = int(handler.headers.get('Content-Length', '0'))
         except ValueError:
-            return error_response("Invalid Content-Length header", 400)
+            return UploadError(
+                UploadErrorCode.INVALID_CONTENT_LENGTH,
+                "Invalid Content-Length header",
+                {"header_value": handler.headers.get('Content-Length', '')}
+            ).to_response(400)
 
         if content_length == 0:
-            return error_response("No content provided", 400)
+            return UploadError(
+                UploadErrorCode.NO_CONTENT,
+                "No content provided. Include file data in request body."
+            ).to_response(400)
+
+        if content_length < MIN_FILE_SIZE:
+            return UploadError(
+                UploadErrorCode.FILE_TOO_SMALL,
+                f"File too small. Minimum size: {MIN_FILE_SIZE} bytes",
+                {"received_bytes": content_length}
+            ).to_response(400)
 
         # Check max size (10MB)
         max_size = 10 * 1024 * 1024
         if content_length > max_size:
-            return error_response("File too large. Max size: 10MB", 413)
+            return UploadError(
+                UploadErrorCode.FILE_TOO_LARGE,
+                "File too large. Maximum size: 10MB",
+                {"received_bytes": content_length, "max_bytes": max_size}
+            ).to_response(413)
 
         content_type = handler.headers.get('Content-Type', '')
 
         # Parse file from request
-        file_content, filename = self._parse_upload(handler, content_type, content_length)
+        file_content, filename, parse_error = self._parse_upload_with_error(
+            handler, content_type, content_length
+        )
+
+        if parse_error:
+            return parse_error.to_response(400)
 
         if not file_content or not filename:
-            return error_response("No file found in upload", 400)
+            return UploadError(
+                UploadErrorCode.CORRUPTED_UPLOAD,
+                "Could not extract file from upload. Ensure file is included in request."
+            ).to_response(400)
+
+        # Validate filename length
+        if len(filename) > MAX_FILENAME_LENGTH:
+            return UploadError(
+                UploadErrorCode.FILENAME_TOO_LONG,
+                f"Filename too long. Maximum: {MAX_FILENAME_LENGTH} characters",
+                {"filename_length": len(filename), "max_length": MAX_FILENAME_LENGTH}
+            ).to_response(400)
+
+        # Verify actual content matches declared length (detect truncation)
+        if len(file_content) != content_length:
+            return UploadError(
+                UploadErrorCode.CORRUPTED_UPLOAD,
+                "Upload appears truncated or corrupted",
+                {"expected_bytes": content_length, "received_bytes": len(file_content)}
+            ).to_response(400)
 
         # Import document parsing
         try:
             from aragora.server.documents import parse_document, SUPPORTED_EXTENSIONS
         except ImportError:
-            return error_response("Document parsing module not available", 500)
+            return UploadError(
+                UploadErrorCode.PARSING_FAILED,
+                "Document parsing module not available"
+            ).to_response(500)
 
         # Validate file extension
         ext = '.' + filename.split('.')[-1].lower() if '.' in filename else ''
         if ext not in SUPPORTED_EXTENSIONS:
-            return json_response({
-                "error": f"Unsupported file type: {ext}",
-                "supported": list(SUPPORTED_EXTENSIONS)
-            }, status=400)
+            return UploadError(
+                UploadErrorCode.UNSUPPORTED_FORMAT,
+                f"Unsupported file type: {ext}",
+                {"extension": ext, "supported": list(SUPPORTED_EXTENSIONS)}
+            ).to_response(400)
 
         # Parse and store document
         from aragora.server.error_utils import safe_error_message
         try:
             doc = parse_document(file_content, filename)
             doc_id = store.add(doc)
+
+            logger.info(f"Document uploaded: {filename} ({len(file_content)} bytes) -> {doc_id}")
 
             return json_response({
                 "success": True,
@@ -238,41 +330,93 @@ class DocumentHandler(BaseHandler):
                 }
             })
         except ImportError as e:
-            return error_response(safe_error_message(e, "document_import"), 400)
+            logger.error(f"Document import error: {e}")
+            return UploadError(
+                UploadErrorCode.PARSING_FAILED,
+                safe_error_message(e, "document_import"),
+                {"error_type": "ImportError"}
+            ).to_response(400)
+        except ValueError as e:
+            # Common for malformed PDFs, etc
+            logger.warning(f"Document parse error for {filename}: {e}")
+            return UploadError(
+                UploadErrorCode.PARSING_FAILED,
+                f"Could not parse document: {safe_error_message(e, 'document_parsing')}",
+                {"filename": filename, "error_type": "ValueError"}
+            ).to_response(400)
         except Exception as e:
-            return error_response(safe_error_message(e, "document_parsing"), 500)
+            logger.error(f"Document storage error: {e}")
+            return UploadError(
+                UploadErrorCode.STORAGE_FAILED,
+                safe_error_message(e, "document_storage"),
+                {"error_type": type(e).__name__}
+            ).to_response(500)
+
+    def _parse_upload_with_error(
+        self, handler, content_type: str, content_length: int
+    ) -> tuple[Optional[bytes], Optional[str], Optional[UploadError]]:
+        """Parse file content and filename from upload request with detailed errors.
+
+        Returns (file_content, filename, error) tuple.
+        On success: (content, filename, None)
+        On failure: (None, None, UploadError)
+        """
+        if 'multipart/form-data' in content_type:
+            return self._parse_multipart_with_error(handler, content_type, content_length)
+        else:
+            return self._parse_raw_upload_with_error(handler, content_length)
 
     def _parse_upload(self, handler, content_type: str, content_length: int) -> tuple[Optional[bytes], Optional[str]]:
         """Parse file content and filename from upload request.
 
         Returns (file_content, filename) or (None, None) on failure.
+        Legacy method - use _parse_upload_with_error for better error handling.
         """
         if 'multipart/form-data' in content_type:
-            return self._parse_multipart(handler, content_type, content_length)
+            content, filename, _ = self._parse_multipart_with_error(handler, content_type, content_length)
+            return content, filename
         else:
-            return self._parse_raw_upload(handler, content_length)
+            content, filename, _ = self._parse_raw_upload_with_error(handler, content_length)
+            return content, filename
 
-    def _parse_multipart(self, handler, content_type: str, content_length: int) -> tuple[Optional[bytes], Optional[str]]:
-        """Parse multipart form data upload."""
+    def _parse_multipart_with_error(
+        self, handler, content_type: str, content_length: int
+    ) -> tuple[Optional[bytes], Optional[str], Optional[UploadError]]:
+        """Parse multipart form data upload with detailed errors."""
         # Parse boundary
         boundary = None
         for part in content_type.split(';'):
             if 'boundary=' in part:
                 parts = part.split('=', 1)
                 if len(parts) == 2 and parts[1].strip():
-                    boundary = parts[1].strip()
+                    boundary = parts[1].strip().strip('"')
                 break
 
         if not boundary:
-            return None, None
+            return None, None, UploadError(
+                UploadErrorCode.MISSING_BOUNDARY,
+                "Missing boundary in multipart/form-data Content-Type header",
+                {"content_type": content_type}
+            )
 
-        body = handler.rfile.read(content_length)
+        try:
+            body = handler.rfile.read(content_length)
+        except Exception as e:
+            return None, None, UploadError(
+                UploadErrorCode.CORRUPTED_UPLOAD,
+                f"Failed to read upload body: {str(e)[:100]}"
+            )
+
         boundary_bytes = f'--{boundary}'.encode()
         parts = body.split(boundary_bytes)
 
         # DoS protection
         if len(parts) > MAX_MULTIPART_PARTS:
-            return None, None
+            return None, None, UploadError(
+                UploadErrorCode.MULTIPART_PARSE_ERROR,
+                f"Too many parts in multipart upload. Maximum: {MAX_MULTIPART_PARTS}",
+                {"part_count": len(parts), "max_parts": MAX_MULTIPART_PARTS}
+            )
 
         for part in parts:
             if b'Content-Disposition' not in part:
@@ -296,26 +440,78 @@ class DocumentHandler(BaseHandler):
                     raw_filename = headers_raw[start:end]
                     filename = os.path.basename(raw_filename)
 
-                    # Reject suspicious patterns
-                    if not filename or '\x00' in filename or '..' in filename:
-                        continue
+                    # Reject suspicious patterns with specific errors
+                    if not filename:
+                        return None, None, UploadError(
+                            UploadErrorCode.INVALID_FILENAME,
+                            "Empty filename in upload"
+                        )
+                    if '\x00' in filename:
+                        return None, None, UploadError(
+                            UploadErrorCode.INVALID_FILENAME,
+                            "Filename contains null bytes (potential attack)"
+                        )
+                    if '..' in filename:
+                        return None, None, UploadError(
+                            UploadErrorCode.INVALID_FILENAME,
+                            "Filename contains path traversal sequence (..)"
+                        )
                     if filename.strip('.').strip() == '':
-                        continue
+                        return None, None, UploadError(
+                            UploadErrorCode.INVALID_FILENAME,
+                            "Filename cannot be only dots or whitespace"
+                        )
 
-                    return file_data, filename
-            except (ValueError, IndexError):
+                    return file_data, filename, None
+            except (ValueError, IndexError) as e:
+                logger.debug(f"Multipart part parse error: {e}")
                 continue
 
-        return None, None
+        return None, None, UploadError(
+            UploadErrorCode.MULTIPART_PARSE_ERROR,
+            "No valid file found in multipart upload. Ensure field name is 'file' and filename is provided."
+        )
 
-    def _parse_raw_upload(self, handler, content_length: int) -> tuple[Optional[bytes], Optional[str]]:
-        """Parse raw file upload with X-Filename header."""
+    def _parse_multipart(self, handler, content_type: str, content_length: int) -> tuple[Optional[bytes], Optional[str]]:
+        """Parse multipart form data upload (legacy)."""
+        content, filename, _ = self._parse_multipart_with_error(handler, content_type, content_length)
+        return content, filename
+
+    def _parse_raw_upload_with_error(
+        self, handler, content_length: int
+    ) -> tuple[Optional[bytes], Optional[str], Optional[UploadError]]:
+        """Parse raw file upload with X-Filename header (with detailed errors)."""
         raw_filename = handler.headers.get('X-Filename', 'document.txt')
         filename = os.path.basename(raw_filename)
 
-        # Reject suspicious patterns
-        if not filename or '\x00' in filename or '..' in filename:
-            return None, None
+        # Reject suspicious patterns with specific errors
+        if not filename:
+            return None, None, UploadError(
+                UploadErrorCode.INVALID_FILENAME,
+                "Empty filename. Provide X-Filename header with valid filename."
+            )
+        if '\x00' in filename:
+            return None, None, UploadError(
+                UploadErrorCode.INVALID_FILENAME,
+                "Filename contains null bytes (potential attack)"
+            )
+        if '..' in filename:
+            return None, None, UploadError(
+                UploadErrorCode.INVALID_FILENAME,
+                "Filename contains path traversal sequence (..)"
+            )
 
-        file_content = handler.rfile.read(content_length)
-        return file_content, filename
+        try:
+            file_content = handler.rfile.read(content_length)
+        except Exception as e:
+            return None, None, UploadError(
+                UploadErrorCode.CORRUPTED_UPLOAD,
+                f"Failed to read upload body: {str(e)[:100]}"
+            )
+
+        return file_content, filename, None
+
+    def _parse_raw_upload(self, handler, content_length: int) -> tuple[Optional[bytes], Optional[str]]:
+        """Parse raw file upload with X-Filename header (legacy)."""
+        content, filename, _ = self._parse_raw_upload_with_error(handler, content_length)
+        return content, filename

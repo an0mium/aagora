@@ -173,6 +173,25 @@ if PROMETHEUS_AVAILABLE:
         ["state"],  # active, idle
     )
 
+    # Memory tier metrics
+    MEMORY_TIER_SIZE = Gauge(
+        "aragora_memory_tier_size",
+        "Number of memories in each tier",
+        ["tier"],  # fast, medium, slow, glacial
+    )
+
+    MEMORY_TIER_TRANSITIONS = Counter(
+        "aragora_memory_tier_transitions_total",
+        "Memory tier transitions",
+        ["from_tier", "to_tier"],  # e.g., fast->medium, medium->slow
+    )
+
+    MEMORY_OPERATIONS = Counter(
+        "aragora_memory_operations_total",
+        "Memory operations by type",
+        ["operation"],  # store, retrieve, consolidate, prune
+    )
+
 
 # ============================================================================
 # Fallback Implementation (when prometheus_client not available)
@@ -487,6 +506,50 @@ def set_db_pool_size(active: int, idle: int) -> None:
     else:
         _simple_metrics.set_gauge("aragora_db_connection_pool_size", active, {"state": "active"})
         _simple_metrics.set_gauge("aragora_db_connection_pool_size", idle, {"state": "idle"})
+
+
+def set_memory_tier_size(tier: str, size: int) -> None:
+    """Set the number of memories in a tier.
+
+    Args:
+        tier: Memory tier name (fast, medium, slow, glacial)
+        size: Number of memories in the tier
+    """
+    if PROMETHEUS_AVAILABLE:
+        MEMORY_TIER_SIZE.labels(tier=tier).set(size)
+    else:
+        _simple_metrics.set_gauge("aragora_memory_tier_size", size, {"tier": tier})
+
+
+def record_memory_tier_transition(from_tier: str, to_tier: str) -> None:
+    """Record a memory tier transition.
+
+    Args:
+        from_tier: Source tier (fast, medium, slow)
+        to_tier: Destination tier (medium, slow, glacial)
+    """
+    if PROMETHEUS_AVAILABLE:
+        MEMORY_TIER_TRANSITIONS.labels(from_tier=from_tier, to_tier=to_tier).inc()
+    else:
+        _simple_metrics.inc_counter(
+            "aragora_memory_tier_transitions_total",
+            {"from_tier": from_tier, "to_tier": to_tier},
+        )
+
+
+def record_memory_operation(operation: str) -> None:
+    """Record a memory operation.
+
+    Args:
+        operation: Operation type (store, retrieve, consolidate, prune)
+    """
+    if PROMETHEUS_AVAILABLE:
+        MEMORY_OPERATIONS.labels(operation=operation).inc()
+    else:
+        _simple_metrics.inc_counter(
+            "aragora_memory_operations_total",
+            {"operation": operation},
+        )
 
 
 # ============================================================================

@@ -22,6 +22,37 @@ SAFE_ID_PATTERN_WITH_DOTS = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$')
 SAFE_SLUG_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,128}$')
 SAFE_AGENT_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,32}$')
 
+# =============================================================================
+# Query Parameter Validation Constants
+# =============================================================================
+
+# Default max length for string query parameters
+DEFAULT_QUERY_STRING_MAX_LENGTH = 256
+
+# Allowed sort columns for common endpoints (whitelist)
+ALLOWED_SORT_COLUMNS = frozenset({
+    # Common
+    "id", "name", "created_at", "updated_at", "timestamp",
+    # Debates
+    "task", "status", "rounds", "duration", "consensus_reached",
+    # Agents
+    "agent", "agent_name", "elo", "reliability", "score", "wins", "losses",
+    # Rankings
+    "rating", "rank", "votes", "flip_rate", "acceptance_rate",
+    # Memory
+    "importance", "recency", "freshness", "tier",
+})
+
+# Allowed sort directions
+ALLOWED_SORT_DIRECTIONS = frozenset({"asc", "desc", "ASC", "DESC"})
+
+# Allowed filter operators (for query building)
+ALLOWED_FILTER_OPERATORS = frozenset({
+    "eq", "ne", "gt", "gte", "lt", "lte",  # Comparison
+    "contains", "startswith", "endswith",   # String matching
+    "in", "not_in",                         # Set membership
+})
+
 
 @dataclass
 class ValidationResult:
@@ -631,6 +662,32 @@ def validate_agent_name_with_version(agent: str) -> Tuple[bool, Optional[str]]:
     return validate_path_segment(agent, "agent name", SAFE_ID_PATTERN_WITH_DOTS)
 
 
+def validate_no_path_traversal(path: str) -> Tuple[bool, Optional[str]]:
+    """Check that a path does not contain path traversal sequences.
+
+    Blocks attempts to escape the intended directory via '..' sequences.
+
+    Args:
+        path: URL path or file path to validate
+
+    Returns:
+        Tuple of (is_valid, error_message)
+
+    Example:
+        # Before (repeated 3+ times):
+        if '..' in path:
+            return error_response("Invalid path", 400)
+
+        # After:
+        is_valid, err = validate_no_path_traversal(path)
+        if not is_valid:
+            return error_response(err, 400)
+    """
+    if '..' in path:
+        return False, "Path traversal not allowed"
+    return True, None
+
+
 # =============================================================================
 # Query Parameter Parsing Functions
 # =============================================================================
@@ -837,3 +894,474 @@ def safe_query_float(
         return max(min_val, min(val, max_val))
     except (ValueError, IndexError, TypeError):
         return default
+
+
+# =============================================================================
+# Sort Parameter Validation
+# =============================================================================
+
+def validate_sort_param(
+    query: Any,
+    key: str = "sort",
+    default: str = "created_at",
+    allowed_columns: Optional[set] = None,
+) -> str:
+    """Validate and parse a sort column parameter.
+
+    Ensures the sort column is in the whitelist to prevent SQL injection.
+
+    Args:
+        query: Query dict
+        key: Parameter name (default: "sort")
+        default: Default column if missing or invalid
+        allowed_columns: Set of allowed columns (defaults to ALLOWED_SORT_COLUMNS)
+
+    Returns:
+        Validated sort column or default
+
+    Example:
+        >>> sort_col = validate_sort_param(query, allowed_columns={"name", "created_at"})
+        >>> cursor.execute(f"SELECT * FROM table ORDER BY {sort_col}")
+    """
+    if allowed_columns is None:
+        allowed_columns = ALLOWED_SORT_COLUMNS
+
+    try:
+        raw = query.get(key, default)
+        if isinstance(raw, list):
+            raw = raw[0] if raw else default
+
+        # Normalize to lowercase for comparison
+        val = str(raw).strip().lower()
+
+        # Check whitelist
+        if val in allowed_columns:
+            return val
+        # Also check for case-insensitive match against actual allowed columns
+        for col in allowed_columns:
+            if col.lower() == val:
+                return col
+
+        logger.warning(f"Invalid sort column '{raw}' not in whitelist, using default")
+        return default
+    except (IndexError, TypeError, AttributeError):
+        return default
+
+
+def validate_sort_direction(
+    query: Any,
+    key: str = "order",
+    default: str = "desc",
+) -> str:
+    """Validate and parse a sort direction parameter.
+
+    Args:
+        query: Query dict
+        key: Parameter name (default: "order")
+        default: Default direction if missing or invalid
+
+    Returns:
+        "asc" or "desc"
+    """
+    try:
+        raw = query.get(key, default)
+        if isinstance(raw, list):
+            raw = raw[0] if raw else default
+
+        val = str(raw).strip().lower()
+        if val in ("asc", "ascending", "1"):
+            return "asc"
+        if val in ("desc", "descending", "-1", "0"):
+            return "desc"
+
+        return default
+    except (IndexError, TypeError, AttributeError):
+        return default
+
+
+def validate_sort_params(
+    query: Any,
+    sort_key: str = "sort",
+    order_key: str = "order",
+    default_column: str = "created_at",
+    default_order: str = "desc",
+    allowed_columns: Optional[set] = None,
+) -> Tuple[str, str]:
+    """Validate both sort column and direction.
+
+    Convenience function that validates both sort parameters together.
+
+    Args:
+        query: Query dict
+        sort_key: Key for sort column parameter
+        order_key: Key for sort direction parameter
+        default_column: Default sort column
+        default_order: Default sort direction
+        allowed_columns: Whitelist of allowed columns
+
+    Returns:
+        Tuple of (column, direction) both validated
+
+    Example:
+        >>> col, order = validate_sort_params(query)
+        >>> cursor.execute(f"SELECT * FROM table ORDER BY {col} {order.upper()}")
+    """
+    column = validate_sort_param(query, sort_key, default_column, allowed_columns)
+    direction = validate_sort_direction(query, order_key, default_order)
+    return column, direction
+
+
+# =============================================================================
+# Safe String Parameter with Length Validation
+# =============================================================================
+
+def safe_query_string(
+    query: Any,
+    key: str,
+    default: str = "",
+    max_length: int = DEFAULT_QUERY_STRING_MAX_LENGTH,
+    strip: bool = True,
+    allowed_pattern: Optional[re.Pattern] = None,
+) -> str:
+    """Safely parse a string query parameter with length and pattern validation.
+
+    Args:
+        query: Query dict
+        key: Parameter name
+        default: Default value if missing
+        max_length: Maximum allowed length (truncates if exceeded)
+        strip: Whether to strip whitespace
+        allowed_pattern: Optional regex pattern the value must match
+
+    Returns:
+        Validated string or default
+
+    Example:
+        >>> search = safe_query_string(query, "q", max_length=100)
+    """
+    try:
+        raw = query.get(key, default)
+        if raw is None:
+            return default
+        if isinstance(raw, list):
+            raw = raw[0] if raw else default
+
+        val = str(raw)
+        if strip:
+            val = val.strip()
+
+        # Truncate to max length
+        if len(val) > max_length:
+            logger.debug(f"Query param '{key}' truncated from {len(val)} to {max_length} chars")
+            val = val[:max_length]
+
+        # Validate against pattern if provided
+        if allowed_pattern is not None and val and not allowed_pattern.match(val):
+            logger.warning(f"Query param '{key}' doesn't match allowed pattern")
+            return default
+
+        return val
+    except (IndexError, TypeError, AttributeError):
+        return default
+
+
+def validate_filter_operator(operator: str) -> Tuple[bool, Optional[str]]:
+    """Validate a filter operator.
+
+    Args:
+        operator: The operator to validate (e.g., "eq", "gt", "contains")
+
+    Returns:
+        Tuple of (is_valid, error_message)
+
+    Example:
+        >>> is_valid, err = validate_filter_operator(user_input)
+        >>> if not is_valid:
+        ...     return error_response(400, err)
+    """
+    if operator.lower() not in ALLOWED_FILTER_OPERATORS:
+        allowed_str = ", ".join(sorted(ALLOWED_FILTER_OPERATORS))
+        return False, f"Invalid filter operator '{operator}'. Allowed: {allowed_str}"
+    return True, None
+
+
+def validate_search_query(
+    query_text: str,
+    max_length: int = 200,
+    block_sql_keywords: bool = True,
+) -> Tuple[bool, str, Optional[str]]:
+    """Validate and sanitize a search query string.
+
+    Checks for SQL injection patterns and length limits.
+
+    Args:
+        query_text: The search query to validate
+        max_length: Maximum allowed length
+        block_sql_keywords: Whether to block SQL keywords
+
+    Returns:
+        Tuple of (is_valid, sanitized_query, error_message)
+
+    Example:
+        >>> is_valid, safe_query, err = validate_search_query(user_input)
+        >>> if not is_valid:
+        ...     return error_response(400, err)
+        >>> cursor.execute("SELECT * FROM table WHERE name LIKE ?", (f"%{safe_query}%",))
+    """
+    if not query_text:
+        return True, "", None
+
+    # Truncate
+    if len(query_text) > max_length:
+        query_text = query_text[:max_length]
+
+    # Strip dangerous characters for LIKE queries
+    sanitized = query_text.strip()
+
+    # Block SQL injection keywords (case-insensitive)
+    if block_sql_keywords:
+        sql_keywords = [
+            "select", "insert", "update", "delete", "drop", "union",
+            "exec", "execute", "xp_", "sp_", "--", ";--", "/*", "*/",
+        ]
+        lower_query = sanitized.lower()
+        for keyword in sql_keywords:
+            if keyword in lower_query:
+                return False, "", f"Search query contains blocked keyword: {keyword}"
+
+    # Escape LIKE special characters for safety
+    sanitized = sanitized.replace("%", r"\%").replace("_", r"\_")
+
+    return True, sanitized, None
+
+
+# =============================================================================
+# Handler Validation Decorator
+# =============================================================================
+
+from functools import wraps
+
+
+def validate_request(
+    schema: Optional[dict] = None,
+    required_params: Optional[list] = None,
+    path_validators: Optional[Dict[str, Callable]] = None,
+) -> Callable:
+    """Decorator for validating handler requests.
+
+    Provides automatic validation of request bodies and query parameters
+    for handler methods. Returns error responses early if validation fails.
+
+    Args:
+        schema: Schema dict for validating POST body (uses validate_against_schema)
+        required_params: List of required query parameter names
+        path_validators: Dict mapping path param names to validation functions
+
+    Returns:
+        Decorator function
+
+    Example:
+        @validate_request(
+            schema=DEBATE_START_SCHEMA,
+            required_params=["task"],
+            path_validators={"debate_id": validate_debate_id}
+        )
+        def _handle_start_debate(self, path, query, body, handler):
+            # body is already validated and parsed
+            task = body["task"]
+            ...
+
+        @validate_request(required_params=["limit"])
+        def _handle_list(self, path, query, handler):
+            limit = safe_query_int(query, "limit", 10)
+            ...
+
+    Usage Pattern:
+        The decorator assumes the handler method receives these args:
+        - self: The handler instance
+        - path: URL path string
+        - query: Query params dict
+        - body (optional): Parsed JSON body (for POST handlers)
+        - handler: Server handler object
+
+        For POST handlers with schema, the body is automatically parsed
+        and validated, then passed to the handler.
+
+        If validation fails, returns an error response dict with
+        {"error": "...", "status": 400}.
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Extract args - support multiple call patterns
+            path = args[0] if args else kwargs.get("path", "")
+            query = args[1] if len(args) > 1 else kwargs.get("query", {})
+
+            # Validate required query params
+            if required_params:
+                for param in required_params:
+                    val = query.get(param)
+                    if val is None or (isinstance(val, list) and not val):
+                        return {
+                            "error": f"Missing required parameter: {param}",
+                            "status": 400,
+                        }
+
+            # Validate path segments if validators provided
+            if path_validators:
+                parts = path.strip("/").split("/")
+                for name, validator in path_validators.items():
+                    # Try to find the segment in the path
+                    # Common patterns: /api/debates/{id}, /api/agent/{name}/history
+                    try:
+                        if name == "debate_id" and len(parts) >= 3:
+                            segment = parts[2]  # /api/debates/{id}
+                        elif name == "agent" and len(parts) >= 3:
+                            segment = parts[2]  # /api/agent/{name}
+                        elif name in kwargs:
+                            segment = kwargs[name]
+                        else:
+                            continue  # Skip if not found
+
+                        is_valid, err = validator(segment)
+                        if not is_valid:
+                            return {"error": err, "status": 400}
+                    except (IndexError, TypeError):
+                        pass  # Path structure doesn't match, skip
+
+            # For schemas, we need the body - caller must pass it
+            if schema:
+                body = kwargs.get("body")
+                if body is None and len(args) > 2:
+                    body = args[2]
+
+                if body is not None:
+                    result = validate_against_schema(body, schema)
+                    if not result.is_valid:
+                        return {"error": result.error, "status": 400}
+
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def validate_post_body(schema: dict) -> Callable:
+    """Decorator for validating POST request bodies only.
+
+    Simplified decorator that only validates the request body against
+    a schema. Use for POST endpoints that need body validation.
+
+    Args:
+        schema: Schema dict for body validation
+
+    Returns:
+        Decorator function
+
+    Example:
+        @validate_post_body(DEBATE_START_SCHEMA)
+        def _handle_start(self, body, handler):
+            task = body["task"]  # Already validated
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Body should be first positional arg or in kwargs
+            body = args[0] if args else kwargs.get("body", {})
+
+            if not isinstance(body, dict):
+                return {"error": "Request body must be a JSON object", "status": 400}
+
+            result = validate_against_schema(body, schema)
+            if not result.is_valid:
+                return {"error": result.error, "status": 400}
+
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def validate_query_params(
+    required: Optional[list] = None,
+    int_params: Optional[Dict[str, Tuple[int, int, int]]] = None,
+    string_params: Optional[Dict[str, Tuple[str, int]]] = None,
+) -> Callable:
+    """Decorator for validating query parameters.
+
+    Args:
+        required: List of required parameter names
+        int_params: Dict mapping param names to (default, min, max) tuples
+        string_params: Dict mapping param names to (default, max_length) tuples
+
+    Returns:
+        Decorator function
+
+    Example:
+        @validate_query_params(
+            required=["agent"],
+            int_params={"limit": (10, 1, 100), "offset": (0, 0, 10000)},
+            string_params={"sort": ("created_at", 64)}
+        )
+        def _handle_list(self, query, handler):
+            ...
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Query should be in kwargs or as a positional arg
+            query = kwargs.get("query")
+            if query is None:
+                # Check positional args - typically (self, path, query, ...)
+                for arg in args:
+                    if isinstance(arg, dict):
+                        query = arg
+                        break
+
+            if query is None:
+                query = {}
+
+            # Check required params
+            if required:
+                for param in required:
+                    val = query.get(param)
+                    if val is None or (isinstance(val, list) and not val):
+                        return {
+                            "error": f"Missing required parameter: {param}",
+                            "status": 400,
+                        }
+
+            # Validate int params
+            if int_params:
+                for param, (default, min_val, max_val) in int_params.items():
+                    try:
+                        raw = query.get(param)
+                        if raw is not None:
+                            if isinstance(raw, list):
+                                raw = raw[0]
+                            val = int(raw)
+                            if val < min_val or val > max_val:
+                                return {
+                                    "error": f"Parameter '{param}' must be between {min_val} and {max_val}",
+                                    "status": 400,
+                                }
+                    except (ValueError, TypeError):
+                        return {
+                            "error": f"Parameter '{param}' must be an integer",
+                            "status": 400,
+                        }
+
+            # Validate string params
+            if string_params:
+                for param, (default, max_len) in string_params.items():
+                    raw = query.get(param, default)
+                    if isinstance(raw, list):
+                        raw = raw[0] if raw else default
+                    if raw and len(str(raw)) > max_len:
+                        return {
+                            "error": f"Parameter '{param}' exceeds maximum length of {max_len}",
+                            "status": 400,
+                        }
+
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator

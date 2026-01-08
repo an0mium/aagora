@@ -250,6 +250,8 @@ class DebateFactory:
     ) -> "Arena":
         """Create a fully configured debate arena.
 
+        Uses ArenaBuilder internally for cleaner configuration.
+
         Args:
             config: Debate configuration
             event_hooks: Optional event hooks for the arena
@@ -263,7 +265,7 @@ class DebateFactory:
         """
         from aragora.core import Environment
         from aragora.debate.protocol import DebateProtocol
-        from aragora.debate.orchestrator import Arena
+        from aragora.debate.arena_builder import ArenaBuilder
 
         # Parse and create agents
         specs = config.parse_agent_specs()
@@ -293,26 +295,36 @@ class DebateFactory:
             topology="all-to-all",
         )
 
-        # Create arena with all subsystems
-        arena = Arena(
-            env,
-            agent_result.agents,
-            protocol,
-            event_hooks=event_hooks,
-            event_emitter=self.stream_emitter,
-            persona_manager=self.persona_manager,
-            debate_embeddings=self.debate_embeddings,
-            elo_system=self.elo_system,
-            position_tracker=self.position_tracker,
-            position_ledger=self.position_ledger,
-            flip_detector=self.flip_detector,
-            dissent_retriever=self.dissent_retriever,
-            moment_detector=self.moment_detector,
-            loop_id=config.debate_id,
-            trending_topic=config.trending_topic,
+        # Build arena using ArenaBuilder for cleaner configuration
+        builder = (
+            ArenaBuilder(env, agent_result.agents)
+            .with_protocol(protocol)
+            .with_event_hooks(event_hooks or {})
+            .with_event_emitter(self.stream_emitter)
+            .with_loop_id(config.debate_id or "")
         )
 
-        return arena
+        # Add optional subsystems if available
+        if self.persona_manager:
+            builder = builder.with_persona_manager(self.persona_manager)
+        if self.debate_embeddings:
+            builder = builder.with_debate_embeddings(self.debate_embeddings)
+        if self.elo_system:
+            builder = builder.with_elo_system(self.elo_system)
+        if self.position_tracker:
+            builder = builder.with_position_tracker(self.position_tracker)
+        if self.position_ledger:
+            builder = builder.with_position_ledger(self.position_ledger)
+        if self.flip_detector:
+            builder = builder.with_flip_detector(self.flip_detector)
+        if self.dissent_retriever:
+            builder = builder.with_dissent_retriever(self.dissent_retriever)
+        if self.moment_detector:
+            builder = builder.with_moment_detector(self.moment_detector)
+        if config.trending_topic:
+            builder = builder.with_trending_topic(config.trending_topic)
+
+        return builder.build()
 
     def reset_circuit_breakers(self, arena: "Arena") -> None:
         """Reset circuit breakers for fresh debate.

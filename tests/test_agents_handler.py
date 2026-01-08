@@ -194,9 +194,9 @@ class TestCanHandle:
         """Test can_handle for rankings."""
         assert handler.can_handle("/api/rankings") is True
 
-    def test_can_handle_calibration_leaderboard(self, handler):
-        """Test can_handle for calibration leaderboard."""
-        assert handler.can_handle("/api/calibration/leaderboard") is True
+    def test_cannot_handle_calibration_leaderboard(self, handler):
+        """Test AgentsHandler does NOT handle calibration (handled by CalibrationHandler)."""
+        assert handler.can_handle("/api/calibration/leaderboard") is False
 
     def test_can_handle_matches_recent(self, handler):
         """Test can_handle for recent matches."""
@@ -430,13 +430,8 @@ class TestCalibrationEndpoint:
 
         assert result.status_code == 200
 
-    def test_get_calibration_leaderboard_success(self, handler):
-        """Test calibration leaderboard."""
-        clear_cache()
-        result = handler.handle("/api/calibration/leaderboard", {}, None)
-
-        assert result is not None
-        assert result.status_code == 200
+    # NOTE: test_get_calibration_leaderboard moved to test_calibration_handler.py
+    # since /api/calibration/leaderboard is now handled by CalibrationHandler
 
 
 # =============================================================================

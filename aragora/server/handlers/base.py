@@ -10,9 +10,7 @@ import logging
 import os
 import re
 import sqlite3
-import time
 import uuid
-from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import wraps
@@ -21,7 +19,22 @@ from urllib.parse import parse_qs
 
 from aragora.config import DB_TIMEOUT_SECONDS
 from aragora.server.error_utils import safe_error_message
-from aragora.server.prometheus import record_cache_hit, record_cache_miss
+from aragora.server.handlers.cache import (
+    BoundedTTLCache,
+    CACHE_INVALIDATION_MAP,
+    CACHE_MAX_ENTRIES,
+    CACHE_EVICT_PERCENT,
+    _cache,  # Re-export for backwards compatibility
+    clear_cache,
+    get_cache_stats,
+    get_handler_cache,
+    invalidate_agent_cache,
+    invalidate_cache,
+    invalidate_debate_cache,
+    invalidate_leaderboard_cache,
+    invalidate_on_event,
+    ttl_cache,
+)
 from aragora.server.validation import (
     SAFE_ID_PATTERN,
     SAFE_AGENT_PATTERN,
@@ -43,6 +56,7 @@ __all__ = [
     "invalidate_on_event", "invalidate_leaderboard_cache", "invalidate_agent_cache",
     "invalidate_debate_cache", "PathMatcher", "RouteDispatcher", "safe_fetch",
     "get_db_connection", "table_exists", "safe_get", "safe_get_nested", "safe_json_parse",
+    "get_host_header", "get_agent_name",
     "SAFE_ID_PATTERN", "SAFE_SLUG_PATTERN", "SAFE_AGENT_PATTERN",
 ]
 
@@ -198,323 +212,52 @@ def safe_json_parse(data: Any, default: Any = None) -> Any:
     return default
 
 
-# Cache configuration from environment
-CACHE_MAX_ENTRIES = int(os.environ.get("ARAGORA_CACHE_MAX_ENTRIES", "1000"))
-CACHE_EVICT_PERCENT = float(os.environ.get("ARAGORA_CACHE_EVICT_PERCENT", "0.1"))
-
-
-class BoundedTTLCache:
-    """
-    Thread-safe TTL cache with bounded size and LRU eviction.
-
-    Prevents memory leaks by limiting the number of entries and
-    evicting oldest entries when the limit is reached.
-    """
-
-    def __init__(self, max_entries: int = CACHE_MAX_ENTRIES, evict_percent: float = CACHE_EVICT_PERCENT):
-        self._cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
-        self._max_entries = max_entries
-        self._evict_count = max(1, int(max_entries * evict_percent))
-        self._hits = 0
-        self._misses = 0
-
-    def get(self, key: str, ttl_seconds: float) -> tuple[bool, Any]:
-        """
-        Get a value from cache if not expired.
-
-        Returns:
-            Tuple of (hit, value). If hit is False, value is None.
-        """
-        now = time.time()
-
-        if key in self._cache:
-            cached_time, cached_value = self._cache[key]
-            if now - cached_time < ttl_seconds:
-                # Move to end (most recently used)
-                self._cache.move_to_end(key)
-                self._hits += 1
-                return True, cached_value
-            else:
-                # Expired - remove it
-                del self._cache[key]
-
-        self._misses += 1
-        return False, None
-
-    def set(self, key: str, value: Any) -> None:
-        """Store a value in cache, evicting old entries if necessary."""
-        now = time.time()
-
-        # If key exists, update and move to end
-        if key in self._cache:
-            self._cache[key] = (now, value)
-            self._cache.move_to_end(key)
-            return
-
-        # Check if we need to evict
-        if len(self._cache) >= self._max_entries:
-            self._evict_oldest()
-
-        # Add new entry
-        self._cache[key] = (now, value)
-
-    def _evict_oldest(self) -> int:
-        """Evict oldest entries to make room. Returns count evicted."""
-        evicted = 0
-        for _ in range(self._evict_count):
-            if self._cache:
-                self._cache.popitem(last=False)
-                evicted += 1
-        if evicted > 0:
-            logger.debug(f"Cache evicted {evicted} entries (size: {len(self._cache)})")
-        return evicted
-
-    def clear(self, key_prefix: str | None = None) -> int:
-        """Clear entries, optionally filtered by prefix."""
-        if key_prefix is None:
-            count = len(self._cache)
-            self._cache.clear()
-            return count
-        else:
-            keys_to_remove = [k for k in self._cache if k.startswith(key_prefix)]
-            for k in keys_to_remove:
-                del self._cache[k]
-            return len(keys_to_remove)
-
-    def __len__(self) -> int:
-        return len(self._cache)
-
-    def __contains__(self, key: str) -> bool:
-        return key in self._cache
-
-    def items(self):
-        """Iterate over cache items."""
-        return self._cache.items()
-
-    @property
-    def stats(self) -> dict:
-        """Get cache statistics."""
-        total = self._hits + self._misses
-        return {
-            "entries": len(self._cache),
-            "max_entries": self._max_entries,
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": self._hits / total if total > 0 else 0.0,
-        }
-
-
-# Global bounded cache instance
-_cache = BoundedTTLCache()
-
-# Track registration status
-_handler_cache_registered = False
-
-
-def _register_handler_cache() -> None:
-    """Register handler cache with ServiceRegistry for observability."""
-    global _handler_cache_registered
-    if _handler_cache_registered:
-        return
-
-    try:
-        from aragora.services import ServiceRegistry, HandlerCacheService
-
-        registry = ServiceRegistry.get()
-        if not registry.has(HandlerCacheService):
-            registry.register(HandlerCacheService, _cache)
-        _handler_cache_registered = True
-        logger.debug("Handler cache registered with ServiceRegistry")
-    except ImportError:
-        pass  # Services module not available
-
-
-def get_handler_cache() -> BoundedTTLCache:
-    """Get the global handler cache, registering with ServiceRegistry if available."""
-    _register_handler_cache()
-    return _cache
-
-
-def ttl_cache(ttl_seconds: float = 60.0, key_prefix: str = "", skip_first: bool = True):
-    """
-    Decorator for caching function results with TTL expiry.
+def get_host_header(handler, default: str = 'localhost:8080') -> str:
+    """Extract Host header from request handler.
 
     Args:
-        ttl_seconds: How long to cache results (default 60s)
-        key_prefix: Prefix for cache key to namespace different functions
-        skip_first: If True, skip first arg (self) when building cache key for methods.
-                   Default is True since most usage is on class methods.
-                   Set to False when decorating standalone functions.
-
-    Usage:
-        @ttl_cache(ttl_seconds=300, key_prefix="leaderboard")
-        def _get_leaderboard(self, limit: int):
-            ...
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Skip 'self' when building cache key for methods
-            cache_args = args[1:] if skip_first and args else args
-            # Build cache key from function name, args and kwargs
-            cache_key = f"{key_prefix}:{func.__name__}:{cache_args}:{sorted(kwargs.items())}"
-
-            hit, cached_value = _cache.get(cache_key, ttl_seconds)
-            if hit:
-                record_cache_hit(key_prefix or func.__name__)
-                logger.debug(f"Cache hit for {cache_key}")
-                return cached_value
-
-            # Cache miss or expired
-            record_cache_miss(key_prefix or func.__name__)
-            result = func(*args, **kwargs)
-            _cache.set(cache_key, result)
-            logger.debug(f"Cache miss, stored {cache_key}")
-            return result
-        return wrapper
-    return decorator
-
-
-def clear_cache(key_prefix: str | None = None) -> int:
-    """Clear cached entries, optionally filtered by prefix.
-
-    Returns number of entries cleared.
-    """
-    return _cache.clear(key_prefix)
-
-
-def get_cache_stats() -> dict:
-    """Get cache statistics for monitoring."""
-    return _cache.stats
-
-
-# =============================================================================
-# Event-Driven Cache Invalidation
-# =============================================================================
-
-# Maps event names to cache prefixes that should be invalidated
-CACHE_INVALIDATION_MAP: dict[str, list[str]] = {
-    # ELO/ranking events
-    "elo_updated": [
-        "leaderboard", "lb_rankings", "agents_list", "agent_profile",
-        "calibration_lb", "recent_matches", "analytics_ranking",
-    ],
-    "match_recorded": [
-        "leaderboard", "lb_rankings", "lb_matches", "recent_matches",
-        "agent_h2h", "analytics_ranking",
-    ],
-    # Debate events
-    "debate_completed": [
-        "dashboard_debates", "analytics_debates", "replays_list",
-        "consensus_stats", "consensus_similar",
-    ],
-    "debate_started": [
-        "dashboard_debates",
-    ],
-    # Agent events
-    "agent_updated": [
-        "agent_profile", "agents_list", "lb_introspection",
-    ],
-    # Memory events
-    "memory_updated": [
-        "analytics_memory", "critique_patterns", "critique_stats",
-    ],
-    # Consensus events
-    "consensus_reached": [
-        "consensus_stats", "consensus_settled", "consensus_similar",
-    ],
-}
-
-
-def invalidate_on_event(event_name: str) -> int:
-    """Invalidate cache entries associated with an event.
-
-    Args:
-        event_name: Name of the event (e.g., "elo_updated", "debate_completed")
+        handler: HTTP request handler with headers attribute
+        default: Default value if handler is None or Host header missing
 
     Returns:
-        Total number of cache entries invalidated
+        Host header value or default
+
+    Example:
+        # Before (repeated 5+ times):
+        host = handler.headers.get('Host', 'localhost:8080') if handler else 'localhost:8080'
+
+        # After:
+        host = get_host_header(handler)
     """
-    prefixes = CACHE_INVALIDATION_MAP.get(event_name, [])
-    total_cleared = 0
-    for prefix in prefixes:
-        cleared = _cache.clear(prefix)
-        total_cleared += cleared
-        if cleared > 0:
-            logger.debug(f"Cache invalidation: {event_name} cleared {cleared} entries with prefix '{prefix}'")
-    if total_cleared > 0:
-        logger.info(f"Cache invalidated: event={event_name}, entries_cleared={total_cleared}")
-    return total_cleared
+    if handler is None:
+        return default
+    return handler.headers.get('Host', default) if hasattr(handler, 'headers') else default
 
 
-def invalidate_cache(data_source: str) -> int:
-    """Invalidate cache entries associated with a data source.
+def get_agent_name(agent: Any) -> Optional[str]:
+    """Extract agent name from dict or object.
 
-    This function clears all cache prefixes registered for a given data source
-    in the CACHE_INVALIDATION_MAP.
+    Handles the common pattern where agent data might be either
+    a dict with 'name'/'agent_name' key or an object with name attribute.
 
     Args:
-        data_source: Name of the data source (e.g., "elo", "memory", "debates")
+        agent: Dict or object containing agent name
 
     Returns:
-        Total number of cache entries invalidated
+        Agent name string or None if not found
+
+    Example:
+        # Before (repeated 4+ times):
+        name = agent.get("name") if isinstance(agent, dict) else getattr(agent, "name", None)
+
+        # After:
+        name = get_agent_name(agent)
     """
-    # Map data sources to event names
-    source_to_event = {
-        "elo": "elo_updated",
-        "memory": "memory_updated",
-        "debates": "debate_completed",
-        "consensus": "consensus_reached",
-        "agent": "agent_updated",
-        "calibration": "elo_updated",  # Uses same prefixes as ELO
-    }
-    event_name = source_to_event.get(data_source)
-    if event_name:
-        return invalidate_on_event(event_name)
-
-    # Fallback: try to clear by prefix directly
-    cleared = _cache.clear(data_source)
-    if cleared > 0:
-        logger.debug(f"Cache invalidation: cleared {cleared} entries with prefix '{data_source}'")
-    return cleared
-
-
-def invalidate_leaderboard_cache() -> int:
-    """Convenience function to invalidate all leaderboard-related caches."""
-    return invalidate_on_event("elo_updated")
-
-
-def invalidate_agent_cache(agent_name: str | None = None) -> int:
-    """Invalidate agent-related cache entries.
-
-    Args:
-        agent_name: If provided, only invalidate entries for this agent.
-                   If None, invalidate all agent caches.
-    """
-    if agent_name:
-        # Invalidate entries containing the agent name
-        keys_to_clear = [k for k in _cache._cache.keys() if agent_name in k]
-        for key in keys_to_clear:
-            del _cache._cache[key]
-        return len(keys_to_clear)
-    else:
-        return invalidate_on_event("agent_updated")
-
-
-def invalidate_debate_cache(debate_id: str | None = None) -> int:
-    """Invalidate debate-related cache entries.
-
-    Args:
-        debate_id: If provided, only invalidate entries for this debate.
-                  If None, invalidate all debate caches.
-    """
-    if debate_id:
-        keys_to_clear = [k for k in _cache._cache.keys() if debate_id in k]
-        for key in keys_to_clear:
-            del _cache._cache[key]
-        return len(keys_to_clear)
-    else:
-        return invalidate_on_event("debate_completed")
+    if agent is None:
+        return None
+    if isinstance(agent, dict):
+        return agent.get("agent_name") or agent.get("name")
+    return getattr(agent, "agent_name", None) or getattr(agent, "name", None)
 
 
 @dataclass
