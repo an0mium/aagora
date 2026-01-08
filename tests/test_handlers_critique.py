@@ -296,7 +296,7 @@ class TestErrorHandling:
 
     def test_safe_error_message(self):
         """Safe error message sanitizes error types."""
-        from aragora.server.handlers.critique import _safe_error_message
+        from aragora.server.error_utils import safe_error_message as _safe_error_message
 
         assert _safe_error_message(FileNotFoundError("test"), "test") == "Resource not found"
         assert _safe_error_message(ValueError("test"), "test") == "Invalid data format"

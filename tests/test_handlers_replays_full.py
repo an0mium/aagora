@@ -13,7 +13,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from aragora.server.handlers.replays import ReplaysHandler, _safe_error_message
+from aragora.server.handlers.replays import ReplaysHandler
+from aragora.server.error_utils import safe_error_message as _safe_error_message
 from aragora.server.handlers.base import clear_cache
 
 
