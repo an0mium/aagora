@@ -134,7 +134,7 @@ class OpenAICompatibleMixin(QuotaFallbackMixin):
         """Generate a response using the OpenAI-compatible API."""
         full_prompt = prompt
         if context:
-            full_prompt = self._build_context_prompt(context) + prompt
+            full_prompt = self._build_context_prompt(context) + prompt  # type: ignore[attr-defined]
 
         url = self._get_endpoint_url()
         headers = self._build_headers()
@@ -173,7 +173,7 @@ class OpenAICompatibleMixin(QuotaFallbackMixin):
         """Stream tokens from the OpenAI-compatible API."""
         full_prompt = prompt
         if context:
-            full_prompt = self._build_context_prompt(context) + prompt
+            full_prompt = self._build_context_prompt(context) + prompt  # type: ignore[attr-defined]
 
         url = self._get_endpoint_url()
         headers = self._build_headers()
@@ -234,7 +234,7 @@ SEVERITY: X.X
 REASONING: explanation"""
 
         response = await self.generate(critique_prompt, context)
-        return self._parse_critique(response, "proposal", proposal)
+        return self._parse_critique(response, "proposal", proposal)  # type: ignore[attr-defined]
 
 
 __all__ = ["OpenAICompatibleMixin"]

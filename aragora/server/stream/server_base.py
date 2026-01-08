@@ -112,7 +112,7 @@ class ServerBase:
         self._ws_auth_lock = threading.Lock()  # Lock #4 in hierarchy
 
         # Subscribe to emitter to maintain debate states
-        self._emitter.subscribe(self._update_debate_state)
+        self._emitter.subscribe(self._update_debate_state)  # type: ignore[arg-type]
 
     @property
     def emitter(self) -> SyncEventEmitter:
@@ -151,7 +151,7 @@ class ServerBase:
             # Get or create
             self._rate_limiter_last_access[client_id] = now
             if client_id not in self._rate_limiters:
-                self._rate_limiters[client_id] = TokenBucket(rate=rate, capacity=capacity)
+                self._rate_limiters[client_id] = TokenBucket(rate=rate, capacity=capacity)  # type: ignore[call-arg]
 
             return self._rate_limiters[client_id]
 
