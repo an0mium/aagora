@@ -16,7 +16,10 @@ Usage:
 import asyncio
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from aragora.debate.traces import DebateTrace
 
 from .script_gen import generate_script, ScriptSegment
 from .audio_engine import generate_audio, VOICE_MAP

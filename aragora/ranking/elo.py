@@ -839,10 +839,11 @@ class EloSystem:
             if temp_path.exists():
                 temp_path.unlink()
 
-    def get_cached_leaderboard(self, limit: int = 20) -> list[dict]:
-        """Get leaderboard from cache if available.
+    def get_snapshot_leaderboard(self, limit: int = 20) -> list[dict]:
+        """Get leaderboard from JSON snapshot file.
 
-        Falls back to database query if cache is missing or stale.
+        Falls back to database query if snapshot is missing or stale.
+        Use get_cached_leaderboard() for in-memory caching.
 
         Args:
             limit: Maximum number of entries to return

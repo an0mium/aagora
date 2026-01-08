@@ -292,10 +292,11 @@ class PersonaManager:
             cursor.execute("SELECT expertise FROM personas WHERE agent_name = ?", (agent_name,))
             row = cursor.fetchone()
 
+            expertise: dict[str, Any]
             if row:
-                expertise: dict[str, Any] = safe_json_loads(row[0], {})
+                expertise = safe_json_loads(row[0], {})
             else:
-                expertise: dict[str, Any] = {}
+                expertise = {}
 
             # Smooth update (blend old and new)
             old_score = expertise.get(domain, 0.5)

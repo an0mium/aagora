@@ -65,8 +65,8 @@ class OpenAICompatibleMixin(QuotaFallbackMixin):
     timeout: int
 
     # Methods inherited from CritiqueMixin (via APIAgent):
-    # - _build_context_prompt(context: list[Message]) -> str
-    # - _parse_critique(response: str, target_agent: str, target_content: str) -> Critique
+    def _build_context_prompt(self, context: list[Message]) -> str: ...
+    def _parse_critique(self, response: str, target_agent: str, target_content: str) -> Critique: ...
 
     def _build_headers(self) -> dict:
         """Build request headers. Override to add provider-specific headers."""
