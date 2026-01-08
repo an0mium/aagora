@@ -170,7 +170,7 @@ class BeliefHandler(BaseHandler):
             return error_response("Debate trace not found", 404)
 
         trace = DebateTrace.load(trace_path)
-        result = trace.to_debate_result()
+        result = trace.to_debate_result()  # type: ignore[attr-defined]
 
         # Build belief network from debate
         network = BeliefNetwork(debate_id=debate_id)
@@ -204,7 +204,7 @@ class BeliefHandler(BaseHandler):
             return error_response("Debate trace not found", 404)
 
         trace = DebateTrace.load(trace_path)
-        result = trace.to_debate_result()
+        result = trace.to_debate_result()  # type: ignore[attr-defined]
 
         # Build belief network from debate
         network = BeliefNetwork(debate_id=debate_id)
@@ -300,7 +300,7 @@ class BeliefHandler(BaseHandler):
 
         # Load from trace file
         trace = DebateTrace.load(trace_path)
-        result = trace.to_debate_result()
+        result = trace.to_debate_result()  # type: ignore[attr-defined]
 
         # Build cartographer from debate result
         cartographer = ArgumentCartographer()

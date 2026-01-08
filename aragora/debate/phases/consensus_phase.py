@@ -700,7 +700,7 @@ class ConsensusPhase:
                     intensity_multiplier = 1.0
 
                 final_weight = base_user_weight * intensity_multiplier
-                vote_counts[canonical] += final_weight
+                vote_counts[canonical] += final_weight  # type: ignore[assignment]
                 total_weighted += final_weight
 
                 logger.debug(

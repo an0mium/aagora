@@ -442,7 +442,7 @@ class PulseManager:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     logger.warning(f"Ingestor error: {result}")
                 else:
                     all_topics.extend(result)

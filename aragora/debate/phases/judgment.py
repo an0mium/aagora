@@ -215,7 +215,7 @@ class JudgmentPhase:
         Returns:
             Dict with judge statistics
         """
-        stats = {
+        stats: dict[str, Any] = {
             "name": judge.name,
             "role": judge.role,
             "selection_method": self.protocol.judge_selection,

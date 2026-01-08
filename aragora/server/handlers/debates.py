@@ -669,7 +669,7 @@ class DebatesHandler(BaseHandler):
                 return error_response("Debate trace not found", 404)
 
             trace = DebateTrace.load(trace_path)
-            result = trace.to_debate_result()
+            result = trace.to_debate_result()  # type: ignore[attr-defined]
 
             analyzer = MetaCritiqueAnalyzer()
             critique = analyzer.analyze(result)
@@ -683,8 +683,8 @@ class DebatesHandler(BaseHandler):
                     {
                         "type": o.observation_type,
                         "severity": o.severity,
-                        "agent": o.agent,
-                        "round": o.round_num,
+                        "agent": getattr(o, 'agent', None),
+                        "round": getattr(o, 'round_num', None),
                         "description": o.description,
                     }
                     for o in critique.observations
@@ -722,7 +722,7 @@ class DebatesHandler(BaseHandler):
 
             # Load from trace file
             trace = DebateTrace.load(trace_path)
-            result = trace.to_debate_result()
+            result = trace.to_debate_result()  # type: ignore[attr-defined]
 
             # Build cartographer from debate result
             cartographer = ArgumentCartographer()

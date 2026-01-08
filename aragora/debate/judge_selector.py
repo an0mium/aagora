@@ -302,7 +302,7 @@ class VotedStrategy(JudgeSelectionStrategy):
             prompt = self._build_prompt(other_agents, proposals)
 
             try:
-                raw_response = await self._generate(agent, prompt, context)
+                raw_response = await self._generate(agent, prompt, context)  # type: ignore[misc]
                 response = self._sanitize(raw_response, agent.name)
 
                 # Parse vote - look for agent names in response

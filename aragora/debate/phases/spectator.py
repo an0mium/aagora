@@ -162,7 +162,7 @@ class SpectatorMixin:
                     content=details,
                     role="critic",
                     round_num=round_num,
-                    target_agent=target if target else None,
+                    metadata={"target_agent": target} if target else None,
                 )
             elif event_type == "vote":
                 # Record vote relationship
@@ -173,7 +173,7 @@ class SpectatorMixin:
                         content=f"Voted for {choice}",
                         role="voter",
                         round_num=round_num,
-                        target_agent=choice,
+                        metadata={"target_agent": choice},
                     )
         except Exception as e:
             logger.debug(f"Cartographer update error: {e}")
