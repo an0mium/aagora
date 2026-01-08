@@ -2553,6 +2553,73 @@ The most valuable proposals combine deep analysis with actionable implementation
             record_replay_fn=self._record_replay_event if hasattr(self, '_record_replay_event') else None,
         )
 
+    def _create_post_debate_hooks(self, debate_team: list = None) -> "PostDebateHooks":
+        """Create PostDebateHooks with callbacks to NomicLoop's post-processing methods.
+
+        This enables the extracted DebatePhase to perform all the same post-processing
+        that the inline phase_debate() does. Each hook maps to a specific NomicLoop method:
+
+        - on_consensus_stored → _store_debate_consensus
+        - on_calibration_recorded → _record_calibration_from_debate
+        - on_insights_extracted → _extract_and_store_insights
+        - on_memories_recorded → _record_agent_memories
+        - on_persona_recorded → _record_persona_performance
+        - on_patterns_extracted → _extract_and_store_patterns
+        - on_meta_analyzed → _analyze_debate_process + _store_meta_recommendations
+        - on_elo_recorded → _record_elo_match
+        - on_claims_extracted → _extract_claims_from_debate
+        - on_belief_network_built → _build_belief_network
+        """
+        if not _NOMIC_PHASES_AVAILABLE:
+            raise RuntimeError("Extracted phases not available")
+
+        # Create wrapper functions that capture self and debate_team
+        async def consensus_hook(result, topic):
+            await self._store_debate_consensus(result, topic)
+
+        def calibration_hook(result, agents):
+            # Domain detection requires the topic, which we don't have here
+            # Use "general" as default - the inline implementation has access to topic_hint
+            self._record_calibration_from_debate(result, agents, domain="general")
+
+        async def insights_hook(result):
+            await self._extract_and_store_insights(result)
+
+        async def memories_hook(result, topic):
+            await self._record_agent_memories(result, topic)
+
+        def persona_hook(result, topic):
+            self._record_persona_performance(result, topic)
+
+        async def patterns_hook(result):
+            await self._extract_and_store_patterns(result)
+
+        def meta_hook(result):
+            meta_critique = self._analyze_debate_process(result)
+            self._store_meta_recommendations(meta_critique)
+
+        def elo_hook(result, topic):
+            self._record_elo_match(result, topic)
+
+        def claims_hook(result):
+            self._extract_claims_from_debate(result)
+
+        def belief_hook(result):
+            self._build_belief_network()
+
+        return PostDebateHooks(
+            on_consensus_stored=consensus_hook,
+            on_calibration_recorded=calibration_hook,
+            on_insights_extracted=insights_hook,
+            on_memories_recorded=memories_hook,
+            on_persona_recorded=persona_hook,
+            on_patterns_extracted=patterns_hook,
+            on_meta_analyzed=meta_hook,
+            on_elo_recorded=elo_hook,
+            on_claims_extracted=claims_hook,
+            on_belief_network_built=belief_hook,
+        )
+
     def get_current_features(self) -> str:
         """Read current aragora state from the codebase."""
         init_file = self.aragora_path / "aragora" / "__init__.py"
