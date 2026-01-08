@@ -18,7 +18,7 @@ DEBATE ENGINE:
 - Consensus variance tracking (strong/medium/weak/unanimous)
 
 REAL-TIME STREAMING (ALREADY EXISTS - DO NOT RECREATE):
-- WebSocket server for live debate events (aragora/server/stream.py)
+- WebSocket server for live debate events (aragora/server/stream/ package)
 - Live dashboard at https://live.aragora.ai
 - Cloudflare tunnel for public access (api.aragora.ai)
 - Event types: debate_start, round_start, agent_message, critique, vote, consensus

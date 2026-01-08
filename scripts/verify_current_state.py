@@ -62,13 +62,23 @@ def check_fork_bridge():
         else:
             findings.append("fork_handler.py missing")
 
-        # Check if integrated in stream.py
-        with open('aragora/server/stream.py', 'r') as f:
-            stream_content = f.read()
-            if 'ForkBridgeHandler' in stream_content:
-                findings.append("ForkBridgeHandler integrated in stream.py")
-            else:
-                findings.append("ForkBridgeHandler not integrated in stream.py")
+        # Check if integrated in stream package (refactored from stream.py)
+        stream_modules = [
+            'aragora/server/stream/servers.py',
+            'aragora/server/stream/message_handlers.py',
+        ]
+        fork_integrated = False
+        for module_path in stream_modules:
+            try:
+                with open(module_path, 'r') as f:
+                    if 'ForkBridgeHandler' in f.read():
+                        fork_integrated = True
+                        findings.append(f"ForkBridgeHandler integrated in {module_path}")
+                        break
+            except FileNotFoundError:
+                continue
+        if not fork_integrated:
+            findings.append("ForkBridgeHandler not found in stream package")
 
     except Exception as e:
         findings.append(f"Cannot check fork bridge: {e}")

@@ -219,6 +219,13 @@ class RelationshipTracker:
                 critic = critique.get("agent") or critique.get("critic")
                 target = critique.get("target") or critique.get("target_agent")
                 if not critic or not target or critic == target:
+                    # Log why critique was dropped for debugging
+                    if not critic:
+                        logger.debug(f"Critique dropped: missing critic field in debate {debate_id}")
+                    elif not target:
+                        logger.debug(f"Critique dropped: missing target field in debate {debate_id}")
+                    elif critic == target:
+                        logger.debug(f"Critique dropped: self-critique by {critic} in debate {debate_id}")
                     continue
 
                 canonical_a, canonical_b = self._canonical_pair(critic, target)

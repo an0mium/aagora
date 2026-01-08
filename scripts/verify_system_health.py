@@ -48,27 +48,48 @@ def check_cli_integration():
     return cli_agent_path.exists()
 
 def check_stream_for_loop_id_binding():
-    """Check if stream.py has loop_id binding."""
-    stream_path = Path("aragora/server/stream.py")
-    if stream_path.exists():
-        try:
-            with open(stream_path, 'r') as f:
-                content = f.read()
-                return "_bound_loop_id" in content or "ws.loop_id" in content
-        except Exception:
-            pass
+    """Check if stream package has loop_id binding.
+
+    Note: stream.py was refactored into aragora/server/stream/ package.
+    Now checks multiple modules in the stream package.
+    """
+    # Check the refactored stream package modules
+    stream_modules = [
+        Path("aragora/server/stream/servers.py"),
+        Path("aragora/server/stream/broadcaster.py"),
+        Path("aragora/server/stream/state_manager.py"),
+    ]
+    for stream_path in stream_modules:
+        if stream_path.exists():
+            try:
+                with open(stream_path, 'r') as f:
+                    content = f.read()
+                    if "_bound_loop_id" in content or "ws.loop_id" in content or "loop_id" in content:
+                        return True
+            except Exception:
+                pass
     return False
 
 def check_stream_for_validation():
-    """Check if stream.py validates loop_id."""
-    stream_path = Path("aragora/server/stream.py")
-    if stream_path.exists():
-        try:
-            with open(stream_path, 'r') as f:
-                content = f.read()
-                return "loop_id in self.active_loops" in content
-        except Exception:
-            pass
+    """Check if stream package validates loop_id.
+
+    Note: stream.py was refactored into aragora/server/stream/ package.
+    Now checks multiple modules in the stream package.
+    """
+    # Check the refactored stream package modules
+    stream_modules = [
+        Path("aragora/server/stream/servers.py"),
+        Path("aragora/server/stream/state_manager.py"),
+    ]
+    for stream_path in stream_modules:
+        if stream_path.exists():
+            try:
+                with open(stream_path, 'r') as f:
+                    content = f.read()
+                    if "loop_id in self.active_loops" in content or "active_loops" in content:
+                        return True
+            except Exception:
+                pass
     return False
 
 def check_file_exists(file_path):
@@ -102,13 +123,13 @@ def check_websocket_auth_capability():
 def diagnose_system():
     """Run all diagnostic checks."""
     diagnostics = {
-        'agent_failures': {
-            'null_bytes': check_for_null_bytes(),
-            'timeouts': check_timeout_handling(),
-            'cli_errors': check_cli_integration()
+        'agent_health': {
+            'null_bytes_found': check_for_null_bytes(),
+            'timeout_handling_present': check_timeout_handling(),
+            'cli_integration_present': check_cli_integration()
         },
         'loop_id_routing': {
-            'missing_in_stream': not check_stream_for_loop_id_binding(),
+            'loop_id_binding_present': check_stream_for_loop_id_binding(),
             'validation_present': check_stream_for_validation()
         },
         'auth_readiness': {
@@ -122,13 +143,21 @@ def diagnose_system():
 def prioritize_fixes(diagnostics):
     """Return ordered list of priorities."""
     priorities = []
-    if diagnostics['agent_failures']['null_bytes'] or diagnostics['agent_failures']['timeouts']:
-        priorities.append(("CRITICAL", "Fix agent failure modes - debates cannot complete"))
-    if diagnostics['loop_id_routing']['missing_in_stream']:
+    # Check for actual problems (not presence of safety features)
+    if diagnostics['agent_health']['null_bytes_found']:
+        priorities.append(("CRITICAL", "Fix null bytes in logs - indicates encoding issues"))
+    if not diagnostics['agent_health']['timeout_handling_present']:
+        priorities.append(("HIGH", "Add timeout handling - debates may hang indefinitely"))
+    if not diagnostics['agent_health']['cli_integration_present']:
+        priorities.append(("HIGH", "Fix CLI integration - agents cannot be invoked"))
+    if not diagnostics['loop_id_routing']['loop_id_binding_present']:
         priorities.append(("HIGH", "Fix loop_id routing - audience participation broken"))
-    if (diagnostics['auth_readiness']['module_exists'] and
-        diagnostics['auth_readiness']['check_auth_implemented']):
-        priorities.append(("MEDIUM", "Wire authentication - security scaffolding"))
+    if not diagnostics['loop_id_routing']['validation_present']:
+        priorities.append(("MEDIUM", "Add loop_id validation - security gap"))
+    if not diagnostics['auth_readiness']['module_exists']:
+        priorities.append(("LOW", "Add auth module - security scaffolding"))
+    if not priorities:
+        priorities.append(("OK", "All critical systems healthy"))
     return priorities
 
 if __name__ == "__main__":

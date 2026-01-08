@@ -11,7 +11,12 @@ Aragora is a multi-agent debate framework where heterogeneous AI agents discuss,
 ```
 aragora/
 ├── debate/           # Core debate orchestration
-│   ├── orchestrator.py     # Arena class - main debate engine (1,742 LOC)
+│   ├── orchestrator.py     # Arena class - main debate engine (~1,900 LOC)
+│   ├── phases/             # Extracted phase implementations
+│   │   ├── spectator.py       # Spectator mode (ArgumentCartographer)
+│   │   ├── consensus_phase.py # Consensus detection logic
+│   │   ├── judgment.py        # Judge selection and voting
+│   │   └── analytics_phase.py # Debate analytics
 │   ├── memory_manager.py   # Memory coordination (extracted)
 │   ├── prompt_builder.py   # Prompt construction (extracted)
 │   ├── security_barrier.py # Telemetry redaction (extracted)
@@ -25,18 +30,30 @@ aragora/
 │   │   ├── gemini.py       # Google Gemini agent
 │   │   ├── openrouter.py   # OpenRouter multi-model agent
 │   │   └── ollama.py       # Local Ollama agent
+│   ├── relationships.py # Agent relationship tracking
+│   ├── positions.py     # Position ledger and calibration
 │   └── fallback.py      # Quota detection and OpenRouter fallback
 ├── memory/           # Learning and persistence
-│   ├── continuum.py     # Multi-tier memory (1,232 LOC)
+│   ├── continuum.py     # Multi-tier memory (~1,200 LOC)
 │   └── consensus.py     # Historical debate outcomes
 ├── server/           # HTTP/WebSocket API
-│   └── unified_server.py  # Main server (1,248 LOC, 72+ endpoints)
+│   ├── unified_server.py  # Main server (~1,200 LOC, 72+ endpoints)
+│   ├── handlers/          # HTTP endpoint handlers (29 handlers)
+│   └── stream/            # WebSocket streaming (refactored package)
+│       ├── servers.py        # AiohttpUnifiedServer (~2,500 LOC)
+│       ├── emitter.py        # SyncEventEmitter, TokenBucket
+│       ├── broadcaster.py    # WebSocket client management
+│       ├── state_manager.py  # Debate/loop state with TTL cleanup
+│       ├── events.py         # StreamEvent types (45+ event types)
+│       └── arena_hooks.py    # Arena event integration
 ├── ranking/          # Agent skill tracking
-│   └── elo.py           # ELO ratings and calibration (1,709 LOC)
+│   └── elo.py           # ELO ratings and calibration (~1,700 LOC)
 ├── resilience.py     # CircuitBreaker for agent failure handling
 └── verification/     # Proof generation
     └── formal.py        # Z3/Lean verification backends
 ```
+
+**Note:** `server/stream.py` was refactored into the `server/stream/` package with 9 modules.
 
 ## Protected Files
 
@@ -166,5 +183,11 @@ Recent additions (2026-01):
 - `ttl_cache` decorator in handlers/base.py - simple TTL caching
 - `from __future__ import annotations` added to 28 core modules for modern type hints
 - Connector exception hierarchy in connectors/exceptions.py - structured error handling
+- `server/stream/` package - refactored from monolithic stream.py into 9 modules
+- `debate/phases/` directory - extracted phase implementations (spectator, consensus, judgment)
+- `agents/relationships.py` - agent relationship tracking with debug logging
+- `agents/positions.py` - position ledger extraction from grounded.py
+- `Position.from_row()` classmethod in truth_grounding.py - centralized row hydration
+- Nomic loop fixes: TypedDict access patterns, debate phase agent creation
 
 See `docs/STATUS.md` for detailed feature status.

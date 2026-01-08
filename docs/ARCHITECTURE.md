@@ -85,10 +85,13 @@ aragora/
 │   ├── streaming.py       # StreamingMixin for SSE parsing
 │   ├── personas.py        # PersonaManager for agent traits
 │   ├── laboratory.py      # PersonaLaboratory for A/B testing
-│   └── prober.py          # CapabilityProber for quality assurance
+│   ├── prober.py          # CapabilityProber for quality assurance
+│   ├── grounded.py        # GroundedPersona (truth-based personas)
+│   ├── relationships.py   # RelationshipTracker (agent relationships)
+│   └── positions.py       # PositionTracker (position history)
 │
 ├── debate/                 # Core debate infrastructure
-│   ├── orchestrator.py    # Arena class (3,545 LOC)
+│   ├── orchestrator.py    # Arena class (~2,000 LOC after refactoring)
 │   ├── memory_manager.py  # MemoryManager (extracted from orchestrator)
 │   ├── prompt_builder.py  # PromptBuilder (extracted from orchestrator)
 │   ├── security_barrier.py# SecurityBarrier, TelemetryVerifier
@@ -98,7 +101,15 @@ aragora/
 │   ├── forking.py         # DebateForker (parallel branches)
 │   ├── traces.py          # DebateTracer (audit logs)
 │   ├── checkpoint.py      # CheckpointManager
-│   └── templates.py       # DebateTemplates
+│   ├── templates.py       # DebateTemplates
+│   ├── breakpoints.py     # DebateBreakpointManager
+│   ├── scenarios.py       # ScenarioMatrix
+│   └── phases/            # Phase executors (extracted)
+│       ├── base.py        # PhaseExecutor base class
+│       ├── proposal.py    # ProposalPhase
+│       ├── critique.py    # CritiquePhase
+│       ├── voting.py      # VotingPhase
+│       └── synthesis.py   # SynthesisPhase
 │
 ├── reasoning/              # Logical reasoning components
 │   ├── claims.py          # ClaimsKernel (structured claims)
@@ -148,8 +159,20 @@ aragora/
 │   └── public/            # Static assets
 │
 ├── server/                 # WebSocket/HTTP server
-│   ├── stream.py          # Streaming infrastructure
-│   └── unified.py         # Unified server
+│   ├── unified_server.py  # Unified server (54+ endpoints)
+│   ├── handlers/          # Request handlers by domain
+│   │   ├── base.py        # BaseHandler, ttl_cache decorator
+│   │   ├── debates.py     # Debate CRUD and exports
+│   │   ├── agents.py      # Agent profiles and rankings
+│   │   ├── analytics.py   # System analytics
+│   │   └── ...            # 20+ handler modules
+│   └── stream/            # Streaming infrastructure (refactored)
+│       ├── servers.py     # WebSocket server classes
+│       ├── broadcaster.py # Event broadcasting
+│       ├── state_manager.py # Connection state
+│       ├── loop_manager.py  # Loop lifecycle
+│       ├── message_handlers.py # Message routing
+│       └── serializers.py # Event serialization
 │
 ├── core.py                # Core types (Message, Critique, Vote, etc.)
 └── __init__.py            # Package exports

@@ -1,6 +1,6 @@
 {
-  "phase": "context",
-  "stage": "init",
-  "saved_at": "2026-01-06T22:00:00.000000",
-  "cycle": 0
+  "phase": "cycle_start",
+  "cycle": 2,
+  "backup_path": "/Users/armand/Development/aragora/.nomic/backups/backup_cycle_2_20260108_162613",
+  "saved_at": "2026-01-08T16:26:13.730392"
 }

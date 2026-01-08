@@ -37,14 +37,24 @@ def audit_system():
     except Exception as e:
         print(f"Error reading aragora/debate/orchestrator.py: {e}")
 
-    # Check stream.py for fork handler
+    # Check stream package for fork handler (refactored from stream.py)
     try:
-        with open('aragora/server/stream.py', 'r') as f:
-            report['fork_handler_present'] = '_handle_start_fork' in f.read()
-    except FileNotFoundError:
-        print("File not found: aragora/server/stream.py")
+        stream_modules = [
+            'aragora/server/stream/servers.py',
+            'aragora/server/stream/message_handlers.py',
+        ]
+        fork_handler_found = False
+        for module_path in stream_modules:
+            try:
+                with open(module_path, 'r') as f:
+                    if '_handle_start_fork' in f.read():
+                        fork_handler_found = True
+                        break
+            except FileNotFoundError:
+                continue
+        report['fork_handler_present'] = fork_handler_found
     except Exception as e:
-        print(f"Error reading aragora/server/stream.py: {e}")
+        print(f"Error checking stream package: {e}")
     
     # Check frontend
     try:

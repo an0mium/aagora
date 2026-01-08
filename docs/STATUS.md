@@ -1,6 +1,6 @@
 # Aragora Project Status
 
-*Last updated: January 8, 2026 (04:00 UTC)*
+*Last updated: January 8, 2026 (16:30 UTC)*
 
 ## Current State
 
@@ -16,17 +16,22 @@
   - Belief analyzer function name corrected in orchestrator.py:2213
 
 ### Nomic Loop
-- **Cycle**: 2 (starting fresh after stalled cycle 1)
-- **Phase**: debate (starting)
-- **Last Proposal**: "Debate Mood Ring" (80% consensus, stalled at 0% design consensus)
-- **Cycle 1 Issue**: Design phase had 0% consensus → plan generation failed → loop stalled
-- **Fix Applied**: Added design consensus check before implementation (skips if no design)
+- **Cycle**: 1 (running with 6-cycle budget)
+- **Phase**: context gathering → debate
+- **Last Consensus**: "Stream Gateway & Multiplexer" (80% consensus) - identified verify_system_health.py issue
+- **Recent Fixes (2026-01-08 Session 19)**:
+  - Fixed TypedDict access in context phase (`result["key"]` not `result.key`)
+  - Fixed debate phase empty agents (`_create_debate_phase()` now calls `_select_debate_team()`)
+  - Fixed `verify_system_health.py` to check refactored `stream/` package
+  - All critical systems now healthy (timeout handling, CLI integration, loop_id routing)
 - **Blocking Issues FIXED**:
   - Missing `agent_type` attribute in GeminiAgent (now added to all API agents)
   - RelationshipTracker.get_influence_network() parameter mismatch (fixed)
   - OpenRouterAgent broken super().__init__() call (fixed)
   - `_get_belief_classes()` undefined (fixed - was typo for `_get_belief_analyzer()`)
   - Design phase 0% consensus now detected and cycle skipped (new safeguard)
+  - Context phase crash with TypedDict access (fixed 2026-01-08)
+  - Debate phase 0/0 agents (fixed 2026-01-08)
 - **Position Ledger**: Implemented in `aragora/agents/grounded.py`
 - **NomicIntegration**: Fully wired up (probing, belief analysis, checkpointing, staleness)
 
@@ -38,7 +43,25 @@
 | `openai-api` | GPT 5.2 | OpenAI |
 | `deepseek-r1` | DeepSeek V3.2 | OpenRouter |
 
-### Recent Changes (2026-01-08)
+### Recent Changes (2026-01-08 Session 19)
+- **Nomic Loop Fixes**:
+  - Fixed TypedDict access patterns in context phase (use `result["key"]` not `result.key`)
+  - Fixed debate phase agent creation (`_create_debate_phase()` now calls `_select_debate_team()`)
+  - Added `topic_hint` parameter to `_create_debate_phase()` for better agent selection
+  - Debate phase now correctly shows "Agent weights: 4/4 reliable" instead of "0/0"
+- **System Health Verification**:
+  - Updated `verify_system_health.py` for refactored `stream/` package
+  - Fixed misleading logic (presence of timeout handling is good, not bad)
+  - System now correctly reports "All critical systems healthy"
+- **Debug Logging**:
+  - Added debug logging for dropped critiques in `relationships.py:221-229`
+  - Logs reason: missing critic, missing target, or self-critique
+- **Documentation Hygiene**:
+  - Removed deprecated `docs/API.md` (replaced by `API_REFERENCE.md`)
+  - Updated `CLAUDE.md` with stream package refactoring, debate phases, agent modules
+  - Updated architecture diagram with `server/stream/` package structure
+
+### Recent Changes (2026-01-08 Earlier)
 - **Nomic Loop Phase Extraction**: All 6 phases now have modular implementations
   - `ContextPhase` - Multi-agent codebase exploration
   - `DebatePhase` - Improvement proposal with PostDebateHooks
@@ -234,7 +257,7 @@
 
 ## Feature Integration Status
 
-### Fully Integrated (57)
+### Fully Integrated (54)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -266,8 +289,8 @@
 | Crux → Fix Guidance | Active | `scripts/nomic_loop.py` (belief network → fix prompts) |
 | Probe → ELO Weighting | Active | `aragora/ranking/elo.py` (confidence_weight parameter) |
 | Path Traversal Protection | Active | `aragora/tools/code.py` (_resolve_path validation) |
-| Agent Consistency API | Active | `aragora/server/stream.py` (/api/agent/{name}/consistency) |
-| Agent Network API | Active | `aragora/server/stream.py` (/api/agent/{name}/network) |
+| Agent Consistency API | Active | `aragora/server/handlers/agents.py` (/api/agent/{name}/consistency) |
+| Agent Network API | Active | `aragora/server/handlers/agents.py` (/api/agent/{name}/network) |
 | MATCH_RECORDED Event | Active | `aragora/debate/orchestrator.py` (WebSocket emission) |
 | Custom Mode Security | Active | `aragora/modes/custom.py` (path traversal protection) |
 | Crux Cache Lifecycle | Active | `scripts/nomic_loop.py:run_cycle()` (cleared at cycle start) |
@@ -278,7 +301,7 @@
 | CapabilityProbePanel | Active | `aragora/live/src/components/CapabilityProbePanel.tsx` |
 | OperationalModesPanel | Active | `aragora/live/src/components/OperationalModesPanel.tsx` |
 | RedTeamAnalysisPanel | Active | `aragora/live/src/components/RedTeamAnalysisPanel.tsx` |
-| Mood Event Types | Active | `aragora/server/stream.py` (MOOD_DETECTED, MOOD_SHIFT, DEBATE_ENERGY) |
+| Mood Event Types | Active | `aragora/server/stream/serializers.py` (MOOD_DETECTED, MOOD_SHIFT, DEBATE_ENERGY) |
 | ContraryViewsPanel | Active | `aragora/live/src/components/ContraryViewsPanel.tsx` |
 | RiskWarningsPanel | Active | `aragora/live/src/components/RiskWarningsPanel.tsx` |
 | AnalyticsPanel | Active | `aragora/live/src/components/AnalyticsPanel.tsx` (disagreements, roles, early-stops) |
@@ -286,9 +309,9 @@
 | ConsensusKnowledgeBase | Active | `aragora/live/src/components/ConsensusKnowledgeBase.tsx` (settled topics) |
 | DebateViewer Critique Handling | Active | `aragora/live/src/components/DebateViewer.tsx` (critique + consensus) |
 | ArgumentCartographer | Active | `aragora/debate/orchestrator.py` (graph visualization) |
-| Graph Export API | Active | `aragora/server/stream.py` (/api/debate/{loop_id}/graph/*) |
-| Audience Clusters API | Active | `aragora/server/stream.py` (/api/debate/{loop_id}/audience/clusters) |
-| Replay Export API | Active | `aragora/server/stream.py` (/api/replays/*) |
+| Graph Export API | Active | `aragora/server/handlers/debates.py` (/api/debate/{loop_id}/graph/*) |
+| Audience Clusters API | Active | `aragora/server/handlers/debates.py` (/api/debate/{loop_id}/audience/clusters) |
+| Replay Export API | Active | `aragora/server/handlers/replays.py` (/api/replays/*) |
 | Database Query Indexes | Active | `aragora/ranking/elo.py` (8 indexes for common queries) |
 | N+1 Query Optimization | Active | `aragora/ranking/elo.py` (get_rivals/get_allies batch) |
 | Fork Initial Messages | Active | `aragora/debate/orchestrator.py` (initial_messages parameter) |
