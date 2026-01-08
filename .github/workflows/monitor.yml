@@ -1,0 +1,114 @@
+name: Uptime Monitor
+
+on:
+  schedule:
+    # Run every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Cloudflare Pages (Frontend)
+        run: |
+          response=$(curl -sf -o /dev/null -w "%{http_code}" "https://aragora.pages.dev" || echo "000")
+          if [ "$response" != "200" ]; then
+            echo "::error::Frontend returned $response"
+            exit 1
+          fi
+          echo "Frontend: OK ($response)"
+
+      - name: Check Production API (Lightsail)
+        run: |
+          response=$(curl -sf -o /dev/null -w "%{http_code}" "https://api.aragora.ai/api/leaderboard" || echo "000")
+          if [ "$response" != "200" ]; then
+            echo "::error::Production API returned $response"
+            exit 1
+          fi
+          echo "Production API: OK ($response)"
+
+      - name: Check Staging API (EC2)
+        continue-on-error: true
+        run: |
+          response=$(curl -sf -o /dev/null -w "%{http_code}" "http://${{ secrets.EC2_HOST }}:8080/api/leaderboard" --connect-timeout 10 || echo "000")
+          if [ "$response" != "200" ]; then
+            echo "::warning::Staging API returned $response (non-critical)"
+          else
+            echo "Staging API: OK ($response)"
+          fi
+
+      - name: Check WebSocket Endpoint
+        run: |
+          # Basic connectivity check for WebSocket upgrade
+          response=$(curl -sf -o /dev/null -w "%{http_code}" -H "Upgrade: websocket" -H "Connection: Upgrade" "https://api.aragora.ai/ws" || echo "000")
+          # WebSocket endpoints typically return 101 or 400 for non-upgrade requests
+          if [ "$response" = "000" ]; then
+            echo "::error::WebSocket endpoint unreachable"
+            exit 1
+          fi
+          echo "WebSocket endpoint reachable ($response)"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Health Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend (Cloudflare) | ${{ job.status == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production API | ${{ job.status == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | $(date -u) |" >> $GITHUB_STEP_SUMMARY
+
+  notify-on-failure:
+    needs: health-check
+    if: failure()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create Issue on Failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Service Outage Detected - ${new Date().toISOString()}`;
+            const body = `
+            ## Automated Health Check Failed
+
+            One or more services are not responding correctly.
+
+            **Time**: ${new Date().toISOString()}
+            **Workflow Run**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+
+            ### Services to Check
+            - [ ] Frontend: https://aragora.pages.dev
+            - [ ] Production API: https://api.aragora.ai/api/leaderboard
+            - [ ] Lightsail instance status
+
+            ### Quick Commands
+            \`\`\`bash
+            # Check Lightsail
+            ssh -i ~/.ssh/lightsail-aragora.pem ubuntu@3.17.253.61 "sudo systemctl status aragora cloudflared"
+
+            # Restart services
+            ssh -i ~/.ssh/lightsail-aragora.pem ubuntu@3.17.253.61 "sudo systemctl restart aragora cloudflared"
+            \`\`\`
+            `;
+
+            // Check for existing open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'outage'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['outage', 'automated']
+              });
+            }

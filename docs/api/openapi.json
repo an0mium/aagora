@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Aragora API",
-    "description": "Multi-agent debate framework API for Aragora LiveWire",
+    "description": "Multi-agent debate framework API for Aragora LiveWire. Provides endpoints for debate management, agent rankings, consensus tracking, and real-time collaboration.",
     "version": "1.0.0",
     "contact": {
       "name": "Aragora Team"
@@ -28,19 +28,35 @@
     },
     {
       "name": "Agents",
-      "description": "Agent management and statistics"
+      "description": "Agent management, profiles, and rankings"
     },
     {
       "name": "Debates",
-      "description": "Debate operations and queries"
+      "description": "Debate operations, history, and export"
     },
     {
       "name": "Analytics",
-      "description": "Analysis and statistics"
+      "description": "Analysis and aggregated statistics"
     },
     {
       "name": "Insights",
-      "description": "Position flips and patterns"
+      "description": "Position flips, moments, and patterns"
+    },
+    {
+      "name": "Consensus",
+      "description": "Consensus memory and settled questions"
+    },
+    {
+      "name": "Relationships",
+      "description": "Agent relationship tracking"
+    },
+    {
+      "name": "Memory",
+      "description": "Continuum memory management"
+    },
+    {
+      "name": "Belief",
+      "description": "Belief networks and claim analysis"
     },
     {
       "name": "Pulse",
@@ -48,7 +64,67 @@
     },
     {
       "name": "Monitoring",
-      "description": "Metrics and monitoring"
+      "description": "Metrics and observability"
+    },
+    {
+      "name": "Verification",
+      "description": "Formal verification and proofs"
+    },
+    {
+      "name": "Auditing",
+      "description": "Capability probes and red teaming"
+    },
+    {
+      "name": "Documents",
+      "description": "Document upload and export"
+    },
+    {
+      "name": "Media",
+      "description": "Audio/video and podcast"
+    },
+    {
+      "name": "Social",
+      "description": "Social media publishing"
+    },
+    {
+      "name": "Plugins",
+      "description": "Plugin management and execution"
+    },
+    {
+      "name": "Laboratory",
+      "description": "Emergent trait analysis"
+    },
+    {
+      "name": "Tournaments",
+      "description": "Tournament management"
+    },
+    {
+      "name": "Genesis",
+      "description": "Agent genesis and lineage"
+    },
+    {
+      "name": "Evolution",
+      "description": "Agent evolution tracking"
+    },
+    {
+      "name": "Replays",
+      "description": "Debate replay management"
+    },
+    {
+      "name": "Learning",
+      "description": "Meta-learning statistics"
+    },
+    {
+      "name": "Critiques",
+      "description": "Critique patterns and reputation"
+    },
+    {
+      "name": "Routing",
+      "description": "Agent selection and team routing"
+    },
+    {
+      "name": "Introspection",
+      "description": "Agent self-awareness queries"
     }
   ],
   "paths": {
@@ -58,7 +134,7 @@
           "System"
         ],
         "summary": "Health check",
-        "description": "Get system health status for load balancers and monitoring",
+        "description": "Get system health status for load balancers and monitoring. Returns 200 when healthy, 503 when degraded.",
         "responses": {
           "200": {
             "description": "System healthy",
@@ -71,7 +147,7 @@
             }
           },
           "503": {
-            "description": "System unhealthy"
+            "description": "System degraded"
           }
         }
       }
@@ -82,7 +158,7 @@
           "System"
         ],
         "summary": "Detailed health check",
-        "description": "Get detailed health status with component checks",
+        "description": "Get detailed health status with component checks, observer metrics, memory stats",
         "responses": {
           "200": {
             "description": "Detailed health information"
@@ -104,13 +180,250 @@
         }
       }
     },
+    "/api/nomic/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Nomic loop health",
+        "description": "Get nomic loop health with stall detection",
+        "responses": {
+          "200": {
+            "description": "Nomic health status"
+          }
+        }
+      }
+    },
+    "/api/nomic/log": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get nomic logs",
+        "description": "Get recent nomic loop log lines",
+        "parameters": [
+          {
+            "name": "lines",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 1000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log lines"
+          }
+        }
+      }
+    },
+    "/api/nomic/risk-register": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Risk register",
+        "description": "Get risk register entries from nomic loop execution",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Risk entries"
+          }
+        }
+      }
+    },
+    "/api/modes": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List operational modes",
+        "description": "Get available operational modes (builtin + custom)",
+        "responses": {
+          "200": {
+            "description": "Available modes"
+          }
+        }
+      }
+    },
+    "/api/history/cycles": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Cycle history",
+        "parameters": [
+          {
+            "name": "loop_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cycle history"
+          }
+        }
+      }
+    },
+    "/api/history/events": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Event history",
+        "parameters": [
+          {
+            "name": "loop_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event history"
+          }
+        }
+      }
+    },
+    "/api/history/debates": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Debate history",
+        "parameters": [
+          {
+            "name": "loop_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Debate history"
+          }
+        }
+      }
+    },
+    "/api/history/summary": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "History summary",
+        "parameters": [
+          {
+            "name": "loop_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Summary statistics"
+          }
+        }
+      }
+    },
+    "/api/system/maintenance": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Run database maintenance",
+        "parameters": [
+          {
+            "name": "task",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "status",
+                "vacuum",
+                "analyze",
+                "checkpoint",
+                "full"
+              ],
+              "default": "status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Maintenance results"
+          }
+        }
+      }
+    },
+    "/api/openapi": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "OpenAPI specification",
+        "description": "Get OpenAPI 3.0 schema for this API",
+        "responses": {
+          "200": {
+            "description": "OpenAPI schema",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
     "/api/agents": {
       "get": {
         "tags": [
           "Agents"
         ],
         "summary": "List all agents",
-        "description": "Get list of all known agents",
+        "description": "Get list of all known agents with optional stats",
         "parameters": [
           {
             "name": "include_stats",
@@ -118,8 +431,7 @@
             "schema": {
               "type": "boolean",
               "default": false
-            },
-            "description": "Include ELO stats"
+            }
           }
         ],
         "responses": {
@@ -130,7 +442,7 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "agents": {
+                    "items": {
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/Agent"
@@ -152,7 +464,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Get agent leaderboard",
+        "summary": "Agent leaderboard",
         "description": "Get agents ranked by ELO rating",
         "parameters": [
           {
@@ -180,13 +492,74 @@
         }
       }
     },
+    "/api/rankings": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent rankings",
+        "description": "Alternative endpoint for agent rankings",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent rankings"
+          }
+        }
+      }
+    },
+    "/api/leaderboard-view": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Leaderboard view data",
+        "description": "Pre-formatted leaderboard data for frontend display",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          {
+            "name": "domain",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "loop_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Leaderboard view"
+          }
+        }
+      }
+    },
     "/api/agent/{name}/profile": {
       "get": {
         "tags": [
           "Agents"
         ],
         "summary": "Get agent profile",
-        "description": "Get detailed profile for an agent",
         "parameters": [
           {
             "name": "name",
@@ -199,10 +572,54 @@
         ],
         "responses": {
           "200": {
-            "description": "Agent profile"
+            "description": "Agent profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "404": {
-            "description": "Agent not found"
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -212,7 +629,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Get agent match history",
+        "summary": "Agent match history",
         "parameters": [
           {
             "name": "name",
@@ -238,13 +655,491 @@
         }
       }
     },
+    "/api/agent/{name}/calibration": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent calibration data",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calibration data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Calibration"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/calibration-curve": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent calibration curve",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calibration curve data"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/calibration-summary": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent calibration summary",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calibration summary"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/consistency": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent consistency score",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consistency metrics"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/flips": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent position flips",
+        "description": "Get instances where agent changed positions",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Position flips"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/network": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent relationship network",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relationship network"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/rivals": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent rivals",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rival agents"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/allies": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent allies",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Allied agents"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/moments": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent moments",
+        "description": "Get significant moments for this agent",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent moments"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/reputation": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent reputation",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reputation data"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/persona": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent persona",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Persona data"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/grounded-persona": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent grounded persona",
+        "description": "Get persona derived from debate performance",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grounded persona"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/identity-prompt": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent identity prompt",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Identity prompt"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/performance": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent performance",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance metrics"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/domains": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent expertise domains",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Domain expertise"
+          }
+        }
+      }
+    },
+    "/api/agent/{name}/accuracy": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent accuracy",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accuracy metrics"
+          }
+        }
+      }
+    },
+    "/api/agent/compare": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Compare agents",
+        "description": "Compare two agents side-by-side",
+        "parameters": [
+          {
+            "name": "agent_a",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_b",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Comparison data"
+          }
+        }
+      }
+    },
+    "/api/matches/recent": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Recent matches",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent matches"
+          }
+        }
+      }
+    },
+    "/api/calibration/leaderboard": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Calibration leaderboard",
+        "description": "Get agents ranked by calibration score",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calibration rankings"
+          }
+        }
+      }
+    },
+    "/api/personas": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List all personas",
+        "responses": {
+          "200": {
+            "description": "All personas"
+          }
+        }
+      }
+    },
     "/api/debates": {
       "get": {
         "tags": [
           "Debates"
         ],
         "summary": "List debates",
-        "description": "Get list of all debates",
+        "description": "Get list of all debates (requires auth)",
         "parameters": [
           {
             "name": "limit",
@@ -254,13 +1149,44 @@
               "default": 20,
               "maximum": 100
             }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "List of debates"
+            "description": "List of debates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Debate"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/debates/{id}": {
@@ -291,7 +1217,54 @@
             }
           },
           "404": {
-            "description": "Debate not found"
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/debates/slug/{slug}": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Get debate by slug",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Debate details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Debate"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -385,6 +1358,99 @@
         }
       }
     },
+    "/api/debates/{id}/evidence": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Get debate evidence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence data"
+          }
+        }
+      }
+    },
+    "/api/debates/{id}/impasse": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Get impasse status",
+        "description": "Check if debate reached an impasse",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Impasse status"
+          }
+        }
+      }
+    },
+    "/api/debates/{id}/meta-critique": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Get meta-critique",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meta-critique data"
+          }
+        }
+      }
+    },
+    "/api/debates/{id}/graph/stats": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Get debate graph stats",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Graph statistics"
+          }
+        }
+      }
+    },
     "/api/debates/{id}/fork": {
       "post": {
         "tags": [
@@ -409,10 +1475,12 @@
                 "type": "object",
                 "properties": {
                   "branch_point": {
-                    "type": "integer"
+                    "type": "integer",
+                    "description": "Round to branch from"
                   },
                   "new_premise": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "New premise for fork"
                   }
                 }
               }
@@ -424,12 +1492,255 @@
             "description": "Forked debate created"
           },
           "400": {
-            "description": "Invalid branch point"
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/api/analytics/disagreement": {
+    "/api/debates/{id}/export/{format}": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Export debate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown",
+                "html",
+                "pdf"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exported debate"
+          }
+        }
+      }
+    },
+    "/api/debates/{id}/broadcast": {
+      "post": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Generate debate broadcast",
+        "description": "Generate audio/video broadcast of debate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "audio",
+                      "video"
+                    ]
+                  },
+                  "voices": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Broadcast generation started"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/debates/{id}/publish/twitter": {
+      "post": {
+        "tags": [
+          "Social"
+        ],
+        "summary": "Publish to Twitter",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published to Twitter"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/debates/{id}/publish/youtube": {
+      "post": {
+        "tags": [
+          "Social"
+        ],
+        "summary": "Publish to YouTube",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published to YouTube"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/debates/{id}/red-team": {
+      "get": {
+        "tags": [
+          "Auditing"
+        ],
+        "summary": "Get red team results",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Red team results"
+          }
+        }
+      }
+    },
+    "/api/search": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Cross-debate search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results"
+          }
+        }
+      }
+    },
+    "/api/dashboard/debates": {
+      "get": {
+        "tags": [
+          "Debates"
+        ],
+        "summary": "Dashboard debates",
+        "description": "Get debates formatted for dashboard display",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 24
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dashboard data"
+          }
+        }
+      }
+    },
+    "/api/analytics/disagreements": {
       "get": {
         "tags": [
           "Analytics"
@@ -443,16 +1754,54 @@
         }
       }
     },
-    "/api/analytics/consensus": {
+    "/api/analytics/role-rotation": {
       "get": {
         "tags": [
           "Analytics"
         ],
-        "summary": "Consensus statistics",
-        "description": "Get statistics on consensus formation",
+        "summary": "Role rotation stats",
         "responses": {
           "200": {
-            "description": "Consensus metrics"
+            "description": "Role rotation data"
+          }
+        }
+      }
+    },
+    "/api/analytics/early-stops": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Early stop statistics",
+        "responses": {
+          "200": {
+            "description": "Early stop data"
+          }
+        }
+      }
+    },
+    "/api/ranking/stats": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Ranking statistics",
+        "responses": {
+          "200": {
+            "description": "Ranking stats"
+          }
+        }
+      }
+    },
+    "/api/memory/stats": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Memory statistics",
+        "responses": {
+          "200": {
+            "description": "Memory stats"
           }
         }
       }
@@ -463,7 +1812,6 @@
           "Insights"
         ],
         "summary": "Recent position flips",
-        "description": "Get recent instances of agents changing positions",
         "parameters": [
           {
             "name": "limit",
@@ -487,10 +1835,525 @@
           "Insights"
         ],
         "summary": "Flip summary",
-        "description": "Get summary statistics on position flips",
         "responses": {
           "200": {
-            "description": "Flip summary"
+            "description": "Flip summary statistics"
+          }
+        }
+      }
+    },
+    "/api/insights/recent": {
+      "get": {
+        "tags": [
+          "Insights"
+        ],
+        "summary": "Recent insights",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent insights"
+          }
+        }
+      }
+    },
+    "/api/insights/extract-detailed": {
+      "post": {
+        "tags": [
+          "Insights"
+        ],
+        "summary": "Extract detailed insights",
+        "description": "Computationally expensive insight extraction (requires auth)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Detailed insights"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/moments/summary": {
+      "get": {
+        "tags": [
+          "Insights"
+        ],
+        "summary": "Moments summary",
+        "responses": {
+          "200": {
+            "description": "Moments summary"
+          }
+        }
+      }
+    },
+    "/api/moments/timeline": {
+      "get": {
+        "tags": [
+          "Insights"
+        ],
+        "summary": "Moments timeline",
+        "responses": {
+          "200": {
+            "description": "Timeline data"
+          }
+        }
+      }
+    },
+    "/api/moments/trending": {
+      "get": {
+        "tags": [
+          "Insights"
+        ],
+        "summary": "Trending moments",
+        "responses": {
+          "200": {
+            "description": "Trending moments"
+          }
+        }
+      }
+    },
+    "/api/moments/by-type/{type}": {
+      "get": {
+        "tags": [
+          "Insights"
+        ],
+        "summary": "Moments by type",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Moments of specified type"
+          }
+        }
+      }
+    },
+    "/api/consensus/similar": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Similar debates",
+        "description": "Find debates similar to a given topic",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Similar debates"
+          }
+        }
+      }
+    },
+    "/api/consensus/settled": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Settled questions",
+        "parameters": [
+          {
+            "name": "threshold",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "default": 0.8
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled questions"
+          }
+        }
+      }
+    },
+    "/api/consensus/stats": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Consensus statistics",
+        "responses": {
+          "200": {
+            "description": "Consensus stats"
+          }
+        }
+      }
+    },
+    "/api/consensus/dissents": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Dissenting views",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dissenting views"
+          }
+        }
+      }
+    },
+    "/api/consensus/contrarian-views": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Contrarian views",
+        "responses": {
+          "200": {
+            "description": "Contrarian views"
+          }
+        }
+      }
+    },
+    "/api/consensus/risk-warnings": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Risk warnings",
+        "responses": {
+          "200": {
+            "description": "Risk warnings"
+          }
+        }
+      }
+    },
+    "/api/consensus/domain/{domain}": {
+      "get": {
+        "tags": [
+          "Consensus"
+        ],
+        "summary": "Domain consensus",
+        "parameters": [
+          {
+            "name": "domain",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Domain consensus data"
+          }
+        }
+      }
+    },
+    "/api/relationships/summary": {
+      "get": {
+        "tags": [
+          "Relationships"
+        ],
+        "summary": "Relationship summary",
+        "responses": {
+          "200": {
+            "description": "Relationship summary"
+          }
+        }
+      }
+    },
+    "/api/relationships/graph": {
+      "get": {
+        "tags": [
+          "Relationships"
+        ],
+        "summary": "Relationship graph",
+        "description": "Get graph data for agent relationships",
+        "responses": {
+          "200": {
+            "description": "Graph data"
+          }
+        }
+      }
+    },
+    "/api/relationships/stats": {
+      "get": {
+        "tags": [
+          "Relationships"
+        ],
+        "summary": "Relationship statistics",
+        "responses": {
+          "200": {
+            "description": "Relationship stats"
+          }
+        }
+      }
+    },
+    "/api/relationship/{agent_a}/{agent_b}": {
+      "get": {
+        "tags": [
+          "Relationships"
+        ],
+        "summary": "Get relationship between two agents",
+        "parameters": [
+          {
+            "name": "agent_a",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent_b",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relationship data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Relationship"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/memory/continuum/retrieve": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Retrieve memories",
+        "description": "Retrieve memories from continuum store",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fast",
+                "medium",
+                "slow",
+                "glacial"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retrieved memories"
+          }
+        }
+      }
+    },
+    "/api/memory/continuum/consolidate": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Consolidate memories",
+        "description": "Trigger memory consolidation across tiers",
+        "responses": {
+          "200": {
+            "description": "Consolidation result"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/memory/continuum/cleanup": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Cleanup memories",
+        "description": "Remove expired memories",
+        "responses": {
+          "200": {
+            "description": "Cleanup result"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/memory/tier-stats": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Memory tier statistics",
+        "responses": {
+          "200": {
+            "description": "Tier stats"
+          }
+        }
+      }
+    },
+    "/api/memory/archive-stats": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Archive statistics",
+        "responses": {
+          "200": {
+            "description": "Archive stats"
+          }
+        }
+      }
+    },
+    "/api/belief-network/{debate_id}/cruxes": {
+      "get": {
+        "tags": [
+          "Belief"
+        ],
+        "summary": "Get debate cruxes",
+        "parameters": [
+          {
+            "name": "debate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Debate cruxes"
+          }
+        }
+      }
+    },
+    "/api/belief-network/{debate_id}/load-bearing-claims": {
+      "get": {
+        "tags": [
+          "Belief"
+        ],
+        "summary": "Get load-bearing claims",
+        "parameters": [
+          {
+            "name": "debate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Load-bearing claims"
+          }
+        }
+      }
+    },
+    "/api/debate/{debate_id}/graph-stats": {
+      "get": {
+        "tags": [
+          "Belief"
+        ],
+        "summary": "Get debate graph stats",
+        "parameters": [
+          {
+            "name": "debate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Graph statistics"
           }
         }
       }
@@ -508,7 +2371,8 @@
             "in": "query",
             "schema": {
               "type": "integer",
-              "default": 10
+              "default": 10,
+              "maximum": 50
             }
           }
         ],
@@ -548,7 +2412,6 @@
           "Monitoring"
         ],
         "summary": "System metrics",
-        "description": "Get system performance metrics",
         "responses": {
           "200": {
             "description": "Metrics data"
@@ -556,13 +2419,52 @@
         }
       }
     },
-    "/api/metrics/prometheus": {
+    "/api/metrics/health": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Metrics health",
+        "responses": {
+          "200": {
+            "description": "Metrics health"
+          }
+        }
+      }
+    },
+    "/api/metrics/cache": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Cache metrics",
+        "responses": {
+          "200": {
+            "description": "Cache metrics"
+          }
+        }
+      }
+    },
+    "/api/metrics/system": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "System metrics",
+        "responses": {
+          "200": {
+            "description": "System metrics"
+          }
+        }
+      }
+    },
+    "/metrics": {
       "get": {
         "tags": [
           "Monitoring"
         ],
         "summary": "Prometheus metrics",
-        "description": "Get metrics in Prometheus format",
+        "description": "Metrics in Prometheus format",
         "responses": {
           "200": {
             "description": "Prometheus-formatted metrics",
@@ -573,481 +2475,15 @@
         }
       }
     },
-    "/api/plugins": {
-      "get": {
-        "tags": [
-          "Plugins"
-        ],
-        "summary": "List all available plugins",
-        "description": "List all available plugins",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/plugins/{name}": {
-      "get": {
-        "tags": [
-          "Plugins"
-        ],
-        "summary": "Get details for a specific plugin",
-        "description": "Get details for a specific plugin",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/plugins/{name}/run": {
-      "post": {
-        "tags": [
-          "Plugins"
-        ],
-        "summary": "Run a plugin with provided input",
-        "description": "Run a plugin with provided input",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/metrics/health": {
-      "get": {
-        "tags": [
-          "Metrics"
-        ],
-        "summary": "Detailed health check",
-        "description": "Detailed health check",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/metrics/cache": {
-      "get": {
-        "tags": [
-          "Metrics"
-        ],
-        "summary": "Cache statistics",
-        "description": "Cache statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/nomic/health": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get nomic loop health with stall detection",
-        "description": "Get nomic loop health with stall detection",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/nomic/log": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get nomic loop logs",
-        "description": "Get nomic loop logs",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/nomic/risk-register": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get risk register entries",
-        "description": "Get risk register entries",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/modes": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get available operational modes",
-        "description": "Get available operational modes",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/history/cycles": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get cycle history",
-        "description": "Get cycle history",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/history/events": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get event history",
-        "description": "Get event history",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/history/debates": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get debate history",
-        "description": "Get debate history",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/history/summary": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Get history summary",
-        "description": "Get history summary",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/system/maintenance?task=<task>": {
-      "get": {
-        "tags": [
-          "System"
-        ],
-        "summary": "Run database maintenance (status|vacuum|analyze|checkpoint|full)",
-        "description": "Run database maintenance (status|vacuum|analyze|checkpoint|full)",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
     "/api/verification/status": {
       "get": {
         "tags": [
           "Verification"
         ],
-        "summary": "Get status of formal verification backends",
-        "description": "Get status of formal verification backends",
+        "summary": "Verification status",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Verification status"
           }
         }
       }
@@ -1057,29 +2493,8 @@
         "tags": [
           "Verification"
         ],
-        "summary": "Verify a claim using Z3 SMT solver",
-        "description": "Verify a claim using Z3 SMT solver",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Formal verification",
+        "description": "Run formal verification on claims",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1088,195 +2503,17 @@
               }
             }
           }
-        }
-      }
-    },
-    "/api/youtube/auth": {
-      "get": {
-        "tags": [
-          "Social"
-        ],
-        "summary": "Get YouTube OAuth authorization URL",
-        "description": "Get YouTube OAuth authorization URL",
+        },
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/youtube/callback": {
-      "get": {
-        "tags": [
-          "Social"
-        ],
-        "summary": "Handle YouTube OAuth callback",
-        "description": "Handle YouTube OAuth callback",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/youtube/status": {
-      "get": {
-        "tags": [
-          "Social"
-        ],
-        "summary": "Get YouTube connector status",
-        "description": "Get YouTube connector status",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/debates/{id}/publish/twitter": {
-      "post": {
-        "tags": [
-          "Social"
-        ],
-        "summary": "Publish debate to Twitter/X",
-        "description": "Publish debate to Twitter/X",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Verification result"
           }
         },
-        "parameters": [
+        "security": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
+            "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/debates/{id}/publish/youtube": {
-      "post": {
-        "tags": [
-          "Social"
-        ],
-        "summary": "Publish debate to YouTube",
-        "description": "Publish debate to YouTube",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/debates/capability-probe": {
@@ -1284,29 +2521,7 @@
         "tags": [
           "Auditing"
         ],
-        "summary": "Run capability probes on an agent",
-        "description": "Run capability probes on an agent",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Run capability probe",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1315,7 +2530,17 @@
               }
             }
           }
-        }
+        },
+        "responses": {
+          "200": {
+            "description": "Probe results"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/api/debates/deep-audit": {
@@ -1323,29 +2548,7 @@
         "tags": [
           "Auditing"
         ],
-        "summary": "Run deep audit on a task",
-        "description": "Run deep audit on a task",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Deep audit",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1354,47 +2557,25 @@
               }
             }
           }
-        }
+        },
+        "responses": {
+          "200": {
+            "description": "Audit results"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
-    "/api/debates/{id}/red-team": {
+    "/api/probes/capability": {
       "post": {
         "tags": [
           "Auditing"
         ],
-        "summary": "Run red team analysis on a debate",
-        "description": "Run red team analysis on a debate",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "summary": "Capability probe",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1403,311 +2584,15 @@
               }
             }
           }
-        }
-      }
-    },
-    "/api/leaderboard-view": {
-      "get": {
-        "tags": [
-          "Leaderboard"
-        ],
-        "summary": "Returns all leaderboard data in one response",
-        "description": "Returns all leaderboard data in one response",
+        },
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/memory/continuum/retrieve": {
-      "get": {
-        "tags": [
-          "Memory"
-        ],
-        "summary": "Retrieve memories from continuum",
-        "description": "Retrieve memories from continuum",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/memory/continuum/consolidate": {
-      "post": {
-        "tags": [
-          "Memory"
-        ],
-        "summary": "Trigger memory consolidation",
-        "description": "Trigger memory consolidation",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Probe results"
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/memory/continuum/cleanup": {
-      "post": {
-        "tags": [
-          "Memory"
-        ],
-        "summary": "Cleanup expired memories",
-        "description": "Cleanup expired memories",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/memory/tier-stats": {
-      "get": {
-        "tags": [
-          "Memory"
-        ],
-        "summary": "Get tier statistics",
-        "description": "Get tier statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/relationships/summary": {
-      "get": {
-        "tags": [
-          "Relationship"
-        ],
-        "summary": "Global relationship overview",
-        "description": "Global relationship overview",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/relationships/graph": {
-      "get": {
-        "tags": [
-          "Relationship"
-        ],
-        "summary": "Full relationship graph for visualizations",
-        "description": "Full relationship graph for visualizations",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/relationships/stats": {
-      "get": {
-        "tags": [
-          "Relationship"
-        ],
-        "summary": "Relationship system statistics",
-        "description": "Relationship system statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/relationship/{agent_a}/{agent_b}": {
-      "get": {
-        "tags": [
-          "Relationship"
-        ],
-        "summary": "Detailed relationship between two agents",
-        "description": "Detailed relationship between two agents",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
+        "security": [
           {
-            "name": "agent_a",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "agent_b",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
+            "bearerAuth": []
           }
         ]
       }
@@ -1717,27 +2602,10 @@
         "tags": [
           "Documents"
         ],
-        "summary": "List all uploaded documents",
-        "description": "List all uploaded documents",
+        "summary": "List documents",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Document list"
           }
         }
       }
@@ -1747,429 +2615,128 @@
         "tags": [
           "Documents"
         ],
-        "summary": "Get supported file formats",
-        "description": "Get supported file formats",
+        "summary": "Supported formats",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Supported formats"
           }
         }
       }
     },
-    "/api/documents/{doc_id}": {
-      "get": {
+    "/api/documents/upload": {
+      "post": {
         "tags": [
           "Documents"
         ],
-        "summary": "Get a document by ID",
-        "description": "Get a document by ID",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
+        "summary": "Upload document",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object"
               }
             }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
           }
         },
-        "parameters": [
+        "responses": {
+          "201": {
+            "description": "Document uploaded"
+          }
+        },
+        "security": [
           {
-            "name": "doc_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
+            "bearerAuth": []
           }
         ]
       }
     },
-    "/api/evolution/{agent}/history": {
+    "/api/podcast/feed.xml": {
       "get": {
         "tags": [
-          "Evolution"
+          "Media"
         ],
-        "summary": "Get prompt evolution history for an agent",
-        "description": "Get prompt evolution history for an agent",
+        "summary": "Podcast RSS feed",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
+            "description": "RSS feed",
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
+              "application/xml": {}
             }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "agent",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/moments/summary": {
-      "get": {
-        "tags": [
-          "Moments"
-        ],
-        "summary": "Global moments overview",
-        "description": "Global moments overview",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
           }
         }
       }
     },
-    "/api/moments/timeline": {
+    "/api/podcast/episodes": {
       "get": {
         "tags": [
-          "Moments"
+          "Media"
         ],
-        "summary": "Chronological moments (limit, offset)",
-        "description": "Chronological moments (limit, offset)",
+        "summary": "Podcast episodes",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Episode list"
           }
         }
       }
     },
-    "/api/moments/by-type/{type}": {
+    "/api/youtube/auth": {
       "get": {
         "tags": [
-          "Moments"
+          "Social"
         ],
-        "summary": "Filter moments by type",
-        "description": "Filter moments by type",
+        "summary": "YouTube auth URL",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "type",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/moments/trending": {
-      "get": {
-        "tags": [
-          "Moments"
-        ],
-        "summary": "Most significant recent moments",
-        "description": "Most significant recent moments",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Auth URL"
           }
         }
       }
     },
-    "/api/replays": {
+    "/api/youtube/callback": {
       "get": {
         "tags": [
-          "Replays"
+          "Social"
         ],
-        "summary": "List available replays",
-        "description": "List available replays",
+        "summary": "YouTube OAuth callback",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Auth complete"
           }
         }
       }
     },
-    "/api/replays/{replay_id}": {
+    "/api/youtube/status": {
       "get": {
         "tags": [
-          "Replays"
+          "Social"
         ],
-        "summary": "Get specific replay with events",
-        "description": "Get specific replay with events",
+        "summary": "YouTube auth status",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "replay_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/learning/evolution": {
-      "get": {
-        "tags": [
-          "Replays"
-        ],
-        "summary": "Get meta-learning patterns",
-        "description": "Get meta-learning patterns",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Auth status"
           }
         }
       }
     },
-    "/api/meta-learning/stats": {
+    "/api/plugins": {
       "get": {
         "tags": [
-          "Replays"
+          "Plugins"
         ],
-        "summary": "Get meta-learning hyperparameters and efficiency stats",
-        "description": "Get meta-learning hyperparameters and efficiency stats",
+        "summary": "List plugins",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Plugin list"
           }
         }
       }
     },
-    "/api/personas": {
+    "/api/plugins/{name}": {
       "get": {
         "tags": [
-          "Persona"
+          "Plugins"
         ],
-        "summary": "Get all agent personas",
-        "description": "Get all agent personas",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/agent/{name}/persona": {
-      "get": {
-        "tags": [
-          "Persona"
-        ],
-        "summary": "Get agent persona",
-        "description": "Get agent persona",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Get plugin details",
         "parameters": [
           {
             "name": "name",
@@ -2179,37 +2746,20 @@
               "type": "string"
             }
           }
-        ]
-      }
-    },
-    "/api/agent/{name}/grounded-persona": {
-      "get": {
-        "tags": [
-          "Persona"
         ],
-        "summary": "Get truth-grounded persona",
-        "description": "Get truth-grounded persona",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Plugin details"
           }
-        },
+        }
+      }
+    },
+    "/api/plugins/{name}/run": {
+      "post": {
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "Run plugin",
         "parameters": [
           {
             "name": "name",
@@ -2219,293 +2769,24 @@
               "type": "string"
             }
           }
-        ]
-      }
-    },
-    "/api/agent/{name}/identity-prompt": {
-      "get": {
-        "tags": [
-          "Persona"
         ],
-        "summary": "Get identity prompt",
-        "description": "Get identity prompt",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
               }
             }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
           }
         },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/performance": {
-      "get": {
-        "tags": [
-          "Persona"
-        ],
-        "summary": "Get agent performance summary",
-        "description": "Get agent performance summary",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Plugin result"
           }
         },
-        "parameters": [
+        "security": [
           {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/domains": {
-      "get": {
-        "tags": [
-          "Persona"
-        ],
-        "summary": "Get agent expertise domains",
-        "description": "Get agent expertise domains",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/accuracy": {
-      "get": {
-        "tags": [
-          "Persona"
-        ],
-        "summary": "Get position accuracy stats",
-        "description": "Get position accuracy stats",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/belief-network/{debate_id}/cruxes": {
-      "get": {
-        "tags": [
-          "Belief"
-        ],
-        "summary": "Get key claims that impact debate outcome",
-        "description": "Get key claims that impact debate outcome",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "debate_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/belief-network/{debate_id}/load-bearing-claims": {
-      "get": {
-        "tags": [
-          "Belief"
-        ],
-        "summary": "Get high-centrality claims",
-        "description": "Get high-centrality claims",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "debate_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/provenance/{debate_id}/claims/{claim_id}/support": {
-      "get": {
-        "tags": [
-          "Belief"
-        ],
-        "summary": "Get claim verification status",
-        "description": "Get claim verification status",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "debate_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "claim_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
+            "bearerAuth": []
           }
         ]
       }
@@ -2515,497 +2796,43 @@
         "tags": [
           "Laboratory"
         ],
-        "summary": "Get emergent traits from agent performance",
-        "description": "Get emergent traits from agent performance",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
+        "summary": "Emergent traits",
+        "parameters": [
+          {
+            "name": "min_confidence",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "default": 0.5
             }
           },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Emergent traits"
           }
         }
       }
     },
-    "/api/debate/{debate_id}/graph-stats": {
+    "/api/laboratory/cross-pollinations/suggest": {
       "get": {
         "tags": [
-          "Belief"
+          "Laboratory"
         ],
-        "summary": "Get argument graph statistics",
-        "description": "Get argument graph statistics",
+        "summary": "Cross-pollination suggestions",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "debate_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/rankings": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get agent rankings (alias)",
-        "description": "Get agent rankings (alias)",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Suggestions"
           }
         }
-      }
-    },
-    "/api/agent/{name}/calibration": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get calibration scores",
-        "description": "Get calibration scores",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/consistency": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get consistency score",
-        "description": "Get consistency score",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/flips": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get agent flip history",
-        "description": "Get agent flip history",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/network": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get relationship network",
-        "description": "Get relationship network",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/rivals": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get top rivals",
-        "description": "Get top rivals",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/allies": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get top allies",
-        "description": "Get top allies",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/moments": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get significant moments",
-        "description": "Get significant moments",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/positions": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get position history",
-        "description": "Get position history",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/compare": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Compare multiple agents",
-        "description": "Compare multiple agents",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/agent/{name}/head-to-head/{opponent}": {
-      "get": {
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Get head-to-head stats",
-        "description": "Get head-to-head stats",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "opponent",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
       }
     },
     "/api/tournaments": {
@@ -3013,27 +2840,10 @@
         "tags": [
           "Tournaments"
         ],
-        "summary": "List all tournaments",
-        "description": "List all tournaments",
+        "summary": "List tournaments",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Tournament list"
           }
         }
       }
@@ -3043,975 +2853,7 @@
         "tags": [
           "Tournaments"
         ],
-        "summary": "Get tournament standings",
-        "description": "Get tournament standings",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/consensus/similar": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Find debates similar to a topic",
-        "description": "Find debates similar to a topic",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/consensus/settled": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Get high-confidence settled topics",
-        "description": "Get high-confidence settled topics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/consensus/stats": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Get consensus memory statistics",
-        "description": "Get consensus memory statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/consensus/dissents": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Get recent dissenting views",
-        "description": "Get recent dissenting views",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/consensus/contrarian-views": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Get contrarian perspectives",
-        "description": "Get contrarian perspectives",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/consensus/risk-warnings": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Get risk warnings and edge cases",
-        "description": "Get risk warnings and edge cases",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/consensus/domain/{domain}": {
-      "get": {
-        "tags": [
-          "Consensus"
-        ],
-        "summary": "Get domain-specific history",
-        "description": "Get domain-specific history",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "domain",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/routing/best-teams": {
-      "get": {
-        "tags": [
-          "Routing"
-        ],
-        "summary": "Get best-performing team combinations",
-        "description": "Get best-performing team combinations",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/routing/recommendations": {
-      "post": {
-        "tags": [
-          "Routing"
-        ],
-        "summary": "Get agent recommendations for a task",
-        "description": "Get agent recommendations for a task",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/introspection/all": {
-      "get": {
-        "tags": [
-          "Introspection"
-        ],
-        "summary": "Get introspection for all agents",
-        "description": "Get introspection for all agents",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/introspection/leaderboard": {
-      "get": {
-        "tags": [
-          "Introspection"
-        ],
-        "summary": "Get agents ranked by reputation",
-        "description": "Get agents ranked by reputation",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/introspection/agents": {
-      "get": {
-        "tags": [
-          "Introspection"
-        ],
-        "summary": "List available agents",
-        "description": "List available agents",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/introspection/agents/{name}": {
-      "get": {
-        "tags": [
-          "Introspection"
-        ],
-        "summary": "Get introspection for specific agent",
-        "description": "Get introspection for specific agent",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/podcast/feed.xml": {
-      "get": {
-        "tags": [
-          "Audio"
-        ],
-        "summary": "iTunes-compatible RSS feed",
-        "description": "iTunes-compatible RSS feed",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/podcast/episodes": {
-      "get": {
-        "tags": [
-          "Audio"
-        ],
-        "summary": "JSON episode listing",
-        "description": "JSON episode listing",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/critiques/patterns": {
-      "get": {
-        "tags": [
-          "Critique"
-        ],
-        "summary": "Get high-impact critique patterns",
-        "description": "Get high-impact critique patterns",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/critiques/archive": {
-      "get": {
-        "tags": [
-          "Critique"
-        ],
-        "summary": "Get archive statistics",
-        "description": "Get archive statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/reputation/all": {
-      "get": {
-        "tags": [
-          "Critique"
-        ],
-        "summary": "Get all agent reputations",
-        "description": "Get all agent reputations",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/agent/{name}/reputation": {
-      "get": {
-        "tags": [
-          "Critique"
-        ],
-        "summary": "Get specific agent reputation",
-        "description": "Get specific agent reputation",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/analytics/disagreements": {
-      "get": {
-        "tags": [
-          "Analytics"
-        ],
-        "summary": "Get disagreement statistics",
-        "description": "Get disagreement statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/analytics/role-rotation": {
-      "get": {
-        "tags": [
-          "Analytics"
-        ],
-        "summary": "Get role rotation statistics",
-        "description": "Get role rotation statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/analytics/early-stops": {
-      "get": {
-        "tags": [
-          "Analytics"
-        ],
-        "summary": "Get early stopping statistics",
-        "description": "Get early stopping statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/ranking/stats": {
-      "get": {
-        "tags": [
-          "Analytics"
-        ],
-        "summary": "Get ranking statistics",
-        "description": "Get ranking statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/memory/stats": {
-      "get": {
-        "tags": [
-          "Analytics"
-        ],
-        "summary": "Get memory statistics",
-        "description": "Get memory statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/laboratory/cross-pollinations/suggest": {
-      "post": {
-        "tags": [
-          "Laboratory"
-        ],
-        "summary": "Suggest beneficial trait transfers",
-        "description": "Suggest beneficial trait transfers",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/probes/capability": {
-      "post": {
-        "tags": [
-          "Probes"
-        ],
-        "summary": "Run capability probes on an agent to find vulnerabilities",
-        "description": "Run capability probes on an agent to find vulnerabilities",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/insights/recent": {
-      "get": {
-        "tags": [
-          "Insights"
-        ],
-        "summary": "Get recent insights from InsightStore",
-        "description": "Get recent insights from InsightStore",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/insights/extract-detailed": {
-      "post": {
-        "tags": [
-          "Insights"
-        ],
-        "summary": "Extract detailed insights from content",
-        "description": "Extract detailed insights from content",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/debates/{id}/broadcast": {
-      "post": {
-        "tags": [
-          "Broadcast"
-        ],
-        "summary": "Generate podcast audio from debate trace",
-        "description": "Generate podcast audio from debate trace",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Tournament standings",
         "parameters": [
           {
             "name": "id",
@@ -4022,441 +2864,9 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/debates/{slug}": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Get debate by slug",
-        "description": "Get debate by slug",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "slug",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/debates/slug/{slug}": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Get debate by slug (alternative)",
-        "description": "Get debate by slug (alternative)",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "slug",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/debates/{id}/export/{format}": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Export debate",
-        "description": "Export debate",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "format",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/debates/{id}/impasse": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Detect debate impasse",
-        "description": "Detect debate impasse",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/debates/{id}/evidence": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Get comprehensive evidence trail",
-        "description": "Get comprehensive evidence trail",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/debate/{id}/meta-critique": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Get meta-level debate analysis",
-        "description": "Get meta-level debate analysis",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/debate/{id}/graph/stats": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Get argument graph statistics",
-        "description": "Get argument graph statistics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/search": {
-      "get": {
-        "tags": [
-          "Debates"
-        ],
-        "summary": "Cross-debate search by query",
-        "description": "Cross-debate search by query",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        }
-      }
-    },
-    "/api/agent/{name}/calibration-curve": {
-      "get": {
-        "tags": [
-          "Calibration"
-        ],
-        "summary": "Get calibration curve (confidence vs accuracy)",
-        "description": "Get calibration curve (confidence vs accuracy)",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/agent/{name}/calibration-summary": {
-      "get": {
-        "tags": [
-          "Calibration"
-        ],
-        "summary": "Get calibration summary metrics",
-        "description": "Get calibration summary metrics",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ]
-      }
-    },
-    "/api/calibration/leaderboard": {
-      "get": {
-        "tags": [
-          "Calibration"
-        ],
-        "summary": "Get top agents by calibration score",
-        "description": "Get top agents by calibration score",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Standings"
           }
         }
       }
@@ -4466,27 +2876,10 @@
         "tags": [
           "Genesis"
         ],
-        "summary": "Get overall genesis statistics",
-        "description": "Get overall genesis statistics",
+        "summary": "Genesis statistics",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Genesis stats"
           }
         }
       }
@@ -4496,109 +2889,314 @@
         "tags": [
           "Genesis"
         ],
-        "summary": "Get recent genesis events",
-        "description": "Get recent genesis events",
+        "summary": "Genesis events",
         "responses": {
           "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
+            "description": "Genesis events"
           }
         }
       }
     },
-    "/api/genesis/lineage/{genome_id}": {
+    "/api/genesis/lineage/{agent}": {
       "get": {
         "tags": [
           "Genesis"
         ],
-        "summary": "Get genome ancestry",
-        "description": "Get genome ancestry",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Agent lineage",
         "parameters": [
           {
-            "name": "genome_id",
+            "name": "agent",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string"
             }
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "Lineage data"
+          }
+        }
       }
     },
-    "/api/genesis/tree/{debate_id}": {
+    "/api/genesis/tree/{agent}": {
       "get": {
         "tags": [
           "Genesis"
         ],
-        "summary": "Get debate tree structure",
-        "description": "Get debate tree structure",
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Server error"
-          }
-        },
+        "summary": "Agent tree",
         "parameters": [
           {
-            "name": "debate_id",
+            "name": "agent",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string"
             }
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "Tree data"
+          }
+        }
+      }
+    },
+    "/api/evolution/{agent}/history": {
+      "get": {
+        "tags": [
+          "Evolution"
+        ],
+        "summary": "Agent evolution history",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evolution history"
+          }
+        }
+      }
+    },
+    "/api/replays": {
+      "get": {
+        "tags": [
+          "Replays"
+        ],
+        "summary": "List replays",
+        "responses": {
+          "200": {
+            "description": "Replay list"
+          }
+        }
+      }
+    },
+    "/api/replays/{id}": {
+      "get": {
+        "tags": [
+          "Replays"
+        ],
+        "summary": "Get replay",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Replay data"
+          }
+        }
+      }
+    },
+    "/api/learning/evolution": {
+      "get": {
+        "tags": [
+          "Learning"
+        ],
+        "summary": "Learning evolution",
+        "responses": {
+          "200": {
+            "description": "Evolution data"
+          }
+        }
+      }
+    },
+    "/api/meta-learning/stats": {
+      "get": {
+        "tags": [
+          "Learning"
+        ],
+        "summary": "Meta-learning statistics",
+        "responses": {
+          "200": {
+            "description": "Meta-learning stats"
+          }
+        }
+      }
+    },
+    "/api/critiques/patterns": {
+      "get": {
+        "tags": [
+          "Critiques"
+        ],
+        "summary": "Critique patterns",
+        "responses": {
+          "200": {
+            "description": "Patterns"
+          }
+        }
+      }
+    },
+    "/api/critiques/archive": {
+      "get": {
+        "tags": [
+          "Critiques"
+        ],
+        "summary": "Critique archive",
+        "responses": {
+          "200": {
+            "description": "Archive"
+          }
+        }
+      }
+    },
+    "/api/reputation/all": {
+      "get": {
+        "tags": [
+          "Critiques"
+        ],
+        "summary": "All reputations",
+        "responses": {
+          "200": {
+            "description": "Reputations"
+          }
+        }
+      }
+    },
+    "/api/routing/best-teams": {
+      "get": {
+        "tags": [
+          "Routing"
+        ],
+        "summary": "Best team combinations",
+        "parameters": [
+          {
+            "name": "min_debates",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 3
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Best teams"
+          }
+        }
+      }
+    },
+    "/api/routing/recommendations": {
+      "post": {
+        "tags": [
+          "Routing"
+        ],
+        "summary": "Agent recommendations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "primary_domain": {
+                    "type": "string"
+                  },
+                  "secondary_domains": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "required_traits": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recommendations"
+          }
+        }
+      }
+    },
+    "/api/introspection/all": {
+      "get": {
+        "tags": [
+          "Introspection"
+        ],
+        "summary": "All introspection data",
+        "responses": {
+          "200": {
+            "description": "Introspection data"
+          }
+        }
+      }
+    },
+    "/api/introspection/leaderboard": {
+      "get": {
+        "tags": [
+          "Introspection"
+        ],
+        "summary": "Introspection leaderboard",
+        "responses": {
+          "200": {
+            "description": "Leaderboard"
+          }
+        }
+      }
+    },
+    "/api/introspection/agents": {
+      "get": {
+        "tags": [
+          "Introspection"
+        ],
+        "summary": "Agent introspection list",
+        "responses": {
+          "200": {
+            "description": "Agent list"
+          }
+        }
+      }
+    },
+    "/api/introspection/agents/{name}": {
+      "get": {
+        "tags": [
+          "Introspection"
+        ],
+        "summary": "Agent introspection",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent introspection"
+          }
+        }
       }
     }
   },
@@ -4667,6 +3265,10 @@
           "losses": {
             "type": "integer",
             "description": "Total losses"
+          },
+          "calibration_score": {
+            "type": "number",
+            "description": "Calibration accuracy (0-1)"
           }
         }
       },
@@ -4693,11 +3295,17 @@
             "type": "string",
             "format": "date-time"
           },
-          "messages": {
+          "agents": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Message"
+              "type": "string"
             }
+          },
+          "rounds": {
+            "type": "integer"
+          },
+          "consensus_reached": {
+            "type": "boolean"
           }
         }
       },
@@ -4748,8 +3356,75 @@
           "checks": {
             "type": "object",
             "additionalProperties": {
-              "type": "boolean"
+              "type": "object"
             }
+          },
+          "response_time_ms": {
+            "type": "number"
+          }
+        }
+      },
+      "Consensus": {
+        "type": "object",
+        "properties": {
+          "reached": {
+            "type": "boolean"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "participating_agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Calibration": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number",
+            "description": "Calibration score (0-1)"
+          },
+          "bucket_stats": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "overconfidence_index": {
+            "type": "number"
+          }
+        }
+      },
+      "Relationship": {
+        "type": "object",
+        "properties": {
+          "agent_a": {
+            "type": "string"
+          },
+          "agent_b": {
+            "type": "string"
+          },
+          "alliance_score": {
+            "type": "number"
+          },
+          "rivalry_score": {
+            "type": "number"
+          },
+          "total_interactions": {
+            "type": "integer"
           }
         }
       }
@@ -4758,13 +3433,9 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "API token authentication"
+        "description": "API token authentication. Set via ARAGORA_API_TOKEN environment variable."
       }
     }
   },
-  "security": [
-    {
-      "bearerAuth": []
-    }
-  ]
+  "security": []
 }
