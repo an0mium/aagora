@@ -105,7 +105,7 @@ jobs:
 
       - name: Deploy to Lightsail
         run: |
-          ssh -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i ~/.ssh/lightsail ubuntu@${{ secrets.LIGHTSAIL_HOST }} << EOF
+          ssh -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -i ~/.ssh/lightsail ubuntu@${{ secrets.LIGHTSAIL_HOST }} 'bash -s' << 'ENDSSH'
             set -e
             cd /home/ubuntu/aragora
             echo "Stashing any local changes..."
@@ -115,35 +115,13 @@ jobs:
             source venv/bin/activate
             echo "Installing package (low memory mode)..."
             pip install -e . --quiet --no-cache-dir
-            # Configure Sentry DSN if provided
-            if [ -n "${{ secrets.SENTRY_DSN }}" ]; then
-              echo "Configuring Sentry DSN..."
-              echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" > .env
-            fi
-            # Update systemd service if needed
+            # Update systemd service
             echo "Updating systemd service..."
-            sudo tee /etc/systemd/system/aragora.service > /dev/null << 'SERVICE'
-[Unit]
-Description=Aragora Debate Server
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/aragora
-Environment="PATH=/home/ubuntu/aragora/venv/bin"
-EnvironmentFile=-/home/ubuntu/aragora/.env
-ExecStart=/home/ubuntu/aragora/venv/bin/python -m aragora.server --host 0.0.0.0 --port 8765 --http-port 8080 --nomic-dir /home/ubuntu/aragora/.nomic
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=aragora
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
+            sudo cp deploy/aragora.service /etc/systemd/system/aragora.service.tmp
+            sudo sed -i 's|/opt/aragora|/home/ubuntu/aragora|g' /etc/systemd/system/aragora.service.tmp
+            sudo sed -i 's|User=aragora|User=ubuntu|g' /etc/systemd/system/aragora.service.tmp
+            sudo sed -i 's|Group=aragora|Group=ubuntu|g' /etc/systemd/system/aragora.service.tmp
+            sudo mv /etc/systemd/system/aragora.service.tmp /etc/systemd/system/aragora.service
             sudo systemctl daemon-reload
             echo "Restarting service..."
             sudo systemctl restart aragora
@@ -151,7 +129,7 @@ SERVICE
             sleep 3
             sudo systemctl status aragora --no-pager || true
             echo "Deploy complete"
-          EOF
+          ENDSSH
 
       - name: Verify deployment
         run: |
