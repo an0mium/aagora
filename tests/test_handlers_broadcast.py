@@ -30,11 +30,20 @@ from aragora.server.handlers.social import (
     ALLOWED_OAUTH_HOSTS,
 )
 from aragora.server.handlers.base import clear_cache
+from aragora.server.middleware.rate_limit import reset_rate_limiters
 
 
 # ============================================================================
 # Test Fixtures
 # ============================================================================
+
+@pytest.fixture(autouse=True)
+def reset_rate_limit_state():
+    """Reset rate limiters before and after each test."""
+    reset_rate_limiters()
+    yield
+    reset_rate_limiters()
+
 
 @pytest.fixture
 def mock_audio_store(tmp_path):
@@ -437,6 +446,271 @@ class TestBroadcastGeneration:
 
         assert result is not None
         assert result.status_code == 400
+
+    def test_broadcast_returns_existing_audio(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should return existing audio if already generated."""
+        mock_audio_store.exists.return_value = True
+        mock_audio_store.get_metadata.return_value = {
+            "generated_at": "2024-01-01T00:00:00Z",
+        }
+        mock_audio_store.get_path.return_value = tmp_path / "test-debate.mp3"
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        result = handler.handle_post("/api/debates/test-debate/broadcast", {}, mock_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["status"] == "exists"
+        assert "audio_url" in data
+
+    def test_broadcast_no_nomic_dir(self, mock_handler, mock_storage, mock_audio_store):
+        """Should return 503 when nomic_dir not configured."""
+        mock_audio_store.exists.return_value = False
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": None,
+        }
+        handler = BroadcastHandler(ctx)
+
+        result = handler.handle_post("/api/debates/test/broadcast", {}, mock_handler)
+
+        assert result is not None
+        assert result.status_code == 503
+
+    def test_broadcast_trace_not_found(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should return 404 when trace file not found."""
+        mock_audio_store.exists.return_value = False
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create traces directory but no trace file
+        (tmp_path / "traces").mkdir()
+
+        result = handler.handle_post("/api/debates/test/broadcast", {}, mock_handler)
+
+        assert result is not None
+        assert result.status_code == 404
+        data = json.loads(result.body)
+        assert "trace" in data["error"].lower()
+
+    def test_broadcast_by_slug(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should lookup debate by slug when ID fails."""
+        mock_storage.get_debate.return_value = None
+        mock_storage.get_debate_by_slug.return_value = {
+            "id": "actual-id",
+            "task": "Test debate",
+        }
+        mock_audio_store.exists.return_value = True
+        mock_audio_store.get_metadata.return_value = {"generated_at": "2024-01-01"}
+        mock_audio_store.get_path.return_value = tmp_path / "actual-id.mp3"
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        result = handler.handle_post("/api/debates/my-slug/broadcast", {}, mock_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["debate_id"] == "actual-id"
+
+    def test_broadcast_module_not_available(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should return 503 when broadcast module not available."""
+        mock_audio_store.exists.return_value = False
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create trace file
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        (traces_dir / "test.json").write_text("{}")
+
+        # Call the unwrapped method directly to bypass rate limiter
+        unwrapped = handler._generate_broadcast.__wrapped__
+        with patch("aragora.server.handlers.broadcast.BROADCAST_AVAILABLE", False):
+            result = unwrapped(handler, "test", mock_handler)
+
+        assert result is not None
+        assert result.status_code == 503
+
+    def test_broadcast_success_without_audio_store(self, mock_handler, mock_storage, tmp_path):
+        """Should return generated audio path without persisting."""
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": None,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create trace file
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        (traces_dir / "test.json").write_text("{}")
+
+        mock_trace = MagicMock()
+        audio_path = tmp_path / "output.mp3"
+
+        # Call the unwrapped method directly to bypass rate limiter
+        unwrapped = handler._generate_broadcast.__wrapped__
+        with patch("aragora.server.handlers.broadcast.BROADCAST_AVAILABLE", True):
+            with patch("aragora.debate.traces.DebateTrace.load", return_value=mock_trace):
+                with patch("aragora.server.handlers.broadcast.broadcast_debate") as mock_broadcast:
+                    mock_broadcast.return_value = audio_path
+                    with patch("aragora.server.handlers.broadcast._run_async", side_effect=lambda x: audio_path):
+                        result = unwrapped(handler, "test", mock_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["status"] == "generated"
+
+    def test_broadcast_failed_generation(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should return 500 when broadcast generation fails."""
+        mock_audio_store.exists.return_value = False
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create trace file
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        (traces_dir / "test.json").write_text("{}")
+
+        mock_trace = MagicMock()
+
+        # Call the unwrapped method directly to bypass rate limiter
+        unwrapped = handler._generate_broadcast.__wrapped__
+        with patch("aragora.server.handlers.broadcast.BROADCAST_AVAILABLE", True):
+            with patch("aragora.debate.traces.DebateTrace.load", return_value=mock_trace):
+                with patch("aragora.server.handlers.broadcast._run_async", return_value=None):
+                    result = unwrapped(handler, "test", mock_handler)
+
+        assert result is not None
+        assert result.status_code == 500
+
+    def test_broadcast_with_mutagen_metadata(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should extract duration with mutagen when available."""
+        mock_audio_store.exists.return_value = False
+        mock_audio_store.save.return_value = tmp_path / "stored.mp3"
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create trace file
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        (traces_dir / "test.json").write_text("{}")
+
+        audio_path = tmp_path / "output.mp3"
+        mock_trace = MagicMock()
+        mock_mp3 = MagicMock()
+        mock_mp3.info.length = 120.5
+
+        # Call the unwrapped method directly to bypass rate limiter
+        unwrapped = handler._generate_broadcast.__wrapped__
+        with patch("aragora.server.handlers.broadcast.BROADCAST_AVAILABLE", True):
+            with patch("aragora.server.handlers.broadcast.MUTAGEN_AVAILABLE", True):
+                with patch("aragora.server.handlers.broadcast.MP3", return_value=mock_mp3):
+                    with patch("aragora.debate.traces.DebateTrace.load", return_value=mock_trace):
+                        with patch("aragora.server.handlers.broadcast._run_async", return_value=audio_path):
+                            result = unwrapped(handler, "test", mock_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+        # Check save was called with duration
+        mock_audio_store.save.assert_called_once()
+        call_kwargs = mock_audio_store.save.call_args[1]
+        assert call_kwargs.get("duration_seconds") == 120
+
+    def test_broadcast_audio_persist_failure(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should return warning when audio persist fails."""
+        mock_audio_store.exists.return_value = False
+        mock_audio_store.save.side_effect = Exception("Storage error")
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create trace file
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        (traces_dir / "test.json").write_text("{}")
+
+        audio_path = tmp_path / "output.mp3"
+        mock_trace = MagicMock()
+
+        # Call the unwrapped method directly to bypass rate limiter
+        unwrapped = handler._generate_broadcast.__wrapped__
+        with patch("aragora.server.handlers.broadcast.BROADCAST_AVAILABLE", True):
+            with patch("aragora.debate.traces.DebateTrace.load", return_value=mock_trace):
+                with patch("aragora.server.handlers.broadcast._run_async", return_value=audio_path):
+                    result = unwrapped(handler, "test", mock_handler)
+
+        assert result is not None
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["status"] == "generated"
+        assert "warning" in data
+
+    def test_broadcast_trace_load_failure(self, mock_handler, mock_storage, mock_audio_store, tmp_path):
+        """Should return 500 when trace load fails."""
+        mock_audio_store.exists.return_value = False
+
+        ctx = {
+            "storage": mock_storage,
+            "audio_store": mock_audio_store,
+            "nomic_dir": tmp_path,
+        }
+        handler = BroadcastHandler(ctx)
+
+        # Create trace file
+        traces_dir = tmp_path / "traces"
+        traces_dir.mkdir()
+        (traces_dir / "test.json").write_text("{}")
+
+        # Call the unwrapped method directly to bypass rate limiter
+        unwrapped = handler._generate_broadcast.__wrapped__
+        with patch("aragora.debate.traces.DebateTrace.load", side_effect=Exception("Invalid trace")):
+            result = unwrapped(handler, "test", mock_handler)
+
+        assert result is not None
+        assert result.status_code == 500
+        data = json.loads(result.body)
+        assert "trace" in data["error"].lower()
 
 
 # ============================================================================

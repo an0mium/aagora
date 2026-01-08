@@ -819,15 +819,17 @@ class TestSystemHealthDetails:
 
     def test_cache_entries_count(self, handler):
         """Should count cache entries."""
-        from aragora.server.handlers.base import _cache
+        # Clear existing cache before test
+        clear_cache()
 
-        # Add some entries to cache
-        original_cache = dict(_cache)
-        _cache["test_key"] = ("value", 9999999999)
+        from aragora.server.handlers.cache import get_handler_cache
+
+        # Add a test entry using the cache's set method
+        cache = get_handler_cache()
+        cache.set("test_key_health", "value")
 
         try:
             result = handler._get_system_health()
             assert result["cache_entries"] >= 1
         finally:
-            _cache.clear()
-            _cache.update(original_cache)
+            clear_cache()
