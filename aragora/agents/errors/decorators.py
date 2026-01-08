@@ -269,7 +269,7 @@ def handle_agent_errors(
     max_delay: float = 30.0,
     retryable_exceptions: tuple = (AgentConnectionError, AgentTimeoutError, AgentRateLimitError),
     circuit_breaker_attr: str = "_circuit_breaker",
-):
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator for async agent methods that standardizes error handling.
 
@@ -408,7 +408,7 @@ def with_error_handling(
     log_level: str = "warning",
     reraise: bool = False,
     message_template: str | None = None,
-):
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Simple decorator for standardized exception handling with logging.
 
@@ -475,7 +475,7 @@ def with_error_handling(
 
 
 def _log_error(
-    func: Callable,
+    func: Callable[..., Any],
     error: Exception,
     log_level: str,
     message_template: str | None,
