@@ -529,7 +529,7 @@ class TestSemanticRetriever:
         assert len(results) > 0
         # First result should be exact match
         assert results[0][0] == "doc1"
-        assert results[0][2] == 1.0  # Perfect similarity for exact match
+        assert results[0][2] == pytest.approx(1.0, rel=1e-6)  # Perfect similarity for exact match
 
     @pytest.mark.asyncio
     async def test_find_similar_limit(self, retriever):
