@@ -36,16 +36,28 @@ def _safe_log(level: int, msg: str) -> None:
     """
     try:
         # Check if logging is still functional
-        if not logging.root.handlers:
+        if not logging.root.handlers and not logger.handlers:
             return
-        # Verify ALL stream handlers have valid streams before logging
-        for handler in logging.root.handlers:
+
+        # Check all handlers in the chain (root + logger-specific)
+        all_handlers = list(logging.root.handlers) + list(logger.handlers)
+        for handler in all_handlers:
             if hasattr(handler, 'stream'):
                 stream = handler.stream
-                if stream is None or (hasattr(stream, 'closed') and stream.closed):
-                    return  # At least one stream is invalid, skip logging
+                if stream is None:
+                    return
+                # Check if stream is closed
+                if hasattr(stream, 'closed') and stream.closed:
+                    return
+                # Additional check for sys.stdout/stderr being replaced
+                if hasattr(stream, 'fileno'):
+                    try:
+                        stream.fileno()
+                    except (ValueError, OSError):
+                        return  # Stream file descriptor is invalid
+
         logger.log(level, msg)
-    except (ValueError, RuntimeError, AttributeError, OSError):
+    except (ValueError, RuntimeError, AttributeError, OSError, TypeError):
         # Logging system is shutting down - silently ignore
         pass
 
