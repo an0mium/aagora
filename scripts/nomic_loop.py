@@ -42,6 +42,14 @@ Modular phase classes are now the default (enabled via USE_EXTRACTED_PHASES=1):
 
 Legacy inline implementations are preserved for backward compatibility but
 marked as DEPRECATED. Set USE_EXTRACTED_PHASES=0 to use legacy code.
+
+DEPRECATION TIMELINE:
+- 2026-01: Legacy code marked DEPRECATED, extracted phases enabled by default
+- 2026-03: Runtime warning when USE_EXTRACTED_PHASES=0 is set
+- 2026-06: Legacy inline phase implementations removed (breaking change)
+
+Migration: Ensure USE_EXTRACTED_PHASES=1 (default) works for your use case.
+Report issues at: https://github.com/anthropics/aragora/issues
 """
 
 import asyncio
@@ -1737,6 +1745,14 @@ class NomicLoop:
             # Wire up Prometheus metrics for phase profiling
             self._setup_phase_metrics()
         elif not self.use_extracted_phases:
+            import warnings
+            warnings.warn(
+                "USE_EXTRACTED_PHASES=0 uses deprecated legacy code. "
+                "This will be removed in 2026-06. "
+                "Set USE_EXTRACTED_PHASES=1 (default) to use the new modular phases.",
+                DeprecationWarning,
+                stacklevel=2
+            )
             print(f"[phases] Using legacy inline implementations (USE_EXTRACTED_PHASES=0)")
         self._extracted_phases = {}
 
