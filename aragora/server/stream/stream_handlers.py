@@ -18,14 +18,22 @@ Handlers are organized by domain:
 
 import json
 import logging
+import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from aragora.server.validation import safe_query_int, safe_query_float
 
 if TYPE_CHECKING:
     import aiohttp.web
+    from aragora.ranking.elo import EloSystem
+    from aragora.insights.store import InsightStore
+    from aragora.insights.flip_detector import FlipDetector
+    from aragora.agents.personas import PersonaManager
+    from aragora.debate.embeddings import DebateEmbeddingsDatabase
+    from aragora.visualization.mapper import ArgumentCartographer
+    from aragora.server.stream.emitter import AudienceInbox, SyncEventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +57,21 @@ class StreamAPIHandlersMixin:
     - emitter: SyncEventEmitter
     - _cors_headers(origin: Optional[str]) -> dict
     """
+
+    # Type stubs for attributes expected from the parent class
+    nomic_dir: Optional[Path]
+    elo_system: Optional["EloSystem"]
+    insight_store: Optional["InsightStore"]
+    flip_detector: Optional["FlipDetector"]
+    persona_manager: Optional["PersonaManager"]
+    debate_embeddings: Optional["DebateEmbeddingsDatabase"]
+    active_loops: Dict[str, Any]
+    _active_loops_lock: threading.Lock
+    cartographers: Dict[str, "ArgumentCartographer"]
+    _cartographers_lock: threading.Lock
+    audience_inbox: Optional["AudienceInbox"]
+    emitter: Optional["SyncEventEmitter"]
+    _cors_headers: Callable[[Optional[str]], Dict[str, str]]
 
     # =========================================================================
     # CORS Handler
@@ -145,9 +168,9 @@ class StreamAPIHandlersMixin:
 
         try:
             limit = safe_query_int(request.query, "limit", default=10, max_val=100)
-            insights = self.insight_store.get_recent_insights(limit=limit)
+            insights = await self.insight_store.get_recent_insights(limit=limit)
             return web.json_response(
-                {"insights": insights, "count": len(insights)},
+                {"insights": [i.to_dict() if hasattr(i, 'to_dict') else i for i in insights], "count": len(insights)},
                 headers=self._cors_headers(origin)
             )
         except Exception as e:
@@ -170,7 +193,7 @@ class StreamAPIHandlersMixin:
             )
 
         try:
-            summary = self.flip_detector.get_summary()
+            summary = self.flip_detector.get_flip_summary()
             return web.json_response(
                 {"summary": summary, "count": summary.get("total_flips", 0)},
                 headers=self._cors_headers(origin)

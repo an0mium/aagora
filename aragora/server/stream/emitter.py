@@ -181,6 +181,34 @@ class AudienceInbox:
                 "conviction_distribution": conviction_distribution,
             }
 
+    def drain_suggestions(self, loop_id: str | None = None) -> list[dict]:
+        """
+        Drain and return all suggestion messages, optionally filtered by loop_id.
+
+        Args:
+            loop_id: Optional loop ID to filter suggestions by
+
+        Returns:
+            List of suggestion payloads
+        """
+        with self._lock:
+            suggestions = []
+            remaining = []
+
+            for msg in self._messages:
+                # Filter by loop_id if provided
+                if loop_id and msg.loop_id != loop_id:
+                    remaining.append(msg)
+                    continue
+
+                if msg.type == "suggestion":
+                    suggestions.append(msg.payload)
+                else:
+                    remaining.append(msg)
+
+            self._messages = remaining
+            return suggestions
+
 
 class SyncEventEmitter:
     """

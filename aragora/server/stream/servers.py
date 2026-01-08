@@ -23,8 +23,11 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Callable, Optional, Any, Dict
+from typing import TYPE_CHECKING, Callable, Optional, Any, Dict
 from urllib.parse import parse_qs, urlparse
+
+if TYPE_CHECKING:
+    import aiohttp.web
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 
@@ -70,10 +73,10 @@ try:
     DEBATE_AVAILABLE = True
 except ImportError:
     DEBATE_AVAILABLE = False
-    Arena = None
-    DebateProtocol = None
-    create_agent = None
-    Environment = None
+    Arena = None  # type: ignore[misc, assignment]
+    DebateProtocol = None  # type: ignore[misc, assignment]
+    create_agent = None  # type: ignore[misc, assignment]
+    Environment = None  # type: ignore[misc, assignment]
 
 # Import centralized config and error utilities
 from aragora.config import (
@@ -632,30 +635,21 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):
             }
 
         # Periodic cleanup of stale debates (every 100 debates)
-        # Use lock to prevent race condition on counter
-        should_cleanup = False
-        with _debate_cleanup_counter_lock:
-            global _debate_cleanup_counter
-            _debate_cleanup_counter += 1
-            if _debate_cleanup_counter >= 100:
-                _debate_cleanup_counter = 0
-                should_cleanup = True
-        if should_cleanup:
+        if increment_cleanup_counter():
             _cleanup_stale_debates_stream()
 
         # Set loop_id on emitter so events are tagged
         self.emitter.set_loop_id(debate_id)
 
         # Use thread pool to prevent unbounded thread creation
-        _debate_executor = get_debate_executor()
+        executor = get_debate_executor()
         with _debate_executor_lock:
-            if _debate_executor is None:
-                _debate_executor = ThreadPoolExecutor(
+            if executor is None:
+                executor = ThreadPoolExecutor(
                     max_workers=MAX_CONCURRENT_DEBATES,
                     thread_name_prefix="debate-"
                 )
-                set_debate_executor(_debate_executor)
-            executor = _debate_executor
+                set_debate_executor(executor)
 
         try:
             executor.submit(
