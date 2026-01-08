@@ -39,7 +39,7 @@ __all__ = [
     "error_response", "json_response", "handle_errors", "log_request", "ttl_cache",
     "clear_cache", "get_cache_stats", "CACHE_INVALIDATION_MAP", "invalidate_cache",
     "invalidate_on_event", "invalidate_leaderboard_cache", "invalidate_agent_cache",
-    "invalidate_debate_cache", "PathMatcher", "RouteDispatcher",
+    "invalidate_debate_cache", "PathMatcher", "RouteDispatcher", "safe_fetch",
 ]
 
 logger = logging.getLogger(__name__)
@@ -623,6 +623,61 @@ def require_feature(
     return decorator
 
 
+def safe_fetch(
+    data_dict: dict,
+    errors_dict: dict,
+    key: str,
+    fallback: Any,
+    log_errors: bool = True,
+):
+    """
+    Context manager for safe data fetching with graceful fallback.
+
+    Consolidates the common pattern of:
+    1. Try to fetch data
+    2. Store in data dict on success
+    3. Store fallback and record error on failure
+
+    Args:
+        data_dict: Dict to store successful result
+        errors_dict: Dict to store error messages
+        key: Key for both dicts
+        fallback: Value to use on error
+        log_errors: Whether to log errors (default: True)
+
+    Usage:
+        data = {}
+        errors = {}
+
+        # Before (4 lines repeated 6+ times):
+        try:
+            data["rankings"] = self._fetch_rankings(limit)
+        except Exception as e:
+            errors["rankings"] = str(e)
+            data["rankings"] = {"agents": [], "count": 0}
+
+        # After (2 lines):
+        with safe_fetch(data, errors, "rankings", {"agents": [], "count": 0}):
+            data["rankings"] = self._fetch_rankings(limit)
+
+    Note: The fetch operation should store directly into data_dict[key].
+    On exception, the context manager stores the fallback value.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _safe_fetch():
+        try:
+            yield
+        except Exception as e:
+            if log_errors:
+                logger.warning(f"safe_fetch '{key}' failed: {type(e).__name__}: {e}")
+            errors_dict[key] = str(e)
+            data_dict[key] = fallback
+
+    return _safe_fetch()
+
+
 def with_error_recovery(
     fallback_value: Any = None,
     log_errors: bool = True,
@@ -937,6 +992,100 @@ class BaseHandler:
                            storage, elo_system, debate_embeddings, etc.
         """
         self.ctx = server_context
+
+    def extract_path_param(
+        self,
+        path: str,
+        segment_index: int,
+        param_name: str,
+        pattern: re.Pattern = None,
+    ) -> Tuple[Optional[str], Optional[HandlerResult]]:
+        """Extract and validate a path segment parameter.
+
+        Consolidates the common pattern of:
+        1. Split path into parts
+        2. Check segment exists at index
+        3. Validate against pattern
+        4. Return error response if invalid
+
+        Args:
+            path: URL path to extract from
+            segment_index: Index of segment to extract (0-based)
+            param_name: Human-readable name for error messages
+            pattern: Regex pattern to validate against (default: SAFE_ID_PATTERN)
+
+        Returns:
+            Tuple of (value, error_response):
+            - (value, None) on success
+            - (None, HandlerResult) on failure
+
+        Example:
+            # Before:
+            parts = path.split("/")
+            if len(parts) < 4:
+                return error_response("Invalid path", 400)
+            domain = parts[3]
+            is_valid, err = validate_path_segment(domain, "domain", SAFE_ID_PATTERN)
+            if not is_valid:
+                return error_response(err, 400)
+
+            # After:
+            domain, err = self.extract_path_param(path, 3, "domain")
+            if err:
+                return err
+        """
+        pattern = pattern or SAFE_ID_PATTERN
+        parts = path.strip("/").split("/")
+
+        if segment_index >= len(parts):
+            return None, error_response(f"Missing {param_name} in path", 400)
+
+        value = parts[segment_index]
+        if not value:
+            return None, error_response(f"Empty {param_name}", 400)
+
+        is_valid, err_msg = validate_path_segment(value, param_name, pattern)
+        if not is_valid:
+            return None, error_response(err_msg, 400)
+
+        return value, None
+
+    def extract_path_params(
+        self,
+        path: str,
+        param_specs: list[Tuple[int, str, Optional[re.Pattern]]],
+    ) -> Tuple[Optional[dict], Optional[HandlerResult]]:
+        """Extract and validate multiple path parameters at once.
+
+        Args:
+            path: URL path to extract from
+            param_specs: List of (segment_index, param_name, pattern) tuples.
+                        If pattern is None, SAFE_ID_PATTERN is used.
+
+        Returns:
+            Tuple of (params_dict, error_response):
+            - ({"name": value, ...}, None) on success
+            - (None, HandlerResult) on first failure
+
+        Example:
+            # Extract agent_a and agent_b from /api/agents/compare/claude/gpt4
+            params, err = self.extract_path_params(path, [
+                (3, "agent_a", SAFE_AGENT_PATTERN),
+                (4, "agent_b", SAFE_AGENT_PATTERN),
+            ])
+            if err:
+                return err
+            # params = {"agent_a": "claude", "agent_b": "gpt4"}
+        """
+        result = {}
+        for segment_index, param_name, pattern in param_specs:
+            value, err = self.extract_path_param(
+                path, segment_index, param_name, pattern
+            )
+            if err:
+                return None, err
+            result[param_name] = value
+        return result, None
 
     def get_storage(self):
         """Get debate storage instance."""

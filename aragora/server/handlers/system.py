@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 from .base import (
     BaseHandler, HandlerResult, json_response, error_response,
     get_int_param, get_string_param, validate_path_segment, SAFE_ID_PATTERN,
+    ttl_cache,
 )
+
+# Cache TTLs for system endpoints (in seconds)
+CACHE_TTL_NOMIC_STATE = 10  # Short TTL for state (changes frequently)
+CACHE_TTL_HISTORY = 60  # History queries
+CACHE_TTL_OPENAPI = 3600  # OpenAPI spec (rarely changes)
 
 
 class SystemHandler(BaseHandler):
@@ -483,6 +489,7 @@ class SystemHandler(BaseHandler):
 
         return json_response({"modes": modes, "total": len(modes)})
 
+    @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_cycles", skip_first=True)
     def _get_history_cycles(self, loop_id: Optional[str], limit: int) -> HandlerResult:
         """Get cycle history from Supabase or local storage."""
         try:
@@ -501,6 +508,7 @@ class SystemHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get cycles: {e}", 500)
 
+    @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_events", skip_first=True)
     def _get_history_events(self, loop_id: Optional[str], limit: int) -> HandlerResult:
         """Get event history."""
         try:
@@ -518,6 +526,7 @@ class SystemHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get events: {e}", 500)
 
+    @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_debates", skip_first=True)
     def _get_history_debates(self, loop_id: Optional[str], limit: int) -> HandlerResult:
         """Get debate history."""
         storage = self.get_storage()
@@ -533,6 +542,7 @@ class SystemHandler(BaseHandler):
         except Exception as e:
             return error_response(f"Failed to get debates: {e}", 500)
 
+    @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_summary", skip_first=True)
     def _get_history_summary(self, loop_id: Optional[str]) -> HandlerResult:
         """Get history summary statistics."""
         storage = self.get_storage()
@@ -606,6 +616,7 @@ class SystemHandler(BaseHandler):
             logger.exception(f"Maintenance task '{task}' failed: {e}")
             return error_response(f"Maintenance failed: {e}", 500)
 
+    @ttl_cache(ttl_seconds=CACHE_TTL_OPENAPI, key_prefix="openapi_spec", skip_first=True)
     def _get_openapi_spec(self, format: str = "json") -> HandlerResult:
         """Get OpenAPI specification.
 
