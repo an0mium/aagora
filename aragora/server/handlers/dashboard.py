@@ -55,6 +55,12 @@ class DashboardHandler(BaseHandler):
         Returns:
             Aggregated dashboard metrics from all available subsystems
         """
+        request_start = time.perf_counter()
+        logger.debug(
+            "Dashboard request: domain=%s, limit=%d, hours=%d",
+            domain, limit, hours
+        )
+
         result = {
             "summary": {},
             "recent_activity": {},
@@ -95,6 +101,11 @@ class DashboardHandler(BaseHandler):
         # Gather system health
         result["system_health"] = self._get_system_health()
 
+        request_elapsed = time.perf_counter() - request_start
+        logger.debug(
+            "Dashboard response: elapsed=%.3fs, total_debates=%d",
+            request_elapsed, result.get("summary", {}).get("total_debates", 0)
+        )
         return json_response(result)
 
     def _process_debates_single_pass(
@@ -113,6 +124,12 @@ class DashboardHandler(BaseHandler):
         Returns:
             Tuple of (summary, activity, patterns) dicts
         """
+        start_time = time.perf_counter()
+        logger.debug(
+            "Starting single-pass processing: debates=%d, domain=%s, hours=%d",
+            len(debates), domain, hours
+        )
+
         # Initialize summary metrics
         summary = {
             "total_debates": 0,
@@ -227,6 +244,13 @@ class DashboardHandler(BaseHandler):
         except Exception as e:
             logger.warning("Single-pass processing error: %s: %s", type(e).__name__, e)
 
+        elapsed = time.perf_counter() - start_time
+        logger.debug(
+            "Completed single-pass processing: elapsed=%.3fs, total=%d, consensus=%d, recent=%d",
+            elapsed, summary.get("total_debates", 0),
+            summary.get("consensus_reached", 0),
+            activity.get("debates_last_period", 0)
+        )
         return summary, activity, patterns
 
     def _get_summary_metrics_sql(self, storage, domain: Optional[str]) -> dict:
