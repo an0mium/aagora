@@ -4,13 +4,14 @@ This document describes the HTTP and WebSocket APIs for the Aragora debate platf
 
 ## Endpoint Usage Status
 
-**Last audited:** 2026-01-05
+**Last audited:** 2026-01-07
 
 | Category | Count | Notes |
 |----------|-------|-------|
+| **Documented** | 96 | Fully documented in this file |
 | **Actively Used** | 27 | Called from frontend components |
-| **Unused (High-Value)** | 12 | Ready to wire, significant features |
-| **Unused (Low-Impact)** | 39 | Analytics, plugins, advanced features |
+| **Ready to Wire** | 12 | High-value, not yet connected to frontend |
+| **Advanced/Analytics** | 57 | Specialized features, plugins, analytics |
 
 ### High-Value Unused Endpoints (Ready to Wire)
 
