@@ -309,7 +309,7 @@ class EvidenceGrounder:
 
                     if proof_result and proof_result.status == FormalProofStatus.PROOF_FOUND:
                         claim.grounding_score = 1.0  # Formally verified
-                        claim.citations.append({
+                        claim.citations.append({  # type: ignore[arg-type]
                             "type": "formal_proof",
                             "prover": proof_result.language.value,
                             "verified": True,
@@ -317,7 +317,7 @@ class EvidenceGrounder:
                         verified_count += 1
                     elif proof_result and proof_result.status == FormalProofStatus.PROOF_FAILED:
                         claim.grounding_score = 0.0  # Disproven
-                        claim.citations.append({
+                        claim.citations.append({  # type: ignore[arg-type]
                             "type": "formal_proof",
                             "prover": proof_result.language.value,
                             "verified": False,

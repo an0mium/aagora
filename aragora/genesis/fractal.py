@@ -11,7 +11,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional, Sequence
 
 from aragora.core import Agent, DebateResult, Environment
 from aragora.debate.orchestrator import Arena, DebateProtocol
@@ -272,7 +272,7 @@ class FractalOrchestrator:
         for genome in specialists:
             try:
                 agent = create_agent(
-                    agent_type=genome.model_preference,
+                    model_type=genome.model_preference,  # type: ignore[arg-type]
                     name=genome.name,
                     role="proposer",
                 )
@@ -291,7 +291,7 @@ class FractalOrchestrator:
             for genome in best_genomes:
                 try:
                     agent = create_agent(
-                        agent_type=genome.model_preference,
+                        model_type=genome.model_preference,  # type: ignore[arg-type]
                         name=genome.name,
                         role="proposer",
                     )
@@ -326,7 +326,7 @@ class FractalOrchestrator:
         # Run sub-debate recursively
         sub_result = await self.run(
             task=focused_task,
-            agents=specialist_agents,
+            agents=list(specialist_agents),  # type: ignore[arg-type]
             population=population,
             depth=depth,
             parent_debate_id=parent_debate_id,
@@ -371,7 +371,7 @@ class FractalOrchestrator:
         high_severity_critiques = [c for c in result.critiques if c.severity > 0.7]
         if high_severity_critiques:
             # Group by similar issues
-            issue_groups = {}
+            issue_groups: dict[str, Any] = {}
             for critique in high_severity_critiques:
                 for issue in critique.issues:
                     key = issue[:50]  # Group by first 50 chars
