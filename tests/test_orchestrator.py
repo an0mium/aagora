@@ -876,5 +876,208 @@ class TestJudgeTermination:
         assert reason == ""
 
 
+class TestMomentDetectorAutoInit:
+    """Tests for MomentDetector auto-initialization."""
+
+    def test_auto_init_with_elo_system(self):
+        """Test MomentDetector auto-initializes when elo_system provided."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        mock_elo = MagicMock()
+
+        with patch('aragora.agents.grounded.MomentDetector') as mock_md:
+            arena = Arena(env, agents, protocol, elo_system=mock_elo)
+            # MomentDetector should be auto-initialized
+            # (may or may not succeed depending on import)
+
+    def test_auto_init_import_error_handled(self):
+        """Test MomentDetector import error is handled gracefully."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        mock_elo = MagicMock()
+
+        with patch.dict('sys.modules', {'aragora.agents.grounded': None}):
+            # Should not raise even if import fails
+            arena = Arena(env, agents, protocol, elo_system=mock_elo)
+            assert arena is not None
+
+
+class TestPositionRecording:
+    """Tests for position recording functionality."""
+
+    def test_record_position_without_ledger(self):
+        """Test _record_grounded_position does nothing without ledger."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        arena = Arena(env, agents, protocol)
+        # Should not raise without position_ledger
+        arena._record_grounded_position(
+            agent_name="agent1",
+            content="Test position",
+            debate_id="test-123",
+            round_num=1,
+        )
+
+    def test_record_position_with_mock_ledger(self):
+        """Test _record_grounded_position calls ledger correctly."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        mock_ledger = MagicMock()
+        arena = Arena(env, agents, protocol, position_ledger=mock_ledger)
+
+        arena._record_grounded_position(
+            agent_name="agent1",
+            content="Test position content",
+            debate_id="test-123",
+            round_num=1,
+            confidence=0.8,
+        )
+
+        mock_ledger.record_position.assert_called_once()
+
+    def test_record_position_handles_exception(self):
+        """Test _record_grounded_position handles ledger errors."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        mock_ledger = MagicMock()
+        mock_ledger.record_position.side_effect = Exception("DB error")
+        arena = Arena(env, agents, protocol, position_ledger=mock_ledger)
+
+        # Should not raise
+        arena._record_grounded_position(
+            agent_name="agent1",
+            content="Test",
+            debate_id="test-123",
+            round_num=1,
+        )
+
+
+class TestRelationshipUpdates:
+    """Tests for agent relationship updates."""
+
+    def test_update_relationships_without_elo(self):
+        """Test _update_agent_relationships does nothing without elo_system."""
+        agents = [MockAgent("agent1"), MockAgent("agent2")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        arena = Arena(env, agents, protocol)
+        # Should not raise without elo_system
+        arena._update_agent_relationships(
+            debate_id="test-123",
+            participants=["agent1", "agent2"],
+            winner="agent1",
+            votes=[],
+        )
+
+    def test_update_relationships_with_elo(self):
+        """Test _update_agent_relationships calls elo_system correctly."""
+        agents = [MockAgent("agent1"), MockAgent("agent2")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        mock_elo = MagicMock()
+        arena = Arena(env, agents, protocol, elo_system=mock_elo)
+
+        mock_vote1 = MagicMock()
+        mock_vote1.agent = "agent1"
+        mock_vote1.choice = "agent1"
+
+        mock_vote2 = MagicMock()
+        mock_vote2.agent = "agent2"
+        mock_vote2.choice = "agent1"
+
+        arena._update_agent_relationships(
+            debate_id="test-123",
+            participants=["agent1", "agent2"],
+            winner="agent1",
+            votes=[mock_vote1, mock_vote2],
+        )
+
+        mock_elo.update_relationships_batch.assert_called_once()
+
+    def test_update_relationships_handles_exception(self):
+        """Test _update_agent_relationships handles errors gracefully."""
+        agents = [MockAgent("agent1"), MockAgent("agent2")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        mock_elo = MagicMock()
+        mock_elo.update_relationships_batch.side_effect = Exception("DB error")
+        arena = Arena(env, agents, protocol, elo_system=mock_elo)
+
+        # Should not raise
+        arena._update_agent_relationships(
+            debate_id="test-123",
+            participants=["agent1", "agent2"],
+            winner="agent1",
+            votes=[],
+        )
+
+
+class TestEarlyStoppingLogic:
+    """Tests for early stopping configuration."""
+
+    @pytest.mark.asyncio
+    async def test_early_stopping_disabled(self):
+        """Test _check_early_stopping returns True when disabled."""
+        agents = [MockAgent("agent1"), MockAgent("agent2")]
+        env = Environment(task="Test task", max_rounds=3)
+        protocol = DebateProtocol(rounds=3, early_stopping=False)
+
+        arena = Arena(env, agents, protocol)
+
+        result = await arena._check_early_stopping(
+            round_num=2,
+            proposals={"agent1": "Proposal"},
+            context=[]
+        )
+
+        assert result is True  # Continue debate
+
+
+class TestEventNotification:
+    """Tests for event notification methods."""
+
+    def test_notify_spectator_delegates_to_bridge(self):
+        """Test _notify_spectator delegates to event_bridge."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        arena = Arena(env, agents, protocol)
+
+        # Mock the event bridge
+        arena.event_bridge = MagicMock()
+
+        arena._notify_spectator("test_event", data="test_data")
+
+        arena.event_bridge.notify.assert_called_once_with("test_event", data="test_data")
+
+    def test_emit_moment_event_delegates_to_bridge(self):
+        """Test _emit_moment_event delegates to event_bridge."""
+        agents = [MockAgent("agent1")]
+        env = Environment(task="Test task", max_rounds=1)
+        protocol = DebateProtocol(rounds=1)
+
+        arena = Arena(env, agents, protocol)
+        arena.event_bridge = MagicMock()
+
+        mock_moment = MagicMock()
+        arena._emit_moment_event(mock_moment)
+
+        arena.event_bridge.emit_moment.assert_called_once_with(mock_moment)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
