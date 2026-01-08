@@ -351,6 +351,7 @@ class DebatesHandler(BaseHandler):
                 return json_response(debate)
             return error_response(f"Debate not found: {slug}", 404)
         except Exception as e:
+            logger.error("Failed to get debate %s: %s: %s", slug, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get debate: {e}", 500)
 
     @require_storage
@@ -382,6 +383,7 @@ class DebatesHandler(BaseHandler):
                 "indicators": impasse_indicators,
             })
         except Exception as e:
+            logger.error("Impasse detection failed for %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Impasse detection failed: {e}", 500)
 
     @require_storage
@@ -402,6 +404,7 @@ class DebatesHandler(BaseHandler):
                 "rounds_used": debate.get("rounds_used", 0),
             })
         except Exception as e:
+            logger.error("Convergence check failed for %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Convergence check failed: {e}", 500)
 
     @require_storage
@@ -425,6 +428,7 @@ class DebatesHandler(BaseHandler):
                 return self._format_html(debate)
 
         except Exception as e:
+            logger.error("Export failed for %s (format=%s): %s: %s", debate_id, format, type(e).__name__, e, exc_info=True)
             return error_response(f"Export failed: {e}", 500)
 
     def _format_csv(self, debate: dict, table: str) -> HandlerResult:
@@ -502,6 +506,7 @@ class DebatesHandler(BaseHandler):
             })
 
         except Exception as e:
+            logger.error("Failed to get citations for %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get citations: {e}", 500)
 
     @require_storage
@@ -643,6 +648,7 @@ class DebatesHandler(BaseHandler):
             })
 
         except Exception as e:
+            logger.error("Failed to get messages for %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get messages: {e}", 500)
 
     def _get_meta_critique(self, debate_id: str) -> HandlerResult:
@@ -686,6 +692,7 @@ class DebatesHandler(BaseHandler):
                 "recommendations": critique.recommendations,
             })
         except Exception as e:
+            logger.error("Failed to get meta critique for %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get meta critique: {e}", 500)
 
     def _get_graph_stats(self, debate_id: str) -> HandlerResult:
@@ -744,14 +751,12 @@ class DebatesHandler(BaseHandler):
             return json_response(stats)
 
         except Exception as e:
+            logger.error("Failed to get graph stats for %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to get graph stats: {e}", 500)
 
     def _build_graph_from_replay(self, debate_id: str, replay_path) -> HandlerResult:
         """Build graph stats from replay events file."""
         import json as json_mod
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         try:
             from aragora.visualization.mapper import ArgumentCartographer
@@ -790,6 +795,7 @@ class DebatesHandler(BaseHandler):
             stats = cartographer.get_statistics()
             return json_response(stats)
         except Exception as e:
+            logger.error("Failed to build graph from replay %s: %s: %s", debate_id, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to build graph from replay: {e}", 500)
 
     def handle_post(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
@@ -917,6 +923,7 @@ class DebatesHandler(BaseHandler):
             })
 
         except Exception as e:
+            logger.error("Failed to create fork for %s at round %s: %s: %s", debate_id, branch_point, type(e).__name__, e, exc_info=True)
             return error_response(f"Failed to create fork: {e}", 500)
 
     @handle_errors("verify debate outcome")

@@ -46,6 +46,25 @@ class LeaderboardViewHandler(BaseHandler):
         """Check if this handler can process the given path."""
         return path == "/api/leaderboard-view"
 
+    def _safe_fetch_section(
+        self, data: dict, errors: dict, key: str, fetch_fn, fallback: dict
+    ) -> None:
+        """Safely fetch a leaderboard section with error handling and logging.
+
+        Args:
+            data: Dictionary to store successful results
+            errors: Dictionary to store error messages
+            key: Section name (e.g., "rankings", "matches")
+            fetch_fn: Callable that fetches the section data
+            fallback: Default value to use on error
+        """
+        try:
+            data[key] = fetch_fn()
+        except Exception as e:
+            logger.error("Leaderboard section '%s' failed: %s: %s", key, type(e).__name__, e, exc_info=True)
+            errors[key] = str(e)
+            data[key] = fallback
+
     def handle(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
         """Route leaderboard view requests."""
         if path == "/api/leaderboard-view":
@@ -73,51 +92,39 @@ class LeaderboardViewHandler(BaseHandler):
         data = {}
         errors = {}
 
-        # 1. Rankings (with consistency from FlipDetector)
-        try:
-            data["rankings"] = self._fetch_rankings(limit, domain)
-        except Exception as e:
-            errors["rankings"] = str(e)
-            data["rankings"] = {"agents": [], "count": 0}
-
-        # 2. Recent matches
-        try:
-            data["matches"] = self._fetch_matches(limit, loop_id)
-        except Exception as e:
-            errors["matches"] = str(e)
-            data["matches"] = {"matches": [], "count": 0}
-
-        # 3. Reputation
-        try:
-            data["reputation"] = self._fetch_reputations()
-        except Exception as e:
-            errors["reputation"] = str(e)
-            data["reputation"] = {"reputations": [], "count": 0}
-
-        # 4. Best teams
-        try:
-            data["teams"] = self._fetch_teams(min_debates=3, limit=10)
-        except Exception as e:
-            errors["teams"] = str(e)
-            data["teams"] = {"combinations": [], "count": 0}
-
-        # 5. Ranking stats
-        try:
-            data["stats"] = self._fetch_stats()
-        except Exception as e:
-            errors["stats"] = str(e)
-            data["stats"] = {
-                "mean_elo": 1500, "median_elo": 1500, "total_agents": 0,
-                "total_matches": 0, "rating_distribution": {},
-                "trending_up": [], "trending_down": []
-            }
-
-        # 6. Introspection (agent self-models)
-        try:
-            data["introspection"] = self._fetch_introspection()
-        except Exception as e:
-            errors["introspection"] = str(e)
-            data["introspection"] = {"agents": {}, "count": 0}
+        # Fetch all sections with graceful error handling
+        self._safe_fetch_section(
+            data, errors, "rankings",
+            lambda: self._fetch_rankings(limit, domain),
+            {"agents": [], "count": 0}
+        )
+        self._safe_fetch_section(
+            data, errors, "matches",
+            lambda: self._fetch_matches(limit, loop_id),
+            {"matches": [], "count": 0}
+        )
+        self._safe_fetch_section(
+            data, errors, "reputation",
+            self._fetch_reputations,
+            {"reputations": [], "count": 0}
+        )
+        self._safe_fetch_section(
+            data, errors, "teams",
+            lambda: self._fetch_teams(min_debates=3, limit=10),
+            {"combinations": [], "count": 0}
+        )
+        self._safe_fetch_section(
+            data, errors, "stats",
+            self._fetch_stats,
+            {"mean_elo": 1500, "median_elo": 1500, "total_agents": 0,
+             "total_matches": 0, "rating_distribution": {},
+             "trending_up": [], "trending_down": []}
+        )
+        self._safe_fetch_section(
+            data, errors, "introspection",
+            self._fetch_introspection,
+            {"agents": {}, "count": 0}
+        )
 
         return json_response({
             "data": data,
