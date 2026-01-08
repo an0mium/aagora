@@ -484,7 +484,7 @@ class TestErrorHandling:
 
     def test_safe_error_message_hides_paths(self):
         """Test error messages don't leak file paths."""
-        from aragora.server.handlers.consensus import _safe_error_message
+        from aragora.server.error_utils import safe_error_message as _safe_error_message
 
         error = FileNotFoundError("/etc/passwd not found")
         msg = _safe_error_message(error, "test")
@@ -493,7 +493,7 @@ class TestErrorHandling:
 
     def test_safe_error_message_handles_timeout(self):
         """Test timeout errors are handled."""
-        from aragora.server.handlers.consensus import _safe_error_message
+        from aragora.server.error_utils import safe_error_message as _safe_error_message
 
         error = TimeoutError("Operation timed out after 30s")
         msg = _safe_error_message(error, "test")
@@ -501,7 +501,7 @@ class TestErrorHandling:
 
     def test_generic_errors_sanitized(self):
         """Test generic errors are sanitized."""
-        from aragora.server.handlers.consensus import _safe_error_message
+        from aragora.server.error_utils import safe_error_message as _safe_error_message
 
         error = Exception("Internal database password: secret123")
         msg = _safe_error_message(error, "test")
