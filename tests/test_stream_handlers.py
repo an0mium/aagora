@@ -85,7 +85,7 @@ class MockInsightStore:
 class MockFlipDetector:
     """Mock FlipDetector for testing."""
 
-    def get_summary(self) -> Dict:
+    def get_flip_summary(self) -> Dict:
         return {
             "total_flips": 15,
             "average_confidence_change": 0.3,
@@ -316,8 +316,9 @@ class TestHandleFlipsSummary:
             call_args = mock_json.call_args
             data = call_args[0][0]
 
-            assert "total_flips" in data
-            assert data["total_flips"] == 15
+            assert "summary" in data
+            assert "count" in data
+            assert data["summary"]["total_flips"] == 15
 
     @pytest.mark.asyncio
     async def test_returns_empty_without_flip_detector(self, handler_mixin, mock_request):
@@ -331,7 +332,8 @@ class TestHandleFlipsSummary:
             call_args = mock_json.call_args
             data = call_args[0][0]
 
-            assert data == {}
+            assert data["summary"] == {}
+            assert data["count"] == 0
 
 
 class TestHandleFlipsRecent:
@@ -450,9 +452,11 @@ class TestCorsHeaders:
             assert "Access-Control-Allow-Origin" in headers
 
     @pytest.mark.asyncio
-    async def test_missing_origin_uses_wildcard(self, handler_mixin):
-        """Missing origin should use wildcard."""
-        request = MockRequest(headers={})
+    async def test_missing_origin_uses_none(self, handler_mixin):
+        """Missing origin should pass None to cors headers."""
+        # Create request without default Origin
+        request = MockRequest()
+        request.headers = {}  # Clear the default Origin
 
         with patch("aiohttp.web.json_response") as mock_json:
             mock_json.return_value = MockResponse(200)
@@ -461,4 +465,5 @@ class TestCorsHeaders:
             call_args = mock_json.call_args
             headers = call_args[1].get("headers", {})
 
+            # Handler's _cors_headers returns "*" when origin is None
             assert headers.get("Access-Control-Allow-Origin") == "*"

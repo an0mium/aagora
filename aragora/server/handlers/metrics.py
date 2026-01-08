@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -278,9 +278,9 @@ class MetricsHandler(BaseHandler):
             logger.error("Failed to get system info: %s", e, exc_info=True)
             return error_response(f"Failed to get system info: {e}", 500)
 
-    def _get_database_sizes(self) -> dict:
+    def _get_database_sizes(self) -> dict[str, Any]:
         """Get database file sizes."""
-        sizes: dict[str, int] = {}
+        sizes: dict[str, dict[str, Any]] = {}
         nomic_dir = self.get_nomic_dir()
 
         if not nomic_dir or not nomic_dir.exists():
@@ -325,8 +325,9 @@ class MetricsHandler(BaseHandler):
 
     def _format_size(self, size_bytes: int) -> str:
         """Format size as human-readable string."""
+        size_float = float(size_bytes)
         for unit in ['B', 'KB', 'MB', 'GB']:
-            if size_bytes < 1024:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.1f} TB"
+            if size_float < 1024:
+                return f"{size_float:.1f} {unit}"
+            size_float /= 1024
+        return f"{size_float:.1f} TB"
