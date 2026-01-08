@@ -512,7 +512,7 @@ class ClaimsKernel:
         total_claims = len(self.claims)
         claims_with_evidence = sum(1 for c in self.claims.values() if c.evidence)
 
-        evidence_by_type = {}
+        evidence_by_type: dict[str, int] = {}
         for claim in self.claims.values():
             for ev in claim.evidence:
                 ev_type = ev.evidence_type.value

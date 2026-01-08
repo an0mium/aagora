@@ -456,7 +456,7 @@ class Arena:
             loop_id=self.loop_id,
             strict_loop_scoping=self.strict_loop_scoping,
         )
-        self.audience_manager.set_notify_callback(self._notify_spectator)
+        self.audience_manager.set_notify_callback(self._notify_spectator)  # type: ignore[arg-type]
 
         # Subscribe to user participation events if emitter provided
         if self.event_emitter:

@@ -205,7 +205,7 @@ class GitProvenanceTracker:
         if not success:
             return []
 
-        blame_info = []
+        blame_info: list[dict] = []
         lines = output.split("\n")
         current_commit = None
 
@@ -572,7 +572,7 @@ class EnhancedProvenanceManager(ProvenanceManager):
         claim_ids: Optional[list[str]] = None,
     ) -> list[RevalidationTrigger]:
         """Generate triggers for claims with stale evidence."""
-        triggers = []
+        triggers: list[RevalidationTrigger] = []
 
         # Get all claims if not specified
         if claim_ids is None:
