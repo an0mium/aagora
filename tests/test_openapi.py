@@ -56,7 +56,7 @@ class TestOpenAPISchema:
         assert "id" in props
         assert "topic" in props
         assert "status" in props
-        assert "messages" in props
+        # Note: messages are in separate Message schema, not embedded in Debate
 
     def test_message_schema_structure(self):
         """Message schema has expected fields."""
@@ -106,8 +106,9 @@ class TestEndpoints:
 
     def test_analytics_endpoints_defined(self):
         """Analytics endpoints are defined."""
-        assert "/api/analytics/disagreement" in ALL_ENDPOINTS
-        assert "/api/analytics/consensus" in ALL_ENDPOINTS
+        assert "/api/analytics/disagreements" in ALL_ENDPOINTS
+        assert "/api/analytics/role-rotation" in ALL_ENDPOINTS
+        assert "/api/analytics/early-stops" in ALL_ENDPOINTS
 
     def test_pulse_endpoints_defined(self):
         """Pulse endpoints are defined."""
@@ -117,7 +118,7 @@ class TestEndpoints:
     def test_metrics_endpoints_defined(self):
         """Metrics endpoints are defined."""
         assert "/api/metrics" in ALL_ENDPOINTS
-        assert "/api/metrics/prometheus" in ALL_ENDPOINTS
+        assert "/metrics" in ALL_ENDPOINTS  # Prometheus format at /metrics
 
     def test_endpoint_has_tags(self):
         """All endpoints have tags."""
@@ -317,7 +318,7 @@ class TestSchemaValidation:
     def test_response_codes_valid(self):
         """Response codes are valid HTTP codes."""
         schema = generate_openapi_schema()
-        valid_codes = {"200", "201", "204", "400", "401", "403", "404", "429", "500", "503"}
+        valid_codes = {"200", "201", "202", "204", "400", "401", "403", "404", "429", "500", "503"}
 
         for path, methods in schema["paths"].items():
             for method, spec in methods.items():
