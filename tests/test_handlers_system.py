@@ -651,3 +651,82 @@ class TestSystemEdgeCases:
         # Non-existent nomic_dir is a warning, not a failure
         assert data["checks"]["nomic_dir"]["healthy"] is True
         assert "warning" in data["checks"]["nomic_dir"]
+
+
+# ============================================================================
+# Auth Endpoint Tests
+# ============================================================================
+
+class TestAuthEndpoints:
+    """Tests for authentication endpoints."""
+
+    def test_can_handle_auth_stats(self, system_handler):
+        """Should handle /api/auth/stats."""
+        assert system_handler.can_handle("/api/auth/stats") is True
+
+    def test_can_handle_auth_revoke(self, system_handler):
+        """Should handle /api/auth/revoke."""
+        assert system_handler.can_handle("/api/auth/revoke") is True
+
+    def test_get_auth_stats(self, system_handler):
+        """Should return auth stats."""
+        result = system_handler.handle("/api/auth/stats", {}, None)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert "enabled" in data
+        assert "rate_limit_per_minute" in data
+        assert "ip_rate_limit_per_minute" in data
+        assert "token_ttl_seconds" in data
+        assert "stats" in data
+
+    def test_revoke_token_invalid_json(self, system_handler):
+        """Should reject invalid JSON body."""
+        mock_handler = Mock()
+        mock_handler.headers = {"Content-Length": "10"}
+        mock_handler.rfile.read.return_value = b"not valid json"
+
+        result = system_handler.handle_post("/api/auth/revoke", {}, mock_handler)
+
+        assert result.status_code == 400
+        data = json.loads(result.body)
+        assert "Invalid JSON" in data["error"]
+
+    def test_revoke_token_missing_token(self, system_handler):
+        """Should reject missing token."""
+        mock_handler = Mock()
+        mock_handler.headers = {"Content-Length": "2"}
+        mock_handler.rfile.read.return_value = b"{}"
+
+        result = system_handler.handle_post("/api/auth/revoke", {}, mock_handler)
+
+        assert result.status_code == 400
+        data = json.loads(result.body)
+        assert "required" in data["error"].lower()
+
+    def test_revoke_token_success(self, system_handler):
+        """Should revoke token successfully."""
+        mock_handler = Mock()
+        body = json.dumps({"token": "test-token-123", "reason": "security"})
+        mock_handler.headers = {"Content-Length": str(len(body))}
+        mock_handler.rfile.read.return_value = body.encode()
+
+        result = system_handler.handle_post("/api/auth/revoke", {}, mock_handler)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["success"] is True
+        assert "revoked_count" in data
+
+    def test_revoke_token_without_reason(self, system_handler):
+        """Should revoke token without reason."""
+        mock_handler = Mock()
+        body = json.dumps({"token": "another-token"})
+        mock_handler.headers = {"Content-Length": str(len(body))}
+        mock_handler.rfile.read.return_value = body.encode()
+
+        result = system_handler.handle_post("/api/auth/revoke", {}, mock_handler)
+
+        assert result.status_code == 200
+        data = json.loads(result.body)
+        assert data["success"] is True

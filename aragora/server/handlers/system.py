@@ -3,6 +3,7 @@ System and utility endpoint handlers.
 
 Endpoints:
 - GET /api/health - Health check
+- GET /api/health/detailed - Detailed health check with component status
 - GET /api/nomic/state - Get nomic loop state
 - GET /api/nomic/health - Get nomic loop health with stall detection
 - GET /api/nomic/log - Get nomic loop logs
@@ -13,6 +14,8 @@ Endpoints:
 - GET /api/history/debates - Get debate history
 - GET /api/history/summary - Get history summary
 - GET /api/system/maintenance?task=<task> - Run database maintenance (status|vacuum|analyze|checkpoint|full)
+- GET /api/auth/stats - Get authentication statistics
+- POST /api/auth/revoke - Revoke a token to invalidate it
 """
 
 import json
@@ -54,6 +57,8 @@ class SystemHandler(BaseHandler):
         "/api/openapi",
         "/api/openapi.json",
         "/api/openapi.yaml",
+        "/api/auth/stats",
+        "/api/auth/revoke",
     ]
 
     def can_handle(self, path: str) -> bool:
@@ -132,6 +137,15 @@ class SystemHandler(BaseHandler):
         if path == "/api/openapi.yaml":
             return self._get_openapi_spec("yaml")
 
+        if path == "/api/auth/stats":
+            return self._get_auth_stats()
+
+        return None
+
+    def handle_post(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
+        """Handle POST requests for auth endpoints."""
+        if path == "/api/auth/revoke":
+            return self._revoke_token(handler)
         return None
 
     def _health_check(self) -> HandlerResult:
@@ -647,3 +661,58 @@ class SystemHandler(BaseHandler):
         except Exception as e:
             logger.exception(f"OpenAPI generation failed: {e}")
             return error_response(f"OpenAPI generation failed: {e}", 500)
+
+    def _get_auth_stats(self) -> HandlerResult:
+        """Get authentication and rate limiting statistics.
+
+        Returns:
+            enabled: Whether auth is enabled
+            rate_limit_stats: Current rate limiting counters
+            revoked_tokens: Number of revoked tokens being tracked
+        """
+        from aragora.server.auth import auth_config
+
+        stats = auth_config.get_rate_limit_stats()
+
+        return json_response({
+            "enabled": auth_config.enabled,
+            "rate_limit_per_minute": auth_config.rate_limit_per_minute,
+            "ip_rate_limit_per_minute": auth_config.ip_rate_limit_per_minute,
+            "token_ttl_seconds": auth_config.token_ttl,
+            "stats": stats,
+        })
+
+    def _revoke_token(self, handler) -> HandlerResult:
+        """Revoke a token to invalidate it immediately.
+
+        POST body:
+            token: The token to revoke (required)
+            reason: Optional reason for revocation
+
+        Returns:
+            success: Whether revocation succeeded
+            revoked_count: Total revoked tokens being tracked
+        """
+        from aragora.server.auth import auth_config
+
+        # Read request body
+        body = self.read_json_body(handler)
+        if body is None:
+            return error_response("Invalid JSON body", 400)
+
+        token = body.get("token")
+        if not token:
+            return error_response("Token is required", 400)
+
+        reason = body.get("reason", "")
+
+        # Revoke the token
+        success = auth_config.revoke_token(token, reason)
+
+        if success:
+            logger.info("Token revoked: reason=%s", reason or "not specified")
+
+        return json_response({
+            "success": success,
+            "revoked_count": auth_config.get_revocation_count(),
+        })
