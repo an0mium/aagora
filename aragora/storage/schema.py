@@ -749,7 +749,7 @@ class DatabaseManager:
             if pool_size > 0:
                 logger.debug(f"Closed {pool_size} pooled connections to {self.db_path}")
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Ensure connection is closed on garbage collection."""
         self.close()
 
@@ -1067,7 +1067,7 @@ class ConnectionPool:
             # Notify waiters so they can fail
             self._condition.notify_all()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Ensure pool is closed on garbage collection."""
         if not self._closed:
             self.close()

@@ -686,9 +686,9 @@ class AuditingHandler(BaseHandler):
             except ValueError:
                 continue
 
-            pattern = vulnerability_patterns.get(attack_type, {})
-            keywords = list(pattern.get('keywords', []))  # type: ignore[arg-type]
-            base_severity = float(pattern.get('base_severity', 0.5) or 0.5)
+            pattern: dict = vulnerability_patterns.get(attack_type, {})  # type: ignore[assignment]
+            keywords: list = pattern.get('keywords', [])
+            base_severity: float = pattern.get('base_severity', 0.5) or 0.5  # type: ignore[assignment]
 
             matches = sum(1 for kw in keywords if kw in proposal_lower)
             severity = min(0.9, base_severity + (matches * 0.1))
