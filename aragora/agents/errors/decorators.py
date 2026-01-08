@@ -194,7 +194,7 @@ def _handle_response_error(
         return _build_error_action(error, ctx, retryable_exceptions, override_delay)
 
     elif e.status >= 500:
-        error = AgentConnectionError(
+        error = AgentConnectionError(  # type: ignore[assignment]
             f"Server error (HTTP {e.status})",
             agent_name=ctx.agent_name,
             status_code=e.status,
@@ -204,7 +204,7 @@ def _handle_response_error(
 
     else:
         # 4xx errors - not retryable
-        error = AgentAPIError(
+        error = AgentAPIError(  # type: ignore[assignment]
             f"API error (HTTP {e.status}): {sanitize_error(str(e))}",
             agent_name=ctx.agent_name,
             status_code=e.status,
@@ -338,7 +338,7 @@ def handle_agent_errors(
                 ctx.attempt = attempt
 
                 try:
-                    result = await func(self, *args, **kwargs)
+                    result = await func(self, *args, **kwargs)  # type: ignore[misc]
                     if circuit_breaker is not None:
                         circuit_breaker.record_success()
                     return result
@@ -397,7 +397,7 @@ def handle_agent_errors(
                 # No more retries - raise the error
                 raise action.error
 
-        return wrapper
+        return wrapper  # type: ignore[return-value]
 
     return decorator
 
@@ -459,7 +459,7 @@ def with_error_handling(
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs) -> T:
             try:
-                return await func(*args, **kwargs)
+                return await func(*args, **kwargs)  # type: ignore[misc]
             except error_types as e:
                 _log_error(func, e, log_level, message_template)
                 if reraise:
@@ -468,7 +468,7 @@ def with_error_handling(
 
         # Return appropriate wrapper based on function type
         if asyncio.iscoroutinefunction(func):
-            return async_wrapper
+            return async_wrapper  # type: ignore[return-value]
         return sync_wrapper
 
     return decorator
@@ -516,7 +516,7 @@ def handle_stream_errors(agent_name_attr: str = "name") -> Callable[[Callable[..
             partial_content = []
 
             try:
-                async for chunk in func(self, *args, **kwargs):
+                async for chunk in func(self, *args, **kwargs):  # type: ignore[attr-defined]
                     if isinstance(chunk, str):
                         partial_content.append(chunk)
                     yield chunk

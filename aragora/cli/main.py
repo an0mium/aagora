@@ -37,8 +37,8 @@ def get_event_emitter_if_available(server_url: str = "http://localhost:8080") ->
             if resp.status == 200:
                 # Server is up, try to get emitter
                 try:
-                    from aragora.server.stream import StreamEmitter
-                    return StreamEmitter(server_url=server_url)
+                    from aragora.server.stream import SyncEventEmitter
+                    return SyncEventEmitter()
                 except ImportError:
                     pass
     except (urllib.error.URLError, OSError, TimeoutError):
@@ -90,7 +90,7 @@ async def run_debate(
                 role = "critic"
 
         agent = create_agent(
-            model_type=agent_type,
+            model_type=agent_type,  # type: ignore[arg-type]
             name=f"{agent_type}_{role}",
             role=role,
         )
@@ -106,7 +106,7 @@ async def run_debate(
     # Create protocol
     protocol = DebateProtocol(
         rounds=rounds,
-        consensus=consensus,
+        consensus=consensus,  # type: ignore[arg-type]
     )
 
     # Create memory store
@@ -120,7 +120,7 @@ async def run_debate(
             print("[audience] Connected to streaming server - audience participation enabled")
 
     # Run debate
-    arena = Arena(env, agents, protocol, memory, event_emitter=event_emitter)
+    arena = Arena(env, agents, protocol, memory, event_emitter=event_emitter)  # type: ignore[arg-type]
     result = await arena.run()
 
     # Store result
@@ -198,7 +198,7 @@ def cmd_demo(args: argparse.Namespace) -> None:
     """Handle 'demo' command - run a quick compelling demo."""
     import time
 
-    demo_tasks = {
+    demo_tasks: dict[str, dict[str, str | int]] = {
         "rate-limiter": {
             "task": "Design a distributed rate limiter that handles 1M requests/second across multiple regions",
             "agents": "codex,claude",
@@ -223,13 +223,16 @@ def cmd_demo(args: argparse.Namespace) -> None:
         return
 
     demo = demo_tasks[demo_name]
+    task = str(demo["task"])
+    agents = str(demo["agents"])
+    rounds = int(demo["rounds"])
 
     print("\n" + "=" * 60)
     print("🎭 AAGORA DEMO - Multi-Agent Debate")
     print("=" * 60)
-    print(f"\n📋 Task: {demo['task'][:80]}...")
-    print(f"🤖 Agents: {demo['agents']}")
-    print(f"🔄 Rounds: {demo['rounds']}")
+    print(f"\n📋 Task: {task[:80]}...")
+    print(f"🤖 Agents: {agents}")
+    print(f"🔄 Rounds: {rounds}")
     print("\n" + "-" * 60)
     print("Starting debate...")
     print("-" * 60 + "\n")
@@ -238,9 +241,9 @@ def cmd_demo(args: argparse.Namespace) -> None:
 
     result = asyncio.run(
         run_debate(
-            task=demo["task"],
-            agents_str=demo["agents"],
-            rounds=demo["rounds"],
+            task=task,
+            agents_str=agents,
+            rounds=rounds,
             consensus="majority",
             learn=False,
         )
