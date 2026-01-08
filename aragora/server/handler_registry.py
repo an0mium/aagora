@@ -17,10 +17,17 @@ Usage:
 
 import logging
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aragora.server.handlers.base import BaseHandler, HandlerResult
+    from aragora.server.storage import DebateStorage
+    from aragora.ranking.elo import EloSystem
+    from aragora.debate.embeddings import DebateEmbeddingsDatabase
+    from aragora.memory.store import CritiqueStore
+    from aragora.agents.personas import PersonaManager
+    from aragora.agents.positions import PositionLedger
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -65,39 +72,39 @@ try:
 except ImportError:
     HANDLERS_AVAILABLE = False
     # Set all handler classes to None for graceful degradation
-    SystemHandler = None
-    DebatesHandler = None
-    AgentsHandler = None
-    PulseHandler = None
-    AnalyticsHandler = None
-    MetricsHandler = None
-    ConsensusHandler = None
-    BeliefHandler = None
-    CritiqueHandler = None
-    GenesisHandler = None
-    ReplaysHandler = None
-    TournamentHandler = None
-    MemoryHandler = None
-    LeaderboardViewHandler = None
-    DocumentHandler = None
-    VerificationHandler = None
-    AuditingHandler = None
-    RelationshipHandler = None
-    MomentsHandler = None
-    PersonaHandler = None
-    DashboardHandler = None
-    IntrospectionHandler = None
-    CalibrationHandler = None
-    RoutingHandler = None
-    EvolutionHandler = None
-    PluginsHandler = None
-    BroadcastHandler = None
-    AudioHandler = None
-    SocialMediaHandler = None
-    LaboratoryHandler = None
-    ProbesHandler = None
-    InsightsHandler = None
-    HandlerResult = None
+    SystemHandler = None  # type: ignore[misc,assignment]
+    DebatesHandler = None  # type: ignore[misc, assignment]
+    AgentsHandler = None  # type: ignore[misc, assignment]
+    PulseHandler = None  # type: ignore[misc, assignment]
+    AnalyticsHandler = None  # type: ignore[misc, assignment]
+    MetricsHandler = None  # type: ignore[misc, assignment]
+    ConsensusHandler = None  # type: ignore[misc, assignment]
+    BeliefHandler = None  # type: ignore[misc, assignment]
+    CritiqueHandler = None  # type: ignore[misc, assignment]
+    GenesisHandler = None  # type: ignore[misc, assignment]
+    ReplaysHandler = None  # type: ignore[misc, assignment]
+    TournamentHandler = None  # type: ignore[misc, assignment]
+    MemoryHandler = None  # type: ignore[misc, assignment]
+    LeaderboardViewHandler = None  # type: ignore[misc, assignment]
+    DocumentHandler = None  # type: ignore[misc, assignment]
+    VerificationHandler = None  # type: ignore[misc, assignment]
+    AuditingHandler = None  # type: ignore[misc, assignment]
+    RelationshipHandler = None  # type: ignore[misc, assignment]
+    MomentsHandler = None  # type: ignore[misc, assignment]
+    PersonaHandler = None  # type: ignore[misc, assignment]
+    DashboardHandler = None  # type: ignore[misc, assignment]
+    IntrospectionHandler = None  # type: ignore[misc, assignment]
+    CalibrationHandler = None  # type: ignore[misc, assignment]
+    RoutingHandler = None  # type: ignore[misc, assignment]
+    EvolutionHandler = None  # type: ignore[misc, assignment]
+    PluginsHandler = None  # type: ignore[misc, assignment]
+    BroadcastHandler = None  # type: ignore[misc, assignment]
+    AudioHandler = None  # type: ignore[misc, assignment]
+    SocialMediaHandler = None  # type: ignore[misc, assignment]
+    LaboratoryHandler = None  # type: ignore[misc, assignment]
+    ProbesHandler = None  # type: ignore[misc, assignment]
+    InsightsHandler = None  # type: ignore[misc, assignment]
+    HandlerResult = None  # type: ignore[misc, assignment]
 
 
 # Handler class registry - ordered list of (attr_name, handler_class) pairs
@@ -157,7 +164,7 @@ class RouteIndex:
         # Cache for resolved dynamic routes
         self._cache_size = 500
 
-    def build(self, registry_mixin: "HandlerRegistryMixin") -> None:
+    def build(self, registry_mixin: Any) -> None:
         """Build route index from initialized handlers.
 
         Extracts ROUTES from each handler for exact matching,
@@ -279,6 +286,24 @@ class HandlerRegistryMixin:
     - end_headers()
     - wfile.write(data)
     """
+
+    # Type stubs for attributes expected from parent class
+    storage: Optional["DebateStorage"]
+    elo_system: Optional["EloSystem"]
+    debate_embeddings: Optional["DebateEmbeddingsDatabase"]
+    document_store: Optional[Any]
+    nomic_state_file: Optional["Path"]
+    critique_store: Optional["CritiqueStore"]
+    persona_manager: Optional["PersonaManager"]
+    position_ledger: Optional["PositionLedger"]
+    wfile: BinaryIO
+
+    # Type stubs for methods expected from parent class
+    _add_cors_headers: Callable[[], None]
+    _add_security_headers: Callable[[], None]
+    send_response: Callable[[int], None]
+    send_header: Callable[[str, str], None]
+    end_headers: Callable[[], None]
 
     # Handler instances (initialized lazily)
     _system_handler: Optional["BaseHandler"] = None
