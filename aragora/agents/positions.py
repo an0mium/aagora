@@ -60,6 +60,31 @@ class Position:
             domain=domain,
         )
 
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Position":
+        """Create a Position from a database row.
+
+        Args:
+            row: SQLite row with dict-like access (via row_factory = sqlite3.Row)
+
+        Returns:
+            Position instance hydrated from the row data
+        """
+        return cls(
+            id=row["id"],
+            agent_name=row["agent_name"],
+            claim=row["claim"],
+            confidence=row["confidence"],
+            debate_id=row["debate_id"],
+            round_num=row["round_num"],
+            outcome=row["outcome"],
+            reversed=bool(row["reversed"]),
+            reversal_debate_id=row["reversal_debate_id"],
+            domain=row["domain"],
+            created_at=row["created_at"],
+            resolved_at=row["resolved_at"],
+        )
+
 
 @dataclass
 class CalibrationBucket:
@@ -264,23 +289,7 @@ class PositionLedger:
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
 
-        return [
-            Position(
-                id=row["id"],
-                agent_name=row["agent_name"],
-                claim=row["claim"],
-                confidence=row["confidence"],
-                debate_id=row["debate_id"],
-                round_num=row["round_num"],
-                outcome=row["outcome"],
-                reversed=bool(row["reversed"]),
-                reversal_debate_id=row["reversal_debate_id"],
-                domain=row["domain"],
-                created_at=row["created_at"],
-                resolved_at=row["resolved_at"],
-            )
-            for row in rows
-        ]
+        return [Position.from_row(row) for row in rows]
 
     def get_position_stats(self, agent_name: str) -> dict:
         """Get aggregate position statistics."""
@@ -346,23 +355,7 @@ class PositionLedger:
             )
             rows = cursor.fetchall()
 
-        return [
-            Position(
-                id=row["id"],
-                agent_name=row["agent_name"],
-                claim=row["claim"],
-                confidence=row["confidence"],
-                debate_id=row["debate_id"],
-                round_num=row["round_num"],
-                outcome=row["outcome"],
-                reversed=bool(row["reversed"]),
-                reversal_debate_id=row["reversal_debate_id"],
-                domain=row["domain"],
-                created_at=row["created_at"],
-                resolved_at=row["resolved_at"],
-            )
-            for row in rows
-        ]
+        return [Position.from_row(row) for row in rows]
 
     def detect_domain(self, content: str) -> str | None:
         """Detect expertise domain from content using keywords."""
