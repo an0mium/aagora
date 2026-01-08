@@ -104,13 +104,20 @@ def debate_env():
     return Environment(task="How should we optimize the API?")
 
 
+# Test protocol defaults - disable research for speed
+TEST_PROTOCOL_DEFAULTS = {
+    "enable_research": False,  # Skip network calls in tests
+    "convergence_detection": False,  # Skip embedding-based convergence
+}
+
+
 class TestFullDebateFlow:
     """Test complete debate execution."""
 
     @pytest.mark.asyncio
     async def test_basic_debate_completes(self, mock_agents, debate_env):
         """A basic debate should complete with a result."""
-        protocol = DebateProtocol(rounds=2, consensus="majority")
+        protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -141,6 +148,7 @@ class TestFullDebateFlow:
             consensus="majority",
             early_stopping=True,
             early_stop_threshold=0.8,
+            **TEST_PROTOCOL_DEFAULTS,
         )
         arena = Arena(
             environment=debate_env,
@@ -156,7 +164,7 @@ class TestFullDebateFlow:
     @pytest.mark.asyncio
     async def test_debate_records_all_rounds(self, mock_agents, debate_env):
         """All debate rounds should be recorded."""
-        protocol = DebateProtocol(rounds=3, consensus="majority")
+        protocol = DebateProtocol(rounds=3, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -198,7 +206,7 @@ class TestEloIntegration:
         for agent in mock_agents:
             initial_ratings[agent.name] = elo_system.get_rating(agent.name)
 
-        protocol = DebateProtocol(rounds=1, consensus="majority")
+        protocol = DebateProtocol(rounds=1, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -219,7 +227,7 @@ class TestEloIntegration:
         Note: This test can be slow as it runs two full debates sequentially.
         Each debate takes ~80-90 seconds with mock agents due to orchestrator processing.
         """
-        protocol = DebateProtocol(rounds=1, consensus="majority")
+        protocol = DebateProtocol(rounds=1, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
 
         # Run first debate
         arena1 = Arena(
@@ -258,7 +266,7 @@ class TestMemoryIntegration:
     @pytest.mark.asyncio
     async def test_critiques_stored(self, mock_agents, debate_env, critique_store):
         """Critiques should be stored in memory."""
-        protocol = DebateProtocol(rounds=2, consensus="majority")
+        protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -276,7 +284,7 @@ class TestMemoryIntegration:
     @pytest.mark.asyncio
     async def test_debate_uses_historical_context(self, mock_agents, debate_env, critique_store):
         """Later debates should be able to use historical critiques."""
-        protocol = DebateProtocol(rounds=1, consensus="majority")
+        protocol = DebateProtocol(rounds=1, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
 
         # Run first debate
         arena1 = Arena(
@@ -316,7 +324,7 @@ class TestEventEmission:
             "on_debate_end": lambda **kwargs: events.append(("end", kwargs)),
         }
 
-        protocol = DebateProtocol(rounds=2, consensus="majority")
+        protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -336,7 +344,7 @@ class TestEventEmission:
         """Events should be scoped to loop_id when set."""
         loop_id = "test-loop-123"
 
-        protocol = DebateProtocol(rounds=1, consensus="majority")
+        protocol = DebateProtocol(rounds=1, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -360,6 +368,7 @@ class TestRoleRotation:
             rounds=3,
             consensus="majority",
             role_rotation=True,
+            **TEST_PROTOCOL_DEFAULTS,
         )
         arena = Arena(
             environment=debate_env,
@@ -379,6 +388,7 @@ class TestRoleRotation:
             rounds=2,
             consensus="majority",
             role_rotation=False,
+            **TEST_PROTOCOL_DEFAULTS,
         )
         arena = Arena(
             environment=debate_env,
@@ -402,7 +412,7 @@ class TestSpectatorIntegration:
         events_received = []
         spectator._emit = lambda event: events_received.append(event)
 
-        protocol = DebateProtocol(rounds=1, consensus="majority")
+        protocol = DebateProtocol(rounds=1, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -427,7 +437,7 @@ class TestGroundedPersonasIntegration:
 
             ledger = PositionLedger(db_path=str(temp_db))
 
-            protocol = DebateProtocol(rounds=2, consensus="majority")
+            protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
             arena = Arena(
                 environment=debate_env,
                 agents=mock_agents,
@@ -451,7 +461,7 @@ class TestGroundedPersonasIntegration:
 
             tracker = RelationshipTracker(elo_db_path=str(temp_db))
 
-            protocol = DebateProtocol(rounds=2, consensus="majority")
+            protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
             arena = Arena(
                 environment=debate_env,
                 agents=mock_agents,
@@ -475,7 +485,7 @@ class TestGroundedPersonasIntegration:
 
             detector = MomentDetector()  # All args optional for testing
 
-            protocol = DebateProtocol(rounds=2, consensus="majority")
+            protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
             arena = Arena(
                 environment=debate_env,
                 agents=mock_agents,
@@ -508,7 +518,7 @@ class TestConsensusProtocols:
                 continue_debate=False
             )]
 
-        protocol = DebateProtocol(rounds=1, consensus="majority")
+        protocol = DebateProtocol(rounds=1, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -523,7 +533,7 @@ class TestConsensusProtocols:
     @pytest.mark.asyncio
     async def test_none_consensus(self, mock_agents, debate_env):
         """None consensus should complete all rounds without voting."""
-        protocol = DebateProtocol(rounds=2, consensus="none")
+        protocol = DebateProtocol(rounds=2, consensus="none", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -546,6 +556,7 @@ class TestDebateTopologies:
             rounds=2,
             consensus="majority",
             topology="round-robin",
+            **TEST_PROTOCOL_DEFAULTS,
         )
         arena = Arena(
             environment=debate_env,
@@ -563,6 +574,7 @@ class TestDebateTopologies:
             rounds=2,
             consensus="majority",
             topology="all-to-all",
+            **TEST_PROTOCOL_DEFAULTS,
         )
         arena = Arena(
             environment=debate_env,
@@ -592,7 +604,7 @@ class TestConcurrentDebates:
         env1 = Environment(task="Task A")
         env2 = Environment(task="Task B")
 
-        protocol = DebateProtocol(rounds=2, consensus="majority")
+        protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
 
         arena1 = Arena(environment=env1, agents=agents1, protocol=protocol)
         arena2 = Arena(environment=env2, agents=agents2, protocol=protocol)
@@ -628,7 +640,7 @@ class TestErrorHandling:
 
         mock_agents[0].generate = flaky_generate
 
-        protocol = DebateProtocol(rounds=2, consensus="majority")
+        protocol = DebateProtocol(rounds=2, consensus="majority", **TEST_PROTOCOL_DEFAULTS)
         arena = Arena(
             environment=debate_env,
             agents=mock_agents,
@@ -655,6 +667,7 @@ class TestTimeouts:
             rounds=10,
             consensus="majority",
             timeout_seconds=1,  # Very short timeout
+            **TEST_PROTOCOL_DEFAULTS,
         )
 
         # Make agents slow
