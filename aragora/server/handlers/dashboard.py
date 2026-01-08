@@ -61,7 +61,7 @@ class DashboardHandler(BaseHandler):
             domain, limit, hours
         )
 
-        result = {
+        result: dict[str, Any] = {
             "summary": {},
             "recent_activity": {},
             "agent_performance": {},
