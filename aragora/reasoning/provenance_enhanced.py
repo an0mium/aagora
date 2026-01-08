@@ -708,7 +708,7 @@ class ProvenanceValidator:
 
     async def full_validation(self) -> dict:
         """Run full provenance validation."""
-        results = {
+        results: dict[str, Any] = {
             "validation_time": datetime.now().isoformat(),
             "debate_id": self.manager.debate_id,
             "chain_integrity": self._validate_chain(),
