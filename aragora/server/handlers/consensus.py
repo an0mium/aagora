@@ -234,11 +234,26 @@ class ConsensusHandler(BaseHandler):
         try:
             from aragora.fixtures import load_demo_consensus
             memory = ConsensusMemory()
+
+            # Get stats before seeding
+            stats_before = memory.get_statistics()
+            total_before = stats_before.get("total_consensus", 0)
+
             seeded = load_demo_consensus(memory)
+
+            # Get stats after seeding
+            stats_after = memory.get_statistics()
+            total_after = stats_after.get("total_consensus", 0)
+
             return json_response({
                 "success": True,
                 "seeded": seeded,
-                "message": f"Seeded {seeded} demo consensus records" if seeded > 0 else "Database already has data, skipped seeding",
+                "total_before": total_before,
+                "total_after": total_after,
+                "db_path": memory.db_path,
+                "message": f"Seeded {seeded} demo consensus records" if seeded > 0 else (
+                    f"Database has {total_before} existing records" if total_before > 0 else "No records added"
+                ),
             })
         except ImportError as e:
             return error_response(f"Fixtures module not available: {e}", 500)

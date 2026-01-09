@@ -49,19 +49,23 @@ def load_demo_consensus(consensus_memory: Optional[object] = None) -> int:
     # Check if already seeded
     try:
         stats = consensus_memory.get_statistics()
+        logger.info(f"Current consensus stats: {stats}")
         total = stats.get("total_consensus", 0)
         if total > 0:
             logger.info(f"Consensus memory already has {total} topics, skipping seed")
             return 0
+        logger.info("Database is empty, proceeding with seeding")
     except Exception as e:
-        logger.debug(f"Could not check existing data: {e}")
+        logger.warning(f"Could not check existing data: {e}, proceeding with seeding")
 
     # Seed the demos
     seeded = 0
+    logger.info(f"Attempting to seed {len(demos)} demo records")
+
     try:
         from aragora.memory.consensus import ConsensusStrength
 
-        for demo in demos:
+        for i, demo in enumerate(demos):
             try:
                 # Map strength string to enum
                 strength_map = {
@@ -71,6 +75,7 @@ def load_demo_consensus(consensus_memory: Optional[object] = None) -> int:
                 }
                 strength = strength_map.get(demo.get("strength", "medium"), ConsensusStrength.MEDIUM)
 
+                logger.debug(f"Seeding demo {i+1}: {demo['topic'][:50]}...")
                 consensus_memory.store_consensus(
                     topic=demo["topic"],
                     conclusion=demo["conclusion"],
@@ -81,13 +86,14 @@ def load_demo_consensus(consensus_memory: Optional[object] = None) -> int:
                     domain=demo.get("domain", "general"),
                 )
                 seeded += 1
+                logger.debug(f"Successfully seeded demo {i+1}")
             except Exception as e:
-                logger.warning(f"Failed to seed demo: {e}")
+                logger.warning(f"Failed to seed demo {i+1} '{demo.get('topic', 'unknown')[:30]}': {e}")
 
-        logger.info(f"Seeded {seeded} demo consensus records")
+        logger.info(f"Seeded {seeded}/{len(demos)} demo consensus records")
 
-    except ImportError:
-        logger.warning("ConsensusStrength not available")
+    except ImportError as e:
+        logger.warning(f"ConsensusStrength not available: {e}")
 
     return seeded
 
