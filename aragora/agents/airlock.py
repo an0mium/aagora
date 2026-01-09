@@ -69,9 +69,9 @@ class AirlockConfig:
     """Configuration for the airlock wrapper."""
 
     # Timeout settings (increased for complex debate prompts)
-    generate_timeout: float = 180.0  # seconds
-    critique_timeout: float = 150.0
-    vote_timeout: float = 90.0
+    generate_timeout: float = 240.0  # seconds
+    critique_timeout: float = 180.0
+    vote_timeout: float = 120.0
 
     # Retry settings
     max_retries: int = 1

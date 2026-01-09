@@ -106,7 +106,7 @@ class AutonomicExecutor:
     def __init__(
         self,
         circuit_breaker: Optional[CircuitBreaker] = None,
-        default_timeout: float = 150.0,
+        default_timeout: float = 180.0,
         timeout_escalation_factor: float = 1.5,
         max_timeout: float = 300.0,
         streaming_buffer: Optional[StreamingContentBuffer] = None,
