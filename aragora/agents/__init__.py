@@ -68,6 +68,11 @@ from aragora.agents.telemetry import (
     get_telemetry_stats,
     reset_telemetry,
 )
+from aragora.agents.performance_monitor import (
+    AgentPerformanceMonitor,
+    AgentMetric,
+    AgentStats,
+)
 
 __all__ = [
     # CLI-based
@@ -129,4 +134,8 @@ __all__ = [
     "setup_default_collectors",
     "get_telemetry_stats",
     "reset_telemetry",
+    # Performance Monitor
+    "AgentPerformanceMonitor",
+    "AgentMetric",
+    "AgentStats",
 ]
