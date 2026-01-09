@@ -341,6 +341,7 @@ class HandlerRegistryMixin:
     _laboratory_handler: Optional["BaseHandler"] = None
     _probes_handler: Optional["BaseHandler"] = None
     _insights_handler: Optional["BaseHandler"] = None
+    _breakpoints_handler: Optional["BaseHandler"] = None
     _handlers_initialized: bool = False
 
     @classmethod
