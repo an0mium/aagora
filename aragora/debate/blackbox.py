@@ -210,8 +210,9 @@ class BlackboxRecorder:
         try:
             with open(error_log, 'a') as f:
                 f.write(f"[{datetime.now().isoformat()}] {component}: {error}\n")
-        except Exception:
-            pass  # Don't fail on logging failure
+        except Exception as e:
+            # Don't fail on logging failure, but note it
+            logger.debug(f"Failed to write to error log: {e}")
 
         logger.warning(f"blackbox_error component={component} error={error[:100]}")
         return event

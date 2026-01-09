@@ -194,7 +194,8 @@ class SystemHandler(BaseHandler):
             if not storage:
                 # Storage not configured is OK for readiness
                 checks["storage"] = True
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Storage readiness check failed: {e}")
             checks["storage"] = False
             ready = False
 
@@ -205,7 +206,8 @@ class SystemHandler(BaseHandler):
             if not elo:
                 # ELO not configured is OK for readiness
                 checks["elo_system"] = True
-        except Exception:
+        except Exception as e:
+            logger.warning(f"ELO system readiness check failed: {e}")
             checks["elo_system"] = False
             ready = False
 

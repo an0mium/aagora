@@ -664,5 +664,7 @@ class InsightStore:
             event_log = self.db_path.parent / "wisdom_events.jsonl"
             with open(event_log, 'a') as f:
                 f.write(json.dumps(event_data) + '\n')
-        except Exception:
-            pass  # Never crash main loop due to logging
+        except Exception as e:
+            # Never crash main loop due to logging, but note the failure
+            import sys
+            print(f"[InsightStore] Warning: Failed to log wisdom event: {e}", file=sys.stderr)
