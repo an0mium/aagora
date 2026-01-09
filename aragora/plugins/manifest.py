@@ -224,7 +224,7 @@ class PluginManifest:
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
 
-    def save(self, path: Path):
+    def save(self, path: Path) -> None:
         """Save manifest to file.
 
         Raises:

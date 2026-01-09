@@ -221,9 +221,9 @@ class VerificationPlanGenerator:
     - Verification results for already-proven properties
     """
 
-    def __init__(self, artifact):
+    def __init__(self, artifact: "DebateArtifact") -> None:
         from aragora.export.artifact import DebateArtifact
-        self.artifact = artifact
+        self.artifact: DebateArtifact = artifact
 
     def generate(self) -> VerificationPlan:
         """Generate complete test plan."""

@@ -56,15 +56,15 @@ class PluginContext:
     logs: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
-    def log(self, message: str):
+    def log(self, message: str) -> None:
         """Add a log message."""
         self.logs.append(f"[{datetime.now().isoformat()}] {message}")
 
-    def error(self, message: str):
+    def error(self, message: str) -> None:
         """Add an error message."""
         self.errors.append(message)
 
-    def set_output(self, key: str, value: Any):
+    def set_output(self, key: str, value: Any) -> None:
         """Set output value."""
         self.output[key] = value
 
@@ -334,7 +334,7 @@ class PluginRegistry:
         from aragora.plugins.manifest import BUILTIN_MANIFESTS
         self.manifests.update(BUILTIN_MANIFESTS)
 
-    def discover(self):
+    def discover(self) -> None:
         """Discover plugins from plugin directories."""
         for plugin_dir in self.plugin_dirs:
             if not plugin_dir.exists():

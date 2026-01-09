@@ -315,7 +315,7 @@ class MetadataStore:
 
             conn.commit()
 
-    def store(self, metadata: DebateMetadata):
+    def store(self, metadata: DebateMetadata) -> None:
         """Store debate metadata."""
         with self._get_connection() as conn:
             cursor = conn.cursor()

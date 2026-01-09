@@ -496,7 +496,7 @@ class MetaLearner:
             logger.warning(f"Failed to get adjustment history: {e}")
             return []
 
-    def reset_to_defaults(self):
+    def reset_to_defaults(self) -> None:
         """Reset hyperparameters to default values."""
         self.state = HyperparameterState()
         self._save_state(reason="reset to defaults")

@@ -166,7 +166,7 @@ class EvidenceCollector:
         self.max_total_snippets = 8
         self.snippet_max_length = 1000
 
-    def add_connector(self, name: str, connector: Connector):
+    def add_connector(self, name: str, connector: Connector) -> None:
         """Add a connector for evidence collection."""
         self.connectors[name] = connector
 
