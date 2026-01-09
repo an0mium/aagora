@@ -2258,7 +2258,7 @@ class NomicLoop:
                 return fallback
             raise PhaseError(phase, f"Timeout after {timeout}s", recoverable=False)
 
-    async def _run_phase_with_recovery(self, phase: str, coro, fallback=None):
+    async def _run_phase_with_recovery(self, phase: str, coro_factory, fallback=None):
         """
         Run a phase with both timeout enforcement and retry recovery.
 
@@ -2267,13 +2267,17 @@ class NomicLoop:
 
         Args:
             phase: Phase name (context, debate, design, implement, verify, commit)
-            coro: Async coroutine to execute
+            coro_factory: Callable that returns a fresh coroutine on each call.
+                         IMPORTANT: Must be a factory (e.g., lambda: self.phase_debate())
+                         NOT a coroutine (e.g., self.phase_debate())
             fallback: Optional fallback value on timeout/failure
 
         Returns:
             Coroutine result, fallback value, or raises PhaseError
         """
         async def timeout_wrapped():
+            # Create fresh coroutine for each retry attempt (fixes reuse bug)
+            coro = coro_factory()
             return await self._run_with_phase_timeout(phase, coro, fallback)
 
         success, result = await self.phase_recovery.run_with_recovery(
