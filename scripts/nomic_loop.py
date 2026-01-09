@@ -2594,7 +2594,7 @@ The most valuable proposals combine deep analysis with actionable implementation
 
         return DesignPhase(
             aragora_path=self.aragora_path,
-            agents=getattr(self, 'agents', []),
+            agents=self._select_debate_team("design"),
             arena_factory=lambda *args, **kwargs: Arena(*args, **kwargs),
             environment_factory=lambda *args, **kwargs: Environment(*args, **kwargs),
             protocol_factory=lambda *args, **kwargs: DebateProtocol(*args, **kwargs),
@@ -4060,7 +4060,12 @@ The most valuable proposals combine deep analysis with actionable implementation
             self._log(f"  [selector] Selected team: {[a.name for a in team.agents]}")
             # Map back to actual agent objects
             agent_map = {a.name: a for a in default_team}
-            return [agent_map[p.name] for p in team.agents if p.name in agent_map]
+            selected = [agent_map[p.name] for p in team.agents if p.name in agent_map]
+            # Fallback to default team if selector returned empty list
+            if not selected:
+                self._log("  [selector] WARNING: Selector returned empty team, using default")
+                return default_team
+            return selected
         except Exception as e:
             self._log(f"  [selector] Error: {e}, using default team")
             return default_team
