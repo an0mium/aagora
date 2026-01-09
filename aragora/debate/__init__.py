@@ -84,6 +84,26 @@ from aragora.debate.complexity_governor import (
     get_complexity_governor,
     reset_complexity_governor,
 )
+from aragora.debate.cognitive_limiter import (
+    CognitiveLoadLimiter,
+    CognitiveBudget,
+    limit_debate_context,
+    STRESS_BUDGETS,
+)
+from aragora.debate.recovery_narrator import (
+    RecoveryNarrator,
+    RecoveryNarrative,
+    get_narrator,
+    reset_narrator,
+    setup_narrator_with_immune_system,
+)
+from aragora.debate.rhetorical_observer import (
+    RhetoricalAnalysisObserver,
+    RhetoricalObservation,
+    RhetoricalPattern,
+    get_rhetorical_observer,
+    reset_rhetorical_observer,
+)
 
 __all__ = [
     "Arena",
@@ -161,4 +181,21 @@ __all__ = [
     "StressLevel",
     "get_complexity_governor",
     "reset_complexity_governor",
+    # Cognitive Load Limiter
+    "CognitiveLoadLimiter",
+    "CognitiveBudget",
+    "limit_debate_context",
+    "STRESS_BUDGETS",
+    # Recovery Narrator
+    "RecoveryNarrator",
+    "RecoveryNarrative",
+    "get_narrator",
+    "reset_narrator",
+    "setup_narrator_with_immune_system",
+    # Rhetorical Observer
+    "RhetoricalAnalysisObserver",
+    "RhetoricalObservation",
+    "RhetoricalPattern",
+    "get_rhetorical_observer",
+    "reset_rhetorical_observer",
 ]

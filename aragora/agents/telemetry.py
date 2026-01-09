@@ -214,7 +214,7 @@ def with_telemetry(
 
     def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @functools.wraps(func)
-        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:  # type: ignore[misc]
             # Extract agent name from self
             agent_name = "unknown"
             if args and hasattr(args[0], "name"):
@@ -243,7 +243,7 @@ def with_telemetry(
                     pass
 
             try:
-                result = await func(*args, **kwargs)
+                result = await func(*args, **kwargs)  # type: ignore[misc]
 
                 # Extract output tokens if function provided
                 if extract_output:
