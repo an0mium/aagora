@@ -170,8 +170,8 @@ class PhaseRecovery:
     # Configurable via environment variables: NOMIC_<PHASE>_TIMEOUT
     PHASE_TIMEOUTS = {
         "context": int(os.environ.get("NOMIC_CONTEXT_TIMEOUT", "1200")),     # 20 min - codebase exploration (doubled for Codex)
-        "debate": int(os.environ.get("NOMIC_DEBATE_TIMEOUT", "1800")),       # 30 min - multi-agent discussion
-        "design": int(os.environ.get("NOMIC_DESIGN_TIMEOUT", "900")),        # 15 min - architecture planning
+        "debate": int(os.environ.get("NOMIC_DEBATE_TIMEOUT", "3600")),       # 60 min - multi-agent discussion (increased from 30)
+        "design": int(os.environ.get("NOMIC_DESIGN_TIMEOUT", "1800")),       # 30 min - architecture planning (increased from 15)
         "implement": int(os.environ.get("NOMIC_IMPLEMENT_TIMEOUT", "2400")), # 40 min - code generation
         "verify": int(os.environ.get("NOMIC_VERIFY_TIMEOUT", "600")),        # 10 min - test execution
         "commit": int(os.environ.get("NOMIC_COMMIT_TIMEOUT", "180")),        # 3 min - git operations
@@ -8641,6 +8641,17 @@ Be concise - this is a quality gate, not a full review."""
                 self._restore_backup(self._cycle_backup_path)
                 self._cycle_backup_path = None  # Clear for next cycle
 
+            # CRITICAL: Finalize replay recorder even on timeout
+            # Without this, cycles stay as "in_progress" forever
+            if self.replay_recorder:
+                try:
+                    self.replay_recorder.finalize("cycle_timeout", {})
+                    self._log(f"  [replay] Finalized with timeout status")
+                except Exception as e:
+                    self._log(f"  [replay] Finalization error: {e}")
+                finally:
+                    self.replay_recorder = None
+
             # Emit timeout event for monitoring
             self._stream_emit("on_cycle_timeout", self.cycle_count, NOMIC_MAX_CYCLE_SECONDS)
             self._dispatch_webhook("cycle_timeout", {
@@ -8654,6 +8665,18 @@ Be concise - this is a quality gate, not a full review."""
                 "timeout_seconds": NOMIC_MAX_CYCLE_SECONDS,
                 "error": f"Cycle exceeded {NOMIC_MAX_CYCLE_SECONDS}s hard limit",
             }
+        except Exception as e:
+            # Handle any unexpected error - ensure replay recorder is finalized
+            self._log(f"[ERROR] Cycle {self.cycle_count} failed: {type(e).__name__}: {e}")
+            if self.replay_recorder:
+                try:
+                    self.replay_recorder.finalize(f"error_{type(e).__name__}", {})
+                    self._log(f"  [replay] Finalized with error status")
+                except Exception as finalize_err:
+                    self._log(f"  [replay] Finalization error: {finalize_err}")
+                finally:
+                    self.replay_recorder = None
+            raise  # Re-raise for caller to handle
 
     async def _run_cycle_impl(self) -> dict:
         """Internal implementation of run_cycle (called with timeout wrapper)."""

@@ -126,14 +126,14 @@ class AdaptiveComplexityGovernor:
             constraints = governor.get_reduced_constraints()
     """
 
-    # Thresholds for stress level transitions
+    # Thresholds for stress level transitions (lowered for earlier detection)
     STRESS_THRESHOLDS = {
-        "timeout_rate_elevated": 0.1,    # 10% timeouts -> elevated
-        "timeout_rate_high": 0.3,        # 30% timeouts -> high
-        "timeout_rate_critical": 0.5,    # 50% timeouts -> critical
+        "timeout_rate_elevated": 0.05,   # 5% timeouts -> elevated (was 10%)
+        "timeout_rate_high": 0.15,       # 15% timeouts -> high (was 30%)
+        "timeout_rate_critical": 0.30,   # 30% timeouts -> critical (was 50%)
         "consecutive_failures": 2,        # Consecutive failures -> escalate
-        "latency_elevated_ms": 30000,    # 30s avg -> elevated
-        "latency_high_ms": 60000,        # 60s avg -> high
+        "latency_elevated_ms": 15000,    # 15s avg -> elevated (was 30s)
+        "latency_high_ms": 30000,        # 30s avg -> high (was 60s)
     }
 
     # Constraint presets for each stress level

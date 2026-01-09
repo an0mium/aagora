@@ -191,8 +191,8 @@ class ConsensusPhase:
 
     # Default timeout for consensus phase (can be overridden via protocol)
     # Judge mode needs more time due to LLM generation latency
-    DEFAULT_CONSENSUS_TIMEOUT = 180  # 3 minutes (increased from 2 min for judge mode)
-    JUDGE_TIMEOUT_PER_ATTEMPT = 90  # Per-judge timeout for fallback retries
+    DEFAULT_CONSENSUS_TIMEOUT = 300  # 5 minutes (increased from 3 min for complex debates)
+    JUDGE_TIMEOUT_PER_ATTEMPT = 180  # Per-judge timeout for fallback retries (increased from 90s)
 
     async def execute(self, ctx: "DebateContext") -> None:
         """
@@ -247,8 +247,10 @@ class ConsensusPhase:
         """
         Handle consensus fallback when the primary mechanism fails.
 
-        This provides graceful degradation by combining all proposals
-        and marking the result as a fallback consensus.
+        This provides graceful degradation by:
+        1. Trying to determine a winner from any collected votes
+        2. Falling back to vote_tally if available
+        3. Finally combining all proposals if no votes
 
         Args:
             ctx: The DebateContext with proposals and result
@@ -259,22 +261,62 @@ class ConsensusPhase:
 
         logger.info(f"consensus_fallback reason={reason} proposals={len(proposals)}")
 
-        if proposals:
-            result.final_answer = (
-                f"[Consensus fallback ({reason})]\n\n"
-                + "\n\n---\n\n".join(
-                    f"[{agent}]:\n{prop}" for agent, prop in proposals.items()
+        # Try to determine winner from votes or vote_tally
+        winner_agent = None
+        winner_confidence = 0.0
+
+        # Check if we have votes in result
+        if result.votes:
+            vote_counts: dict[str, int] = {}
+            for vote in result.votes:
+                if hasattr(vote, 'choice') and vote.choice:
+                    vote_counts[vote.choice] = vote_counts.get(vote.choice, 0) + 1
+            if vote_counts:
+                winner_agent = max(vote_counts.items(), key=lambda x: x[1])[0]
+                total_votes = sum(vote_counts.values())
+                winner_confidence = vote_counts[winner_agent] / total_votes if total_votes > 0 else 0.0
+                logger.info(f"consensus_fallback_winner_from_votes winner={winner_agent} confidence={winner_confidence:.2f}")
+
+        # Fallback to vote_tally if available
+        if not winner_agent and ctx.vote_tally:
+            winner_agent = max(ctx.vote_tally.items(), key=lambda x: x[1])[0]
+            total_votes = sum(ctx.vote_tally.values())
+            winner_confidence = ctx.vote_tally[winner_agent] / total_votes if total_votes > 0 else 0.5
+            logger.info(f"consensus_fallback_winner_from_tally winner={winner_agent} confidence={winner_confidence:.2f}")
+
+        # Set winner if determined
+        if winner_agent:
+            ctx.winner_agent = winner_agent
+            result.winner = winner_agent
+            result.confidence = winner_confidence
+            # Use winner's proposal as final answer if available
+            if winner_agent in proposals:
+                result.final_answer = proposals[winner_agent]
+            else:
+                result.final_answer = (
+                    f"[Consensus fallback ({reason}) - Winner: {winner_agent}]\n\n"
+                    + "\n\n---\n\n".join(
+                        f"[{agent}]:\n{prop}" for agent, prop in proposals.items()
+                    )
                 )
-            )
+            result.consensus_reached = True  # Partial consensus achieved via votes
+            result.consensus_strength = "fallback"
         else:
-            result.final_answer = f"[No proposals available - consensus fallback ({reason})]"
+            # No votes available - just combine proposals
+            if proposals:
+                result.final_answer = (
+                    f"[Consensus fallback ({reason})]\n\n"
+                    + "\n\n---\n\n".join(
+                        f"[{agent}]:\n{prop}" for agent, prop in proposals.items()
+                    )
+                )
+            else:
+                result.final_answer = f"[No proposals available - consensus fallback ({reason})]"
+            result.consensus_reached = False
+            result.confidence = 0.0
+            result.consensus_strength = "fallback"
 
-        result.consensus_reached = False
-        result.confidence = 0.0
-        result.consensus_strength = "fallback"
-
-        # Log fallback reason (DebateResult doesn't have metadata field)
-        logger.info(f"consensus_fallback reason={reason}")
+        logger.info(f"consensus_fallback reason={reason} winner={winner_agent}")
 
     async def _handle_none_consensus(self, ctx: "DebateContext") -> None:
         """Handle 'none' consensus mode - combine all proposals."""
