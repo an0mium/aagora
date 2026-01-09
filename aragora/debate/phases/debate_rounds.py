@@ -365,7 +365,7 @@ class DebateRoundsPhase:
                 task = self._with_timeout(
                     self._generate_with_agent(agent, revision_prompt, ctx.context_messages),
                     agent.name,
-                    timeout_seconds=90.0,
+                    timeout_seconds=180.0,
                 )
             else:
                 task = self._generate_with_agent(agent, revision_prompt, ctx.context_messages)

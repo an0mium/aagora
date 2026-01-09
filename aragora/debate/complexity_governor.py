@@ -40,8 +40,8 @@ class GovernorConstraints:
     max_prompt_length: int = 4000
 
     # Timing constraints
-    agent_timeout_seconds: float = 90.0
-    round_timeout_seconds: float = 300.0
+    agent_timeout_seconds: float = 180.0
+    round_timeout_seconds: float = 600.0
 
     # Complexity constraints
     max_agents_per_round: int = 5
