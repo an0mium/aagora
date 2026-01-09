@@ -239,8 +239,8 @@ def with_telemetry(
                     input_text = extract_input(*args, **kwargs)
                     telemetry.input_chars = len(input_text) if input_text else 0
                     telemetry.input_tokens = AgentTelemetry.estimate_tokens(input_text)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"telemetry_input_extraction_failed: {e}")
 
             try:
                 result = await func(*args, **kwargs)  # type: ignore[misc]
@@ -251,8 +251,8 @@ def with_telemetry(
                         output_text = extract_output(result)
                         telemetry.output_chars = len(output_text) if output_text else 0
                         telemetry.output_tokens = AgentTelemetry.estimate_tokens(output_text)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"telemetry_output_extraction_failed: {e}")
                 elif isinstance(result, str):
                     telemetry.output_chars = len(result)
                     telemetry.output_tokens = AgentTelemetry.estimate_tokens(result)
@@ -294,8 +294,8 @@ def with_telemetry(
                     input_text = extract_input(*args, **kwargs)
                     telemetry.input_chars = len(input_text) if input_text else 0
                     telemetry.input_tokens = AgentTelemetry.estimate_tokens(input_text)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"telemetry_input_extraction_failed: {e}")
 
             try:
                 result = func(*args, **kwargs)
@@ -305,8 +305,8 @@ def with_telemetry(
                         output_text = extract_output(result)
                         telemetry.output_chars = len(output_text) if output_text else 0
                         telemetry.output_tokens = AgentTelemetry.estimate_tokens(output_text)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"telemetry_output_extraction_failed: {e}")
                 elif isinstance(result, str):
                     telemetry.output_chars = len(result)
                     telemetry.output_tokens = AgentTelemetry.estimate_tokens(result)

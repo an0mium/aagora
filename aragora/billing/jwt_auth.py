@@ -1,0 +1,464 @@
+"""
+JWT Authentication for User Sessions.
+
+Provides JWT token generation, validation, and middleware for user authentication.
+Integrates with the billing User model.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import os
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# Configuration
+JWT_SECRET = os.environ.get("ARAGORA_JWT_SECRET", "")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_HOURS = int(os.environ.get("ARAGORA_JWT_EXPIRY_HOURS", "24"))
+REFRESH_TOKEN_EXPIRY_DAYS = int(os.environ.get("ARAGORA_REFRESH_TOKEN_EXPIRY_DAYS", "30"))
+
+
+def _get_secret() -> bytes:
+    """Get JWT secret, generating one if not set."""
+    global JWT_SECRET
+    if not JWT_SECRET:
+        # Generate a random secret for development
+        JWT_SECRET = base64.b64encode(os.urandom(32)).decode("utf-8")
+        logger.warning(
+            "ARAGORA_JWT_SECRET not set, using random secret. "
+            "Tokens will be invalidated on restart."
+        )
+    return JWT_SECRET.encode("utf-8")
+
+
+def _base64url_encode(data: bytes) -> str:
+    """Base64 URL-safe encode without padding."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
+
+
+def _base64url_decode(data: str) -> bytes:
+    """Base64 URL-safe decode with padding restoration."""
+    padding = 4 - (len(data) % 4)
+    if padding != 4:
+        data += "=" * padding
+    return base64.urlsafe_b64decode(data)
+
+
+@dataclass
+class JWTPayload:
+    """JWT token payload."""
+
+    sub: str  # Subject (user ID)
+    email: str
+    org_id: Optional[str]
+    role: str
+    iat: int  # Issued at (Unix timestamp)
+    exp: int  # Expiration (Unix timestamp)
+    type: str = "access"  # access or refresh
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "sub": self.sub,
+            "email": self.email,
+            "org_id": self.org_id,
+            "role": self.role,
+            "iat": self.iat,
+            "exp": self.exp,
+            "type": self.type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "JWTPayload":
+        """Create from dictionary."""
+        return cls(
+            sub=data.get("sub", ""),
+            email=data.get("email", ""),
+            org_id=data.get("org_id"),
+            role=data.get("role", "member"),
+            iat=data.get("iat", 0),
+            exp=data.get("exp", 0),
+            type=data.get("type", "access"),
+        )
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if token is expired."""
+        return time.time() > self.exp
+
+    @property
+    def user_id(self) -> str:
+        """Alias for sub (subject = user ID)."""
+        return self.sub
+
+
+def create_access_token(
+    user_id: str,
+    email: str,
+    org_id: Optional[str] = None,
+    role: str = "member",
+    expiry_hours: Optional[int] = None,
+) -> str:
+    """
+    Create a JWT access token.
+
+    Args:
+        user_id: User ID (sub claim)
+        email: User email
+        org_id: Organization ID
+        role: User role in organization
+        expiry_hours: Token expiry in hours (default from config)
+
+    Returns:
+        JWT token string
+    """
+    if expiry_hours is None:
+        expiry_hours = JWT_EXPIRY_HOURS
+
+    now = int(time.time())
+    exp = now + (expiry_hours * 3600)
+
+    payload = JWTPayload(
+        sub=user_id,
+        email=email,
+        org_id=org_id,
+        role=role,
+        iat=now,
+        exp=exp,
+        type="access",
+    )
+
+    return _encode_jwt(payload)
+
+
+def create_refresh_token(
+    user_id: str,
+    expiry_days: Optional[int] = None,
+) -> str:
+    """
+    Create a JWT refresh token.
+
+    Args:
+        user_id: User ID
+        expiry_days: Token expiry in days (default from config)
+
+    Returns:
+        JWT refresh token string
+    """
+    if expiry_days is None:
+        expiry_days = REFRESH_TOKEN_EXPIRY_DAYS
+
+    now = int(time.time())
+    exp = now + (expiry_days * 86400)
+
+    payload = JWTPayload(
+        sub=user_id,
+        email="",
+        org_id=None,
+        role="",
+        iat=now,
+        exp=exp,
+        type="refresh",
+    )
+
+    return _encode_jwt(payload)
+
+
+def _encode_jwt(payload: JWTPayload) -> str:
+    """
+    Encode a JWT token.
+
+    Args:
+        payload: Token payload
+
+    Returns:
+        Encoded JWT string
+    """
+    # Header
+    header = {"alg": JWT_ALGORITHM, "typ": "JWT"}
+    header_b64 = _base64url_encode(json.dumps(header).encode("utf-8"))
+
+    # Payload
+    payload_b64 = _base64url_encode(json.dumps(payload.to_dict()).encode("utf-8"))
+
+    # Signature
+    message = f"{header_b64}.{payload_b64}"
+    signature = hmac.new(
+        _get_secret(),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    signature_b64 = _base64url_encode(signature)
+
+    return f"{header_b64}.{payload_b64}.{signature_b64}"
+
+
+def decode_jwt(token: str) -> Optional[JWTPayload]:
+    """
+    Decode and validate a JWT token.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        JWTPayload if valid, None otherwise
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            logger.debug("jwt_decode_failed: invalid format")
+            return None
+
+        header_b64, payload_b64, signature_b64 = parts
+
+        # Verify signature
+        message = f"{header_b64}.{payload_b64}"
+        expected_signature = hmac.new(
+            _get_secret(),
+            message.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+
+        actual_signature = _base64url_decode(signature_b64)
+
+        if not hmac.compare_digest(expected_signature, actual_signature):
+            logger.debug("jwt_decode_failed: invalid signature")
+            return None
+
+        # Decode payload
+        payload_json = _base64url_decode(payload_b64).decode("utf-8")
+        payload_data = json.loads(payload_json)
+        payload = JWTPayload.from_dict(payload_data)
+
+        # Check expiration
+        if payload.is_expired:
+            logger.debug("jwt_decode_failed: token expired")
+            return None
+
+        return payload
+
+    except Exception as e:
+        logger.debug(f"jwt_decode_failed: {e}")
+        return None
+
+
+def validate_access_token(token: str) -> Optional[JWTPayload]:
+    """
+    Validate an access token.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        JWTPayload if valid access token, None otherwise
+    """
+    payload = decode_jwt(token)
+    if payload is None:
+        return None
+    if payload.type != "access":
+        logger.debug("jwt_validate_failed: not an access token")
+        return None
+    return payload
+
+
+def validate_refresh_token(token: str) -> Optional[JWTPayload]:
+    """
+    Validate a refresh token.
+
+    Args:
+        token: JWT refresh token string
+
+    Returns:
+        JWTPayload if valid refresh token, None otherwise
+    """
+    payload = decode_jwt(token)
+    if payload is None:
+        return None
+    if payload.type != "refresh":
+        logger.debug("jwt_validate_failed: not a refresh token")
+        return None
+    return payload
+
+
+@dataclass
+class UserAuthContext:
+    """
+    User authentication context for handlers.
+
+    Extended version of AuthContext with user-specific information.
+    """
+
+    authenticated: bool = False
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    org_id: Optional[str] = None
+    role: str = "member"
+    token_type: str = "none"  # none, access, api_key
+    client_ip: Optional[str] = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Alias for authenticated."""
+        return self.authenticated
+
+    @property
+    def is_owner(self) -> bool:
+        """Check if user is org owner."""
+        return self.role == "owner"
+
+    @property
+    def is_admin(self) -> bool:
+        """Check if user is admin or owner."""
+        return self.role in ("owner", "admin")
+
+
+def extract_user_from_request(handler: Any) -> UserAuthContext:
+    """
+    Extract user authentication from a request.
+
+    Checks for:
+    1. Bearer token (JWT)
+    2. API key (ara_xxx)
+
+    Args:
+        handler: HTTP request handler
+
+    Returns:
+        UserAuthContext with authentication info
+    """
+    from aragora.server.middleware.auth import extract_client_ip
+
+    context = UserAuthContext(
+        authenticated=False,
+        client_ip=extract_client_ip(handler),
+    )
+
+    if handler is None:
+        return context
+
+    # Get authorization header
+    auth_header = ""
+    if hasattr(handler, "headers"):
+        auth_header = handler.headers.get("Authorization", "")
+
+    if not auth_header:
+        return context
+
+    # Check for Bearer token (JWT)
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+
+        # Check if it's an API key
+        if token.startswith("ara_"):
+            return _validate_api_key(token, context)
+
+        # Validate as JWT
+        payload = validate_access_token(token)
+        if payload:
+            context.authenticated = True
+            context.user_id = payload.user_id
+            context.email = payload.email
+            context.org_id = payload.org_id
+            context.role = payload.role
+            context.token_type = "access"
+
+    return context
+
+
+def _validate_api_key(api_key: str, context: UserAuthContext) -> UserAuthContext:
+    """
+    Validate an API key and populate context.
+
+    NOTE: Currently uses format-based validation only. For production use,
+    implement database lookup to validate against stored API keys.
+
+    API key format: ara_<random_string> (minimum 10 chars after prefix)
+
+    Args:
+        api_key: API key string (expected format: ara_xxxxx)
+        context: Context to populate
+
+    Returns:
+        Updated context with authentication status
+    """
+    # Format validation (basic security check)
+    if not api_key.startswith("ara_") or len(api_key) < 15:
+        logger.warning(f"api_key_invalid_format key_prefix={api_key[:8]}...")
+        context.authenticated = False
+        return context
+
+    # TODO: Implement database lookup for production
+    # - Query api_keys table by hashed key
+    # - Check key is not expired/revoked
+    # - Load associated user_id, org_id, permissions
+    # For now, accept valid format (development mode)
+    logger.debug(f"api_key_format_valid key_prefix={api_key[:8]}... (no db validation)")
+    context.authenticated = True
+    context.token_type = "api_key"
+
+    return context
+
+
+class TokenPair:
+    """Access and refresh token pair."""
+
+    def __init__(self, access_token: str, refresh_token: str):
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.token_type = "Bearer"
+        self.expires_in = JWT_EXPIRY_HOURS * 3600
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for API response."""
+        return {
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token,
+            "token_type": self.token_type,
+            "expires_in": self.expires_in,
+        }
+
+
+def create_token_pair(
+    user_id: str,
+    email: str,
+    org_id: Optional[str] = None,
+    role: str = "member",
+) -> TokenPair:
+    """
+    Create a new access/refresh token pair.
+
+    Args:
+        user_id: User ID
+        email: User email
+        org_id: Organization ID
+        role: User role
+
+    Returns:
+        TokenPair with access and refresh tokens
+    """
+    access = create_access_token(user_id, email, org_id, role)
+    refresh = create_refresh_token(user_id)
+    return TokenPair(access, refresh)
+
+
+__all__ = [
+    "JWTPayload",
+    "UserAuthContext",
+    "TokenPair",
+    "create_access_token",
+    "create_refresh_token",
+    "decode_jwt",
+    "validate_access_token",
+    "validate_refresh_token",
+    "extract_user_from_request",
+    "create_token_pair",
+]
