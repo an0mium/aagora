@@ -413,6 +413,43 @@ How would you like to proceed?
 
         return guidance
 
+    def get_pending_breakpoints(self) -> list[Breakpoint]:
+        """Get all unresolved breakpoints."""
+        return [bp for bp in self.breakpoints if not bp.resolved]
+
+    def get_breakpoint(self, breakpoint_id: str) -> Optional[Breakpoint]:
+        """Get a specific breakpoint by ID."""
+        for bp in self.breakpoints:
+            if bp.breakpoint_id == breakpoint_id:
+                return bp
+        return None
+
+    def resolve_breakpoint(self, breakpoint_id: str, guidance: HumanGuidance) -> bool:
+        """
+        Resolve a pending breakpoint with human guidance.
+
+        Args:
+            breakpoint_id: ID of the breakpoint to resolve
+            guidance: Human guidance for resolution
+
+        Returns:
+            True if resolved successfully, False if breakpoint not found
+        """
+        bp = self.get_breakpoint(breakpoint_id)
+        if not bp:
+            return False
+
+        if bp.resolved:
+            logger.warning(f"Breakpoint {breakpoint_id} already resolved")
+            return False
+
+        bp.resolved = True
+        bp.guidance = guidance
+        bp.resolved_at = datetime.now().isoformat()
+
+        logger.info(f"Breakpoint {breakpoint_id} resolved with action: {guidance.action}")
+        return True
+
     def inject_guidance(
         self,
         guidance: HumanGuidance,
