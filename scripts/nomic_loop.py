@@ -8682,11 +8682,63 @@ Be concise - this is a quality gate, not a full review."""
                     self.replay_recorder = None
             raise  # Re-raise for caller to handle
 
+    def _finalize_cycle(self, cycle_result: dict) -> None:
+        """Finalize cycle by closing replay recorder and saving state.
+
+        CRITICAL: This must be called before returning from _run_cycle_impl
+        to ensure the replay meta.json is updated with proper ended_at and status.
+        """
+        if self.replay_recorder:
+            try:
+                outcome = cycle_result.get("outcome", "unknown")
+                votes = {"success": 1 if outcome == "success" else 0}
+                replay_path = self.replay_recorder.finalize(outcome, votes)
+                self._log(f"  [replay] Cycle recorded to {replay_path}")
+            except Exception as e:
+                self._log(f"  [replay] Finalization error: {e}")
+            finally:
+                self.replay_recorder = None
+
+        # Export cartographer if available
+        if self.cartographer:
+            try:
+                mermaid_path = self.visualizations_dir / f"cycle-{self.cycle_count}.md"
+                mermaid_content = self.cartographer.export_mermaid()
+                with open(mermaid_path, "w") as f:
+                    f.write(f"# Cycle {self.cycle_count} Debate Graph\n\n")
+                    f.write("```mermaid\n")
+                    f.write(mermaid_content)
+                    f.write("\n```\n")
+                json_path = self.visualizations_dir / f"cycle-{self.cycle_count}.json"
+                with open(json_path, "w") as f:
+                    f.write(self.cartographer.export_json(include_full_content=True))
+            except Exception as e:
+                self._log(f"  [viz] Export error: {e}")
+            finally:
+                self.cartographer = None
+
     async def _run_cycle_impl(self) -> dict:
         """Internal implementation of run_cycle (called with timeout wrapper)."""
         # Note: self.cycle_count already incremented by run_cycle() wrapper
         cycle_start = datetime.now()
         cycle_deadline = cycle_start + timedelta(seconds=self.max_cycle_seconds)
+
+        # Store cycle_result as instance variable so finally can access actual result
+        self._current_cycle_result = {"outcome": "unknown", "cycle": self.cycle_count}
+
+        try:
+            result = await self._run_cycle_impl_inner(cycle_start, cycle_deadline)
+            self._current_cycle_result = result  # Update with actual result
+            return result
+        finally:
+            # CRITICAL: Always finalize the cycle, even on early returns or exceptions
+            self._finalize_cycle(self._current_cycle_result)
+
+    async def _run_cycle_impl_inner(self, cycle_start: datetime, cycle_deadline: datetime) -> dict:
+        """Inner implementation of cycle logic."""
+        cycle_result = {"outcome": "unknown", "cycle": self.cycle_count}
+        # Store reference for finally block in outer function
+        self._current_cycle_result = cycle_result
 
         # Reset per-cycle state and track start time
         self._reset_cycle_state()
@@ -8698,7 +8750,8 @@ Be concise - this is a quality gate, not a full review."""
             action = await self._handle_deadlock(deadlock)
             if action == "skip":
                 self._log(f"  [DEADLOCK] Skipping cycle due to repeated failures")
-                return {"outcome": "skipped_deadlock", "cycle": self.cycle_count}
+                cycle_result["outcome"] = "skipped_deadlock"
+                return cycle_result
 
         # Update circuit breaker cooldowns at cycle start
         self.circuit_breaker.start_new_cycle()
