@@ -538,3 +538,131 @@ class InsightStore:
             created_at=row[8] or datetime.now().isoformat(),
             metadata=safe_json_loads(row[9], {}),
         )
+
+    # =========================================================================
+    # Audience Wisdom Injection (fallback when agents timeout)
+    # =========================================================================
+
+    def _ensure_wisdom_table(self) -> None:
+        """Ensure the wisdom_submissions table exists."""
+        with self.db.connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS wisdom_submissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    loop_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    submitter_id TEXT DEFAULT 'anonymous',
+                    context_tags TEXT,
+                    used INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_wisdom_loop_id
+                ON wisdom_submissions(loop_id, used)
+            """)
+            conn.commit()
+
+    def add_wisdom_submission(self, loop_id: str, wisdom_data: dict) -> int:
+        """
+        Add audience wisdom with proper loop association.
+
+        Args:
+            loop_id: The debate/loop ID this wisdom is for
+            wisdom_data: Dict with 'text', optional 'submitter_id', 'context_tags'
+
+        Returns:
+            The ID of the inserted wisdom submission
+        """
+        self._ensure_wisdom_table()
+
+        with self.db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO wisdom_submissions (loop_id, text, submitter_id, context_tags)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    loop_id,
+                    wisdom_data.get('text', '')[:280],  # Character limit
+                    wisdom_data.get('submitter_id', 'anonymous'),
+                    json.dumps(wisdom_data.get('context_tags', [])),
+                )
+            )
+            wisdom_id = cursor.lastrowid
+            conn.commit()
+
+            # Log to flight recorder for debugging
+            self._log_wisdom_event({
+                'type': 'wisdom_submitted',
+                'loop_id': loop_id,
+                'wisdom_id': wisdom_id,
+                'timestamp': datetime.now().isoformat(),
+            })
+
+            logger.info(f"[wisdom] Added submission {wisdom_id} for loop {loop_id}")
+            return wisdom_id
+
+    def get_relevant_wisdom(self, loop_id: str, limit: int = 3) -> list[dict]:
+        """
+        Retrieve unused wisdom for current loop.
+
+        Args:
+            loop_id: The debate/loop ID to get wisdom for
+            limit: Maximum number of wisdom entries to return
+
+        Returns:
+            List of wisdom dicts with 'id', 'text', 'submitter_id', 'context_tags'
+        """
+        self._ensure_wisdom_table()
+
+        with self.db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, text, submitter_id, context_tags, created_at
+                FROM wisdom_submissions
+                WHERE loop_id = ? AND used = 0
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (loop_id, limit)
+            )
+
+            return [
+                {
+                    'id': row[0],
+                    'text': row[1],
+                    'submitter_id': row[2],
+                    'context_tags': safe_json_loads(row[3], []),
+                    'created_at': row[4],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def mark_wisdom_used(self, wisdom_id: int) -> None:
+        """Mark a wisdom submission as used."""
+        self._ensure_wisdom_table()
+
+        with self.db.connection() as conn:
+            conn.execute(
+                "UPDATE wisdom_submissions SET used = 1 WHERE id = ?",
+                (wisdom_id,)
+            )
+            conn.commit()
+
+        self._log_wisdom_event({
+            'type': 'wisdom_used',
+            'wisdom_id': wisdom_id,
+            'timestamp': datetime.now().isoformat(),
+        })
+
+    def _log_wisdom_event(self, event_data: dict) -> None:
+        """Flight recorder: log wisdom events for replay/debugging."""
+        try:
+            event_log = self.db_path.parent / "wisdom_events.jsonl"
+            with open(event_log, 'a') as f:
+                f.write(json.dumps(event_data) + '\n')
+        except Exception:
+            pass  # Never crash main loop due to logging
