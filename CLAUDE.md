@@ -11,7 +11,7 @@ Aragora is a multi-agent debate framework where heterogeneous AI agents discuss,
 ```
 aragora/
 ├── debate/           # Core debate orchestration
-│   ├── orchestrator.py     # Arena class - main debate engine (~1,900 LOC)
+│   ├── orchestrator.py     # Arena class - main debate engine (~1,650 LOC)
 │   ├── phases/             # Extracted phase implementations
 │   │   ├── spectator.py       # Spectator mode (ArgumentCartographer)
 │   │   ├── consensus_phase.py # Consensus detection logic
@@ -48,6 +48,9 @@ aragora/
 │       └── arena_hooks.py    # Arena event integration
 ├── ranking/          # Agent skill tracking
 │   └── elo.py           # ELO ratings and calibration (~1,700 LOC)
+├── fixtures/         # Demo data for seeding
+│   ├── __init__.py      # load_demo_consensus(), ensure_demo_data()
+│   └── demo_consensus.json  # Sample debates for search
 ├── resilience.py     # CircuitBreaker for agent failure handling
 └── verification/     # Proof generation
     └── formal.py        # Z3/Lean verification backends
@@ -189,5 +192,8 @@ Recent additions (2026-01):
 - `agents/positions.py` - position ledger extraction from grounded.py
 - `Position.from_row()` classmethod in truth_grounding.py - centralized row hydration
 - Nomic loop fixes: TypedDict access patterns, debate phase agent creation
+- `fixtures/` package - demo consensus data for search functionality
+- `/api/consensus/seed-demo` endpoint - manual demo data seeding
+- Auto-seed on server startup - populates consensus database with demo data
 
 See `docs/STATUS.md` for detailed feature status.

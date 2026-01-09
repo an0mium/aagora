@@ -1,6 +1,6 @@
 # Aragora Feature Documentation
 
-This document provides detailed documentation for all 30+ features implemented in aragora through 8 phases of self-improvement.
+This document provides detailed documentation for all 56+ features implemented in aragora through 20 phases of self-improvement.
 
 ## Table of Contents
 
@@ -12,6 +12,8 @@ This document provides detailed documentation for all 30+ features implemented i
 - [Phase 6: Formal Reasoning](#phase-6-formal-reasoning)
 - [Phase 7: Reliability & Audit](#phase-7-reliability--audit)
 - [Phase 8: Advanced Debates](#phase-8-advanced-debates)
+- [Phase 9-19: Truth Grounding, Modes, Infrastructure](#phase-9-truth-grounding-recent)
+- [Phase 20: Demo Fixtures & Search](#phase-20-demo-fixtures--search-2026-01)
 
 ---
 
@@ -1705,6 +1707,73 @@ class MyStreamingAgent(StreamingMixin, BaseAgent):
 - OpenAI, Anthropic, Grok, OpenRouter format support
 - DoS protection (1MB buffer limit)
 - Automatic format detection
+
+---
+
+## Phase 20: Demo Fixtures & Search (2026-01)
+
+Search functionality that works independently of live debates.
+
+### Demo Consensus Fixtures
+**File:** `aragora/fixtures/__init__.py`
+
+Pre-populated consensus data for search functionality.
+
+```python
+from aragora.fixtures import load_demo_consensus, ensure_demo_data
+
+# Load demo data into a ConsensusMemory instance
+from aragora.memory.consensus import ConsensusMemory
+memory = ConsensusMemory()
+seeded = load_demo_consensus(memory)
+print(f"Seeded {seeded} demo consensus records")
+
+# Auto-seed on server startup (called by unified_server.py)
+ensure_demo_data()  # Safe to call multiple times
+```
+
+**Demo Topics (in `demo_consensus.json`):**
+- Live Debate Viewer with Shareable Permalinks
+- Airlock Resilience Layer for Agent Failures
+- Public Debate Archive with Stabilized IDs
+- Stream Package Refactoring
+- Multi-Agent Debate Consensus Mechanisms
+
+**Key Features:**
+- Auto-seeds on server startup if database is empty
+- Idempotent - won't re-seed if data already exists
+- Maps JSON strength values to ConsensusStrength enum
+- Supports "strong", "medium"/"moderate", and "weak" strengths
+
+### Seed Demo Endpoint
+**File:** `aragora/server/handlers/consensus.py`
+
+Manual trigger for demo data seeding.
+
+```bash
+# Seed demo data
+curl https://api.aragora.ai/api/consensus/seed-demo
+
+# Response:
+{
+  "success": true,
+  "seeded": 5,
+  "total_before": 0,
+  "total_after": 5,
+  "db_path": "consensus_memory.db",
+  "message": "Seeded 5 demo consensus records"
+}
+```
+
+### Package Data Configuration
+**File:** `pyproject.toml`
+
+JSON fixtures are included in package distribution:
+
+```toml
+[tool.setuptools.package-data]
+"aragora.fixtures" = ["*.json"]
+```
 
 ---
 

@@ -256,6 +256,12 @@ Get risk warnings and edge cases
 
 Get domain-specific history
 
+### `GET` `/api/consensus/seed-demo`
+
+Seed demo consensus data for search functionality
+
+Returns seeding status including records seeded and database state.
+
 ---
 
 ## Critique

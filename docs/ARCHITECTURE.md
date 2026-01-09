@@ -91,7 +91,7 @@ aragora/
 │   └── positions.py       # PositionTracker (position history)
 │
 ├── debate/                 # Core debate infrastructure
-│   ├── orchestrator.py    # Arena class (~2,000 LOC after refactoring)
+│   ├── orchestrator.py    # Arena class (~1,650 LOC after extraction refactors)
 │   ├── memory_manager.py  # MemoryManager (extracted from orchestrator)
 │   ├── prompt_builder.py  # PromptBuilder (extracted from orchestrator)
 │   ├── security_barrier.py# SecurityBarrier, TelemetryVerifier

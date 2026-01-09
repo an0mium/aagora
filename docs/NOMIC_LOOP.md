@@ -132,7 +132,7 @@ Three-stage verification:
 
 1. **Syntax Check**: `python -m py_compile` on all modified files
 2. **Import Check**: `python -c "import aragora"` ensures no broken imports
-3. **Test Suite**: `pytest tests/` must pass (currently 231 tests)
+3. **Test Suite**: `pytest tests/` must pass (currently 12,349 tests)
 
 ### Phase 6: Commit
 

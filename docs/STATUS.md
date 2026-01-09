@@ -1,11 +1,11 @@
 # Aragora Project Status
 
-*Last updated: January 8, 2026 (16:30 UTC)*
+*Last updated: January 9, 2026 (10:00 UTC)*
 
 ## Current State
 
 ### Test Status
-- **Total Tests**: 12,000+ collected (massive expansion via parametrized tests)
+- **Total Tests**: 12,349 collected (massive expansion via parametrized tests)
 - **Frontend Tests**: 34 Jest tests (DebateListPanel, AgentComparePanel)
 - **Recent Fixes (2026-01-05)**:
   - Fixed `_get_belief_classes()` → `_get_belief_analyzer()` typo in orchestrator.py
@@ -42,6 +42,23 @@
 | `anthropic-api` | Claude Opus 4.5 | Anthropic |
 | `openai-api` | GPT 5.2 | OpenAI |
 | `deepseek-r1` | DeepSeek V3.2 | OpenRouter |
+
+### Recent Changes (2026-01-09)
+- **Demo Consensus Fixtures**:
+  - Created `aragora/fixtures/` package with demo consensus data
+  - Added `load_demo_consensus()` and `ensure_demo_data()` functions
+  - Created `demo_consensus.json` with 5 sample debate topics (architecture domain)
+  - Added auto-seed on server startup for empty databases
+  - Fixed ConsensusStrength enum mapping (`MEDIUM` → `MODERATE`)
+  - Added `[tool.setuptools.package-data]` to include JSON fixtures in deployment
+- **New API Endpoint**:
+  - `GET /api/consensus/seed-demo` - Manually trigger demo data seeding
+- **Nomic Loop Fixes**:
+  - Fixed empty agent list crash in design phase (`_select_debate_team()` fallback)
+  - Added fallback to default_team when AgentSelector returns empty Team
+- **Search Functionality**:
+  - Search now works independently of nomic loop (uses HTTP REST, not WebSocket)
+  - Demo data ensures search has content even with no live debates
 
 ### Recent Changes (2026-01-08 Session 19)
 - **Nomic Loop Fixes**:
@@ -257,7 +274,7 @@
 
 ## Feature Integration Status
 
-### Fully Integrated (54)
+### Fully Integrated (56)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -317,6 +334,8 @@
 | Fork Initial Messages | Active | `aragora/debate/orchestrator.py` (initial_messages parameter) |
 | Modular HTTP Handlers | Active | `aragora/server/handlers/` (20 handler modules) |
 | Resource Availability Logging | Active | `aragora/server/unified_server.py` (_log_resource_availability) |
+| Demo Consensus Fixtures | Active | `aragora/fixtures/__init__.py` (auto-seed on server startup) |
+| Seed Demo API | Active | `aragora/server/handlers/consensus.py` (/api/consensus/seed-demo) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |
@@ -343,7 +362,7 @@
 | PulseHandler | pulse.py | 3 | ✅ Active |
 | AnalyticsHandler | analytics.py | 4 | ✅ Active |
 | MetricsHandler | metrics.py | 2 | ✅ Active |
-| ConsensusHandler | consensus.py | 4 | ✅ Active |
+| ConsensusHandler | consensus.py | 8 | ✅ Active |
 | BeliefHandler | belief.py | 6 | ✅ Active |
 | CritiqueHandler | critique.py | 3 | ✅ Active |
 | GenesisHandler | genesis.py | 5 | ✅ Active |
