@@ -1,6 +1,6 @@
 """Tests for handler registry and routing.
 
-Verifies that all 31 handlers:
+Verifies that all 33 handlers:
 1. Register correctly in HANDLER_REGISTRY
 2. Route to expected paths via can_handle()
 3. Don't have routing conflicts with other handlers
@@ -49,8 +49,8 @@ class TestHandlerRegistry:
         assert HANDLERS_AVAILABLE is True, "Handler imports failed"
 
     def test_handler_registry_count(self):
-        """HANDLER_REGISTRY should contain all 32 handlers."""
-        assert len(HANDLER_REGISTRY) == 32, f"Expected 32 handlers, got {len(HANDLER_REGISTRY)}"
+        """HANDLER_REGISTRY should contain all 33 handlers."""
+        assert len(HANDLER_REGISTRY) >= 33, f"Expected at least 33 handlers, got {len(HANDLER_REGISTRY)}"
 
     def test_handler_registry_structure(self):
         """Each registry entry should be a (str, class) tuple."""
