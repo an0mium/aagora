@@ -158,6 +158,9 @@ class ArenaConfig:
     initial_messages: Optional[list] = None
     trending_topic: Optional[object] = None
 
+    # Human-in-the-loop breakpoints
+    breakpoint_manager: Optional[object] = None  # BreakpointManager
+
 
 class Arena:
     """
@@ -200,6 +203,7 @@ class Arena:
         initial_messages: list = None,  # Optional initial conversation history (for fork debates)
         trending_topic=None,  # Optional TrendingTopic to seed debate context
         evidence_collector=None,  # Optional EvidenceCollector for auto-collecting evidence
+        breakpoint_manager=None,  # Optional BreakpointManager for human-in-the-loop
     ):
         """Initialize the Arena with environment, agents, and optional subsystems.
 
@@ -231,6 +235,7 @@ class Arena:
             initial_messages: Pre-existing conversation (for forked debates)
             trending_topic: Topic context from trending analysis
             evidence_collector: Automatic evidence gathering
+            breakpoint_manager: Human-in-the-loop breakpoint handling
 
         Initialization flow:
             1. _init_core() - Core config, protocol, agents, event system
@@ -260,6 +265,7 @@ class Arena:
             initial_messages=initial_messages,
             trending_topic=trending_topic,
             evidence_collector=evidence_collector,
+            breakpoint_manager=breakpoint_manager,
         )
 
         # Initialize tracking subsystems
@@ -346,6 +352,7 @@ class Arena:
             initial_messages=config.initial_messages,
             trending_topic=config.trending_topic,
             evidence_collector=config.evidence_collector,
+            breakpoint_manager=config.breakpoint_manager,
         )
 
     def _init_core(
@@ -367,6 +374,7 @@ class Arena:
         initial_messages: list | None,
         trending_topic,
         evidence_collector,
+        breakpoint_manager,
     ) -> None:
         """Initialize core Arena configuration."""
         self.env = environment
@@ -387,6 +395,11 @@ class Arena:
         self.initial_messages = initial_messages or []
         self.trending_topic = trending_topic
         self.evidence_collector = evidence_collector
+        self.breakpoint_manager = breakpoint_manager
+
+        # Auto-initialize BreakpointManager if enable_breakpoints is True
+        if self.protocol.enable_breakpoints and self.breakpoint_manager is None:
+            self._auto_init_breakpoint_manager()
 
         # ArgumentCartographer for debate graph visualization
         AC = OptionalImports.get_argument_cartographer()
@@ -448,6 +461,19 @@ class Arena:
             pass  # MomentDetector not available
         except Exception as e:
             logger.debug("MomentDetector auto-init failed: %s", e)
+
+    def _auto_init_breakpoint_manager(self) -> None:
+        """Auto-initialize BreakpointManager when enable_breakpoints is True."""
+        try:
+            from aragora.debate.breakpoints import BreakpointManager, BreakpointConfig
+
+            config = self.protocol.breakpoint_config or BreakpointConfig()
+            self.breakpoint_manager = BreakpointManager(config=config)
+            logger.debug("Auto-initialized BreakpointManager for human-in-the-loop breakpoints")
+        except ImportError:
+            logger.warning("BreakpointManager not available - breakpoints disabled")
+        except Exception as e:
+            logger.warning("BreakpointManager auto-init failed: %s", e)
 
     def _init_user_participation(self) -> None:
         """Initialize user participation tracking and event subscription."""
@@ -1587,6 +1613,90 @@ and building on others' ideas."""
         except Exception as e:
             logger.warning(f"Flip context error for {agent.name}: {e}")
             return ""
+
+    async def _check_breakpoint(
+        self,
+        round_num: int,
+        proposals: dict[str, str],
+        context: list,
+        confidence: float = 0.0,
+    ) -> Optional[str]:
+        """
+        Check for breakpoint triggers and handle human intervention if needed.
+
+        Args:
+            round_num: Current debate round
+            proposals: Current proposals from agents
+            context: Conversation context
+            confidence: Current consensus confidence (0.0-1.0)
+
+        Returns:
+            Optional guidance string from human if breakpoint triggered,
+            None otherwise
+        """
+        if not self.breakpoint_manager or not self.protocol.enable_breakpoints:
+            return None
+
+        try:
+            from aragora.debate.breakpoints import BreakpointTrigger, DebateSnapshot
+
+            # Create debate snapshot for breakpoint evaluation
+            snapshot = DebateSnapshot(
+                debate_id=self.env.debate_id if hasattr(self.env, 'debate_id') else "",
+                round_num=round_num,
+                task=self.env.task,
+                proposals=proposals,
+                current_confidence=confidence,
+                agent_names=[a.name for a in self.agents],
+                context_summary=f"Round {round_num}: {len(proposals)} proposals",
+            )
+
+            # Check for triggers
+            breakpoint = self.breakpoint_manager.check_triggers(
+                snapshot=snapshot,
+                confidence=confidence,
+                round_num=round_num,
+                total_rounds=self.protocol.rounds,
+            )
+
+            if breakpoint:
+                # Emit breakpoint event
+                self.event_bridge.emit(
+                    event_type="breakpoint",
+                    data={
+                        "breakpoint_id": breakpoint.breakpoint_id,
+                        "trigger": breakpoint.trigger.value,
+                        "round": round_num,
+                        "message": breakpoint.message,
+                    }
+                )
+
+                # Wait for human guidance
+                guidance = await self.breakpoint_manager.handle_breakpoint(breakpoint)
+
+                if guidance:
+                    # Emit resolution event
+                    self.event_bridge.emit(
+                        event_type="breakpoint_resolved",
+                        data={
+                            "breakpoint_id": breakpoint.breakpoint_id,
+                            "action": guidance.action.value,
+                            "message": guidance.message,
+                        }
+                    )
+
+                    # Handle abort action
+                    if guidance.action.value == "abort":
+                        raise RuntimeError(f"Debate aborted by human: {guidance.message}")
+
+                    return guidance.message
+
+        except ImportError:
+            logger.debug("Breakpoints module not available")
+        except Exception as e:
+            logger.warning(f"Breakpoint check failed: {e}")
+
+        return None
 
     def _build_proposal_prompt(self, agent: Agent) -> str:
         """Build the initial proposal prompt."""

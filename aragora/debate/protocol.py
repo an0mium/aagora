@@ -8,12 +8,17 @@ Contains:
 Note: CircuitBreaker is now in aragora.resilience module.
 """
 
+from __future__ import annotations
+
 import logging
-from dataclasses import dataclass
-from typing import Literal, Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal, Optional
 
 from aragora.debate.roles import RoleRotationConfig
 from aragora.resilience import CircuitBreaker  # Re-export for backwards compatibility
+
+if TYPE_CHECKING:
+    from aragora.debate.breakpoints import BreakpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,11 @@ class DebateProtocol:
     # 0 = no timeout (default for backward compatibility)
     timeout_seconds: int = 0  # Max time for entire debate (0 = unlimited)
     round_timeout_seconds: int = 120  # Max time per round (2 minutes per round)
+
+    # Breakpoints: Human-in-the-loop intervention points
+    # When enabled, debates can pause at critical moments for human guidance
+    enable_breakpoints: bool = False  # Enable breakpoint detection
+    breakpoint_config: Optional["BreakpointConfig"] = None  # Custom breakpoint thresholds
 
 
 def user_vote_multiplier(intensity: int, protocol: DebateProtocol) -> float:

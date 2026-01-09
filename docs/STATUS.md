@@ -274,7 +274,7 @@
 
 ## Feature Integration Status
 
-### Fully Integrated (56)
+### Fully Integrated (59)
 | Feature | Status | Location |
 |---------|--------|----------|
 | Multi-Agent Debate | Active | `aragora/debate/orchestrator.py` |
@@ -336,6 +336,9 @@
 | Resource Availability Logging | Active | `aragora/server/unified_server.py` (_log_resource_availability) |
 | Demo Consensus Fixtures | Active | `aragora/fixtures/__init__.py` (auto-seed on server startup) |
 | Seed Demo API | Active | `aragora/server/handlers/consensus.py` (/api/consensus/seed-demo) |
+| Broadcast Audio Generation | Active | `aragora/broadcast/` (TTS, mixing, storage) |
+| Podcast RSS Feed | Active | `aragora/server/handlers/audio.py` (/api/podcast/feed.xml) |
+| Audio File Serving | Active | `aragora/server/handlers/audio.py` (/audio/{id}.mp3) |
 
 ### Recently Surfaced (6)
 | Feature | Status | Location |

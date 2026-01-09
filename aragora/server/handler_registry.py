@@ -66,6 +66,7 @@ try:
         LaboratoryHandler,
         ProbesHandler,
         InsightsHandler,
+        BreakpointsHandler,
         HandlerResult,
     )
     HANDLERS_AVAILABLE = True
@@ -104,6 +105,7 @@ except ImportError:
     LaboratoryHandler = None  # type: ignore[misc, assignment]
     ProbesHandler = None  # type: ignore[misc, assignment]
     InsightsHandler = None  # type: ignore[misc, assignment]
+    BreakpointsHandler = None  # type: ignore[misc, assignment]
     HandlerResult = None  # type: ignore[misc, assignment]
 
 
@@ -142,6 +144,7 @@ HANDLER_REGISTRY: List[Tuple[str, Any]] = [
     ("_laboratory_handler", LaboratoryHandler),
     ("_probes_handler", ProbesHandler),
     ("_insights_handler", InsightsHandler),
+    ("_breakpoints_handler", BreakpointsHandler),
 ]
 
 

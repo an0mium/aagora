@@ -221,6 +221,9 @@ class DeepAuditOrchestrator:
         4. Risk blind spots
         """
         # Select synthesizer (use first agent if no role assigned)
+        if not self.agents:
+            logger.warning("No agents available for cross-examination")
+            return "Cross-examination skipped: no agents available"
         synthesizer = self.agents[0]
 
         # Build cross-examination prompt

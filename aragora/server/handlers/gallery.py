@@ -1,0 +1,290 @@
+"""
+Public Gallery endpoint handlers.
+
+Exposes debate archives publicly with stable, shareable URLs.
+Based on the nomic loop proposal for public debate visibility.
+
+Endpoints:
+- GET /api/gallery - List public debates
+- GET /api/gallery/:debate_id - Get specific debate with full history
+- GET /api/gallery/:debate_id/embed - Get embeddable debate summary
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from .base import (
+    BaseHandler,
+    HandlerResult,
+    json_response,
+    error_response,
+    get_int_param,
+    ttl_cache,
+)
+from aragora.config import DB_TIMEOUT_SECONDS
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PublicDebate:
+    """A debate entry for the public gallery."""
+
+    id: str  # Stable ID (hash of debate_id + loop_id)
+    title: str
+    topic: str
+    created_at: str
+    agents: list[str]
+    rounds: int
+    consensus_reached: bool
+    winner: Optional[str]
+    preview: str  # First 500 chars of final answer
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "topic": self.topic,
+            "created_at": self.created_at,
+            "agents": self.agents,
+            "rounds": self.rounds,
+            "consensus_reached": self.consensus_reached,
+            "winner": self.winner,
+            "preview": self.preview,
+        }
+
+
+def generate_stable_id(debate_id: str, loop_id: Optional[str] = None) -> str:
+    """
+    Generate a stable, shareable ID for a debate.
+
+    Combines debate_id and loop_id to create a unique hash that
+    remains stable across server restarts.
+    """
+    source = debate_id
+    if loop_id:
+        source = f"{loop_id}:{debate_id}"
+    return hashlib.sha256(source.encode()).hexdigest()[:12]
+
+
+class GalleryHandler(BaseHandler):
+    """Handler for public gallery endpoints."""
+
+    ROUTES = [
+        "/api/gallery",
+    ]
+
+    def can_handle(self, path: str) -> bool:
+        """Check if this handler can process the given path."""
+        if path in self.ROUTES:
+            return True
+        # Dynamic routes for specific debate
+        if path.startswith("/api/gallery/") and len(path.split("/")) >= 4:
+            return True
+        return False
+
+    def handle(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
+        """Route gallery requests to appropriate methods."""
+        if path == "/api/gallery":
+            return self._list_public_debates(query_params)
+
+        # Parse debate_id from path
+        parts = path.split("/")
+        if len(parts) >= 4 and parts[1] == "api" and parts[2] == "gallery":
+            debate_id = parts[3]
+
+            # Check for sub-routes
+            if len(parts) == 5 and parts[4] == "embed":
+                return self._get_embed(debate_id)
+
+            return self._get_debate(debate_id)
+
+        return None
+
+    def _list_public_debates(self, query_params: dict) -> HandlerResult:
+        """
+        List public debates with pagination.
+
+        Query params:
+        - limit: Max debates to return (default 20, max 100)
+        - offset: Skip first N debates (default 0)
+        - agent: Filter by agent name
+        """
+        limit = min(get_int_param(query_params, "limit", 20), 100)
+        offset = get_int_param(query_params, "offset", 0)
+        agent_filter = query_params.get("agent", [None])[0]
+
+        # Get debates from memory store
+        nomic_dir = self.ctx.get("nomic_dir")
+        debates = self._load_debates_from_replays(nomic_dir, limit, offset, agent_filter)
+
+        return json_response({
+            "debates": [d.to_dict() for d in debates],
+            "total": len(debates),
+            "limit": limit,
+            "offset": offset,
+        })
+
+    def _get_debate(self, debate_id: str) -> HandlerResult:
+        """Get full debate details by stable ID."""
+        nomic_dir = self.ctx.get("nomic_dir")
+        debate = self._find_debate_by_id(nomic_dir, debate_id)
+
+        if not debate:
+            return error_response("Debate not found", status=404)
+
+        return json_response(debate)
+
+    def _get_embed(self, debate_id: str) -> HandlerResult:
+        """Get embeddable debate summary for sharing."""
+        nomic_dir = self.ctx.get("nomic_dir")
+        debate = self._find_debate_by_id(nomic_dir, debate_id)
+
+        if not debate:
+            return error_response("Debate not found", status=404)
+
+        # Return minimal embed data
+        embed = {
+            "id": debate_id,
+            "title": debate.get("title", "Untitled Debate"),
+            "topic": debate.get("topic", "")[:200],
+            "agents": debate.get("agents", []),
+            "consensus_reached": debate.get("consensus_reached", False),
+            "winner": debate.get("winner"),
+            "preview": debate.get("preview", "")[:300],
+            "embed_url": f"/api/gallery/{debate_id}/embed",
+            "full_url": f"/api/gallery/{debate_id}",
+        }
+
+        return json_response(embed)
+
+    def _load_debates_from_replays(
+        self,
+        nomic_dir: Optional[Path],
+        limit: int,
+        offset: int,
+        agent_filter: Optional[str],
+    ) -> list[PublicDebate]:
+        """Load debates from replay files."""
+        debates: list[PublicDebate] = []
+
+        if not nomic_dir:
+            return debates
+
+        replays_dir = Path(nomic_dir) / "replays"
+        if not replays_dir.exists():
+            return debates
+
+        # Scan replay directories
+        replay_dirs = sorted(replays_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+
+        for replay_path in replay_dirs:
+            if not replay_path.is_dir():
+                continue
+
+            meta_path = replay_path / "meta.json"
+            if not meta_path.exists():
+                continue
+
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+
+                # Extract debate info
+                agents = meta.get("agents", [])
+                if agent_filter and agent_filter not in agents:
+                    continue
+
+                debate_id = meta.get("debate_id", replay_path.name)
+                loop_id = meta.get("loop_id")
+                stable_id = generate_stable_id(debate_id, loop_id)
+
+                # Get preview from final answer or topic
+                final_answer = meta.get("final_answer", "")
+                preview = final_answer[:500] if final_answer else meta.get("topic", "")[:500]
+
+                debate = PublicDebate(
+                    id=stable_id,
+                    title=meta.get("title", replay_path.name),
+                    topic=meta.get("topic", ""),
+                    created_at=meta.get("created_at", ""),
+                    agents=agents,
+                    rounds=meta.get("rounds", 0),
+                    consensus_reached=meta.get("consensus_reached", False),
+                    winner=meta.get("winner"),
+                    preview=preview,
+                )
+                debates.append(debate)
+
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to load replay meta {meta_path}: {e}")
+                continue
+
+        # Apply pagination
+        return debates[offset : offset + limit]
+
+    def _find_debate_by_id(self, nomic_dir: Optional[Path], stable_id: str) -> Optional[dict]:
+        """Find a specific debate by its stable ID."""
+        if not nomic_dir:
+            return None
+
+        replays_dir = Path(nomic_dir) / "replays"
+        if not replays_dir.exists():
+            return None
+
+        for replay_path in replays_dir.iterdir():
+            if not replay_path.is_dir():
+                continue
+
+            meta_path = replay_path / "meta.json"
+            if not meta_path.exists():
+                continue
+
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+
+                debate_id = meta.get("debate_id", replay_path.name)
+                loop_id = meta.get("loop_id")
+                current_stable_id = generate_stable_id(debate_id, loop_id)
+
+                if current_stable_id == stable_id:
+                    # Load full debate data including events
+                    events_path = replay_path / "events.jsonl"
+                    events = []
+                    if events_path.exists():
+                        with open(events_path) as ef:
+                            for line in ef:
+                                try:
+                                    events.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    continue
+
+                    return {
+                        "id": stable_id,
+                        "debate_id": debate_id,
+                        "loop_id": loop_id,
+                        **meta,
+                        "events": events,
+                    }
+
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to load replay {replay_path}: {e}")
+                continue
+
+        return None
+
+
+# Convenience function to register with handler registry
+def get_handler_class():
+    """Return the handler class for registration."""
+    return GalleryHandler

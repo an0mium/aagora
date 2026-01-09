@@ -6,6 +6,12 @@ critique, and voting operations. Implements the "autonomic layer" pattern
 that catches all exceptions to keep debates running even when individual
 agents fail.
 
+Features:
+- Timeout escalation: retries use progressively longer timeouts
+- Fallback agents: automatic substitution when primary agent fails
+- Streaming buffer: capture partial content from timed-out streams
+- Circuit breaker integration: track and avoid failing agents
+
 Extracted from Arena orchestrator to improve testability and separation
 of concerns.
 """
@@ -14,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from typing import TYPE_CHECKING, Awaitable, Optional, TypeVar
 
 from aragora.resilience import CircuitBreaker
@@ -27,6 +34,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class StreamingContentBuffer:
+    """
+    Buffer for capturing partial streaming responses.
+
+    When an agent times out during streaming, this buffer preserves
+    any content received before the timeout, allowing partial responses
+    to be recovered rather than lost entirely.
+
+    Thread-safe via per-agent locks.
+    """
+
+    def __init__(self):
+        self._buffer: dict[str, str] = defaultdict(str)
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def append(self, agent_name: str, chunk: str) -> None:
+        """Append chunk to agent's buffer."""
+        async with self._locks[agent_name]:
+            self._buffer[agent_name] += chunk
+
+    def get_partial(self, agent_name: str) -> str:
+        """Get accumulated partial content (non-async for error handlers)."""
+        return self._buffer.get(agent_name, "")
+
+    async def get_partial_async(self, agent_name: str) -> str:
+        """Get accumulated partial content with lock."""
+        async with self._locks[agent_name]:
+            return self._buffer.get(agent_name, "")
+
+    async def clear(self, agent_name: str) -> None:
+        """Clear agent's buffer."""
+        async with self._locks[agent_name]:
+            self._buffer.pop(agent_name, None)
+
+    def clear_sync(self, agent_name: str) -> None:
+        """Clear agent's buffer (non-async)."""
+        self._buffer.pop(agent_name, None)
+
+
 class AutonomicExecutor:
     """
     Executes agent operations with automatic error handling.
@@ -35,17 +81,31 @@ class AutonomicExecutor:
     crash the entire debate. Errors are caught, logged, and converted
     to graceful fallback responses.
 
+    Features:
+        - Timeout escalation: each retry gets 1.5x more time (configurable)
+        - Fallback agents: automatic substitution when primary agent fails
+        - Streaming buffer: capture partial content from timed-out streams
+        - Circuit breaker: track and avoid persistently failing agents
+
     Usage:
         executor = AutonomicExecutor(circuit_breaker)
         response = await executor.generate(agent, prompt, context)
         critique = await executor.critique(agent, proposal, task, context)
         vote = await executor.vote(agent, proposals, task)
+
+        # With fallback agents
+        response = await executor.generate_with_fallback(
+            agent, prompt, context, fallback_agents=[backup1, backup2]
+        )
     """
 
     def __init__(
         self,
         circuit_breaker: Optional[CircuitBreaker] = None,
         default_timeout: float = 90.0,
+        timeout_escalation_factor: float = 1.5,
+        max_timeout: float = 300.0,
+        streaming_buffer: Optional[StreamingContentBuffer] = None,
     ):
         """
         Initialize the autonomic executor.
@@ -53,9 +113,54 @@ class AutonomicExecutor:
         Args:
             circuit_breaker: Optional circuit breaker for failure tracking
             default_timeout: Default timeout for agent operations in seconds
+            timeout_escalation_factor: Multiplier for timeout on each retry (default 1.5x)
+            max_timeout: Maximum timeout cap in seconds (default 300s / 5 min)
+            streaming_buffer: Optional buffer for capturing partial streaming content
         """
         self.circuit_breaker = circuit_breaker
         self.default_timeout = default_timeout
+        self.timeout_escalation_factor = timeout_escalation_factor
+        self.max_timeout = max_timeout
+        self.streaming_buffer = streaming_buffer or StreamingContentBuffer()
+        # Track retry counts per agent for timeout escalation
+        self._retry_counts: dict[str, int] = defaultdict(int)
+
+    def get_escalated_timeout(self, agent_name: str, base_timeout: Optional[float] = None) -> float:
+        """
+        Calculate escalated timeout based on retry count.
+
+        Each retry increases the timeout by the escalation factor,
+        up to max_timeout. This gives slow agents more time on retries
+        while keeping initial attempts fast.
+
+        Args:
+            agent_name: Agent name for retry tracking
+            base_timeout: Base timeout (uses default if None)
+
+        Returns:
+            Escalated timeout in seconds
+        """
+        base = base_timeout or self.default_timeout
+        retry_count = self._retry_counts[agent_name]
+        escalated = base * (self.timeout_escalation_factor ** retry_count)
+        return min(escalated, self.max_timeout)
+
+    def record_retry(self, agent_name: str) -> int:
+        """
+        Record a retry attempt for an agent.
+
+        Args:
+            agent_name: Agent that is being retried
+
+        Returns:
+            New retry count
+        """
+        self._retry_counts[agent_name] += 1
+        return self._retry_counts[agent_name]
+
+    def reset_retries(self, agent_name: str) -> None:
+        """Reset retry count for an agent after success."""
+        self._retry_counts.pop(agent_name, None)
 
     async def with_timeout(
         self,
@@ -185,5 +290,120 @@ class AutonomicExecutor:
             logger.exception(f"[Autonomic] Agent {agent.name} vote failed: {e}")
             return None
 
+    async def generate_with_fallback(
+        self,
+        agent: "Agent",
+        prompt: str,
+        context: list["Message"],
+        fallback_agents: Optional[list["Agent"]] = None,
+        max_retries: int = 2,
+    ) -> str:
+        """
+        Generate response with automatic fallback to alternative agents.
 
-__all__ = ["AutonomicExecutor"]
+        Tries the primary agent first. If it fails, tries fallback agents
+        in order. Each retry gets an escalated timeout. If all agents fail,
+        returns partial content from streaming buffer if available.
+
+        Args:
+            agent: Primary agent to generate response
+            prompt: Prompt for the agent
+            context: Conversation context
+            fallback_agents: List of backup agents to try on failure
+            max_retries: Maximum retries per agent before moving to fallback
+
+        Returns:
+            Generated response (or system message on total failure)
+        """
+        fallback_agents = fallback_agents or []
+        all_agents = [agent] + fallback_agents
+        last_error = None
+
+        for current_agent in all_agents:
+            # Skip agents that are circuit-broken
+            if self.circuit_breaker and not self.circuit_breaker.allow(current_agent.name):
+                logger.info(f"[Autonomic] Skipping circuit-broken agent {current_agent.name}")
+                continue
+
+            for attempt in range(max_retries):
+                try:
+                    timeout = self.get_escalated_timeout(current_agent.name)
+                    logger.debug(
+                        f"[Autonomic] {current_agent.name} attempt {attempt + 1}/{max_retries}, "
+                        f"timeout={timeout:.1f}s"
+                    )
+
+                    # Clear streaming buffer before attempt
+                    self.streaming_buffer.clear_sync(current_agent.name)
+
+                    raw_output = await asyncio.wait_for(
+                        current_agent.generate(prompt, context),
+                        timeout=timeout,
+                    )
+
+                    # Success - reset retry count and return
+                    self.reset_retries(current_agent.name)
+                    return OutputSanitizer.sanitize_agent_output(raw_output, current_agent.name)
+
+                except asyncio.TimeoutError:
+                    self.record_retry(current_agent.name)
+                    if self.circuit_breaker:
+                        self.circuit_breaker.record_failure(current_agent.name)
+
+                    # Check for partial content
+                    partial = self.streaming_buffer.get_partial(current_agent.name)
+                    if partial and len(partial) > 100:
+                        logger.warning(
+                            f"[Autonomic] {current_agent.name} timed out but has "
+                            f"{len(partial)} chars of partial content"
+                        )
+                        # Could use partial content as fallback
+
+                    logger.warning(
+                        f"[Autonomic] {current_agent.name} timed out on attempt "
+                        f"{attempt + 1}/{max_retries}"
+                    )
+                    last_error = f"timeout after {timeout:.1f}s"
+
+                except (ConnectionError, OSError) as e:
+                    self.record_retry(current_agent.name)
+                    if self.circuit_breaker:
+                        self.circuit_breaker.record_failure(current_agent.name)
+                    logger.warning(
+                        f"[Autonomic] {current_agent.name} connection error on attempt "
+                        f"{attempt + 1}: {e}"
+                    )
+                    last_error = str(e)
+
+                except Exception as e:
+                    self.record_retry(current_agent.name)
+                    if self.circuit_breaker:
+                        self.circuit_breaker.record_failure(current_agent.name)
+                    logger.exception(
+                        f"[Autonomic] {current_agent.name} failed on attempt "
+                        f"{attempt + 1}: {type(e).__name__}: {e}"
+                    )
+                    last_error = str(e)
+                    # Don't retry on unexpected errors
+                    break
+
+            # Agent exhausted retries, try next fallback
+            logger.info(f"[Autonomic] Moving to fallback after {current_agent.name} failed")
+
+        # All agents failed - check for any partial content
+        for tried_agent in all_agents:
+            partial = self.streaming_buffer.get_partial(tried_agent.name)
+            if partial and len(partial) > 200:
+                logger.info(
+                    f"[Autonomic] Using partial content ({len(partial)} chars) "
+                    f"from {tried_agent.name}"
+                )
+                sanitized = OutputSanitizer.sanitize_agent_output(partial, tried_agent.name)
+                return f"{sanitized}\n\n[System: Response truncated due to timeout]"
+
+        # Total failure
+        tried_names = [a.name for a in all_agents]
+        return f"[System: All agents failed ({', '.join(tried_names)}). Last error: {last_error}]"
+
+
+__all__ = ["AutonomicExecutor", "StreamingContentBuffer"]

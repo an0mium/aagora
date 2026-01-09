@@ -56,6 +56,8 @@ from .social import SocialMediaHandler
 from .laboratory import LaboratoryHandler
 from .probes import ProbesHandler
 from .insights import InsightsHandler
+from .gallery import GalleryHandler
+from .breakpoints import BreakpointsHandler
 
 # List of all handler classes for automatic dispatch registration
 # Order matters: more specific handlers should come first
@@ -92,6 +94,8 @@ ALL_HANDLERS = [
     LaboratoryHandler,
     ProbesHandler,
     InsightsHandler,
+    GalleryHandler,
+    BreakpointsHandler,
 ]
 
 __all__ = [
@@ -135,4 +139,6 @@ __all__ = [
     "LaboratoryHandler",
     "ProbesHandler",
     "InsightsHandler",
+    "GalleryHandler",
+    "BreakpointsHandler",
 ]

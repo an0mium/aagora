@@ -11,6 +11,67 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Available demo domains
+DEMO_DOMAINS = [
+    "architecture",
+    "security",
+    "performance",
+    "testing",
+    "design",
+    "debugging",
+    "api",
+    "database",
+]
+
+
+def get_demo_domains() -> list[str]:
+    """Return list of available demo domains."""
+    return DEMO_DOMAINS.copy()
+
+
+def get_demo_records() -> list[dict]:
+    """Load and return all demo consensus records."""
+    fixtures_dir = Path(__file__).parent
+    demo_file = fixtures_dir / "demo_consensus.json"
+
+    if not demo_file.exists():
+        logger.warning(f"Demo consensus file not found: {demo_file}")
+        return []
+
+    try:
+        with open(demo_file) as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load demo consensus: {e}")
+        return []
+
+
+def get_demo_records_by_domain(domain: str) -> list[dict]:
+    """Get demo records filtered by domain."""
+    records = get_demo_records()
+    return [r for r in records if r.get("domain") == domain]
+
+
+def get_demo_statistics() -> dict:
+    """Get statistics about demo data."""
+    records = get_demo_records()
+    domains = {}
+    strengths = {"strong": 0, "medium": 0, "weak": 0}
+
+    for record in records:
+        domain = record.get("domain", "unknown")
+        domains[domain] = domains.get(domain, 0) + 1
+        strength = record.get("strength", "medium")
+        if strength in strengths:
+            strengths[strength] += 1
+
+    return {
+        "total_records": len(records),
+        "domains": domains,
+        "by_strength": strengths,
+        "avg_confidence": sum(r.get("confidence", 0) for r in records) / len(records) if records else 0,
+    }
+
 
 def load_demo_consensus(consensus_memory: Optional[object] = None) -> int:
     """

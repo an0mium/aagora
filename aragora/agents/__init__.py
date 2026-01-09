@@ -51,6 +51,13 @@ from aragora.agents.fallback import (
     QuotaFallbackMixin,
     QUOTA_ERROR_KEYWORDS,
 )
+from aragora.agents.airlock import (
+    AirlockProxy,
+    AirlockConfig,
+    AirlockMetrics,
+    wrap_agent,
+    wrap_agents,
+)
 
 __all__ = [
     # CLI-based
@@ -97,4 +104,10 @@ __all__ = [
     "FallbackMetrics",
     "QuotaFallbackMixin",
     "QUOTA_ERROR_KEYWORDS",
+    # Airlock (resilience)
+    "AirlockProxy",
+    "AirlockConfig",
+    "AirlockMetrics",
+    "wrap_agent",
+    "wrap_agents",
 ]

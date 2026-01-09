@@ -32,6 +32,10 @@ class SpectatorEvents:
     # Memory/Learning
     MEMORY_RECALL = "memory_recall"
 
+    # Human-in-the-loop breakpoints
+    BREAKPOINT = "breakpoint"
+    BREAKPOINT_RESOLVED = "breakpoint_resolved"
+
     # System
     SYSTEM = "system"
     ERROR = "error"
@@ -53,6 +57,8 @@ EVENT_STYLES: Dict[str, Tuple[str, str]] = {
     SpectatorEvents.CONVERGENCE: ("📊", "\033[92m"),
     SpectatorEvents.CONVERGED: ("🎉", "\033[92m"),
     SpectatorEvents.MEMORY_RECALL: ("🧠", "\033[94m"),  # Blue - memory retrieval
+    SpectatorEvents.BREAKPOINT: ("⚠️", "\033[33m"),    # Yellow/orange - needs attention
+    SpectatorEvents.BREAKPOINT_RESOLVED: ("✅", "\033[32m"),  # Green - resolved
     SpectatorEvents.SYSTEM: ("⚙️", "\033[0m"),
     SpectatorEvents.ERROR: ("❌", "\033[91m"),
 }
@@ -72,6 +78,8 @@ EVENT_ASCII: Dict[str, str] = {
     SpectatorEvents.CONVERGENCE: "[CONVERGE]",
     SpectatorEvents.CONVERGED: "[DONE]",
     SpectatorEvents.MEMORY_RECALL: "[MEMORY]",
+    SpectatorEvents.BREAKPOINT: "[BREAK]",
+    SpectatorEvents.BREAKPOINT_RESOLVED: "[RESOLVED]",
     SpectatorEvents.SYSTEM: "[SYS]",
     SpectatorEvents.ERROR: "[ERR]",
 }

@@ -38,5 +38,157 @@
     "strength": "strong",
     "domain": "architecture",
     "participants": ["claude-visionary", "gemini-visionary", "deepseek-v3", "grok-lateral-thinker"]
+  },
+  {
+    "topic": "Rate Limiting Strategy for Public APIs",
+    "conclusion": "Implement token bucket algorithm with per-user quotas (120 req/min default), IP-based limiting for unauthenticated requests, and graduated throttling. Use sliding window counters stored in SQLite for persistence across restarts. Add X-RateLimit-* headers for client visibility. Critical for DoS prevention.",
+    "confidence": 0.85,
+    "strength": "strong",
+    "domain": "security",
+    "participants": ["claude-synthesizer", "codex-engineer", "gemini-visionary"]
+  },
+  {
+    "topic": "Input Validation and Sanitization Framework",
+    "conclusion": "Centralized validation using Pydantic models for all API inputs. Implement SAFE_ID_PATTERN regex for path parameters, max length constraints (500 chars for topics, 100 for domains), and type coercion with bounded ranges. Sanitize all user content before database storage to prevent injection attacks.",
+    "confidence": 0.9,
+    "strength": "strong",
+    "domain": "security",
+    "participants": ["codex-pragmatist", "claude-synthesizer", "deepseek-v3"]
+  },
+  {
+    "topic": "Authentication Token Management",
+    "conclusion": "Support both API key header auth (X-API-Key) and Bearer tokens. Implement constant-time comparison for token validation. Add token scoping for read-only vs write operations. Consider JWT for stateless auth with configurable expiry. Store hashed tokens only.",
+    "confidence": 0.78,
+    "strength": "medium",
+    "domain": "security",
+    "participants": ["gemini-visionary", "claude-visionary", "codex-engineer"]
+  },
+  {
+    "topic": "Database Connection Pooling Configuration",
+    "conclusion": "Use SQLite connection pool with min=2, max=10 connections. Enable WAL mode for better concurrent read performance. Set busy_timeout=5000ms to handle contention. Use context managers for automatic connection return. Monitor pool exhaustion with metrics.",
+    "confidence": 0.82,
+    "strength": "strong",
+    "domain": "performance",
+    "participants": ["deepseek-v3", "codex-engineer", "claude-synthesizer"]
+  },
+  {
+    "topic": "Response Caching with TTL Strategy",
+    "conclusion": "Implement TTL-based caching for expensive queries: leaderboard (60s), consensus stats (30s), agent metrics (120s). Use LRU cache with max 1000 entries. Add cache invalidation on write operations. Include ETag headers for client-side caching. Monitor hit rates.",
+    "confidence": 0.8,
+    "strength": "strong",
+    "domain": "performance",
+    "participants": ["claude-visionary", "gemini-visionary", "codex-pragmatist"]
+  },
+  {
+    "topic": "Async Batch Processing for Debate Analytics",
+    "conclusion": "Process debate analytics in background tasks using asyncio.gather with concurrency limits (max 5 parallel). Batch database writes (100 records per transaction). Use streaming for large result sets. Add progress callbacks for long-running operations.",
+    "confidence": 0.75,
+    "strength": "medium",
+    "domain": "performance",
+    "participants": ["deepseek-v3", "claude-synthesizer", "codex-engineer"]
+  },
+  {
+    "topic": "Integration Test Strategy for WebSocket Endpoints",
+    "conclusion": "Use pytest-asyncio with aiohttp test client for WebSocket testing. Create fixtures for authenticated connections, mock agent responses, and debate state. Test reconnection handling, message ordering, and backpressure. Isolate tests with unique loop_ids.",
+    "confidence": 0.85,
+    "strength": "strong",
+    "domain": "testing",
+    "participants": ["codex-pragmatist", "claude-synthesizer", "gemini-visionary"]
+  },
+  {
+    "topic": "Mock Agent Framework for Unit Tests",
+    "conclusion": "Create MockAgent class with configurable response delays, failure modes, and streaming behavior. Support deterministic responses via seed parameter. Add fixtures for common scenarios: timeout, rate limit, partial response. Enable replay of recorded agent sessions.",
+    "confidence": 0.8,
+    "strength": "strong",
+    "domain": "testing",
+    "participants": ["codex-engineer", "claude-visionary", "deepseek-v3"]
+  },
+  {
+    "topic": "Property-Based Testing for Consensus Algorithms",
+    "conclusion": "Use Hypothesis library for property-based testing of consensus mechanisms. Properties: idempotency (same input = same output), monotonicity (more agreement = higher confidence), boundedness (0.0-1.0 range). Generate random agent vote combinations.",
+    "confidence": 0.72,
+    "strength": "medium",
+    "domain": "testing",
+    "participants": ["gemini-visionary", "claude-synthesizer", "codex-pragmatist"]
+  },
+  {
+    "topic": "Event-Driven Architecture for Agent Communication",
+    "conclusion": "Use pub/sub pattern with typed events (DebateEvent, AgentEvent, SystemEvent). Implement dead letter queue for failed event processing. Add event sourcing for replay capability. Use asyncio.Queue for backpressure management. Enable event filtering by type and source.",
+    "confidence": 0.82,
+    "strength": "strong",
+    "domain": "design",
+    "participants": ["gemini-visionary", "claude-visionary", "deepseek-v3"]
+  },
+  {
+    "topic": "Plugin Architecture for Custom Agents",
+    "conclusion": "Define Agent protocol with generate(), stream(), and introspect() methods. Support dynamic loading via entry points. Provide base classes for common patterns (API agent, CLI agent). Add sandboxing for untrusted plugins. Include capability discovery mechanism.",
+    "confidence": 0.78,
+    "strength": "medium",
+    "domain": "design",
+    "participants": ["claude-visionary", "codex-engineer", "gemini-visionary"]
+  },
+  {
+    "topic": "State Machine for Debate Lifecycle",
+    "conclusion": "Model debate phases as finite state machine: INIT -> PROPOSING -> CRITIQUING -> VOTING -> CONSENSUS -> COMPLETE. Define valid transitions and guards. Emit events on state changes. Support pause/resume with state serialization. Add timeout transitions.",
+    "confidence": 0.8,
+    "strength": "strong",
+    "domain": "design",
+    "participants": ["deepseek-v3", "claude-synthesizer", "codex-pragmatist"]
+  },
+  {
+    "topic": "Distributed Tracing for Multi-Agent Debates",
+    "conclusion": "Implement correlation IDs (debate_id + round_id + agent_id) propagated through all operations. Use structured logging with JSON format. Add span timing for each phase. Export traces to OpenTelemetry format. Enable sampling for high-volume production.",
+    "confidence": 0.78,
+    "strength": "medium",
+    "domain": "debugging",
+    "participants": ["codex-engineer", "claude-synthesizer", "gemini-visionary"]
+  },
+  {
+    "topic": "Debug Mode with Enhanced Logging",
+    "conclusion": "Add ARAGORA_DEBUG environment variable for verbose logging. Include agent prompts and full responses in debug mode. Log timing breakdowns for each phase. Add memory usage tracking. Enable request/response dumps for API debugging.",
+    "confidence": 0.85,
+    "strength": "strong",
+    "domain": "debugging",
+    "participants": ["claude-visionary", "codex-pragmatist", "deepseek-v3"]
+  },
+  {
+    "topic": "Replay System for Debugging Failed Debates",
+    "conclusion": "Record all debate events to JSONL files with timestamps. Support deterministic replay with mocked agent responses. Add step-through mode for interactive debugging. Include state snapshots at each round. Enable diff comparison between runs.",
+    "confidence": 0.8,
+    "strength": "strong",
+    "domain": "debugging",
+    "participants": ["gemini-visionary", "claude-synthesizer", "codex-engineer"]
+  },
+  {
+    "topic": "API Versioning Strategy",
+    "conclusion": "Use URL path versioning (/api/v1/, /api/v2/) for major breaking changes. Support Accept-Version header for minor versions. Maintain backward compatibility for 2 major versions. Add deprecation warnings in response headers. Document migration guides.",
+    "confidence": 0.75,
+    "strength": "medium",
+    "domain": "api",
+    "participants": ["codex-pragmatist", "claude-visionary", "gemini-visionary"]
+  },
+  {
+    "topic": "Standardized Error Response Format",
+    "conclusion": "Return consistent error JSON: {error: string, code: string, details: object, request_id: string}. Use HTTP status codes correctly (400 validation, 401 auth, 403 forbidden, 404 not found, 429 rate limit, 500 internal). Include stack traces only in debug mode.",
+    "confidence": 0.88,
+    "strength": "strong",
+    "domain": "api",
+    "participants": ["claude-synthesizer", "codex-engineer", "deepseek-v3"]
+  },
+  {
+    "topic": "Database Schema Migration Strategy",
+    "conclusion": "Use numbered migration files (001_initial.sql, 002_add_indexes.sql). Store applied migrations in _migrations table. Support rollback with down migrations. Run migrations on server startup. Add dry-run mode for testing. Lock during migration.",
+    "confidence": 0.82,
+    "strength": "strong",
+    "domain": "database",
+    "participants": ["deepseek-v3", "codex-engineer", "claude-synthesizer"]
+  },
+  {
+    "topic": "Database Index Optimization for Common Queries",
+    "conclusion": "Add composite indexes for frequent query patterns: (agent_name, timestamp) for history, (debate_id, round_num) for replay, (domain, confidence) for search. Use partial indexes for active records. Monitor slow queries and add indexes as needed.",
+    "confidence": 0.85,
+    "strength": "strong",
+    "domain": "database",
+    "participants": ["codex-pragmatist", "gemini-visionary", "claude-visionary"]
   }
 ]

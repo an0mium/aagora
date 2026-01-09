@@ -177,6 +177,11 @@ class PhaseRecovery:
         "commit": int(os.environ.get("NOMIC_COMMIT_TIMEOUT", "180")),        # 3 min - git operations
     }
 
+    # Timeout escalation settings for retries
+    # On each retry, timeout is multiplied by escalation factor (capped at max)
+    TIMEOUT_ESCALATION_FACTOR = float(os.environ.get("NOMIC_TIMEOUT_ESCALATION", "1.3"))
+    TIMEOUT_MAX_MULTIPLIER = float(os.environ.get("NOMIC_TIMEOUT_MAX_MULT", "2.0"))
+
     # Errors that should NOT be retried
     NON_RETRYABLE_ERRORS = (
         KeyboardInterrupt,
@@ -217,6 +222,7 @@ class PhaseRecovery:
         self.log = log_func
         self.phase_health: dict[str, dict] = {}
         self.consecutive_failures: dict[str, int] = {}
+        self.current_attempt: dict[str, int] = {}  # Track current attempt for timeout escalation
 
     def is_retryable(self, error: Exception, phase: str) -> bool:
         """Check if an error should be retried."""
@@ -248,6 +254,32 @@ class PhaseRecovery:
             self.log(f"  [recovery] Rate limit detected, waiting {delay}s")
 
         return min(delay, 300)  # Cap at 5 minutes
+
+    def get_escalated_timeout(self, phase: str, attempt: int = 0) -> float:
+        """
+        Calculate escalated timeout for retry attempts.
+
+        Each retry gets more time (up to max multiplier) to handle
+        slow but eventually successful operations.
+
+        Args:
+            phase: Phase name
+            attempt: Current attempt number (0 = first try)
+
+        Returns:
+            Timeout in seconds
+        """
+        base_timeout = self.PHASE_TIMEOUTS.get(phase, 600)
+        if attempt == 0:
+            return base_timeout
+
+        # Escalate by factor^attempt, capped at max multiplier
+        multiplier = min(
+            self.TIMEOUT_ESCALATION_FACTOR ** attempt,
+            self.TIMEOUT_MAX_MULTIPLIER
+        )
+        escalated = base_timeout * multiplier
+        return int(escalated)
 
     def record_success(self, phase: str) -> None:
         """Record successful phase completion."""
@@ -291,19 +323,31 @@ class PhaseRecovery:
         """
         Run a phase function with automatic retry and recovery.
 
+        Tracks current attempt number for timeout escalation. The attempt
+        count is accessible via self.current_attempt[phase] so that
+        _run_with_phase_timeout can use escalated timeouts.
+
         Returns:
             (success: bool, result: Any or error message)
         """
         config = self.PHASE_RETRY_CONFIG.get(phase, {"max_retries": 1})
         attempts = 0
 
+        # Initialize attempt tracking for this phase
+        self.current_attempt[phase] = 0
+
         while attempts <= config["max_retries"]:
             try:
+                # Update current attempt before execution (for timeout escalation)
+                self.current_attempt[phase] = attempts
                 result = await phase_func(*args, **kwargs)
                 self.record_success(phase)
+                # Clean up attempt tracking on success
+                self.current_attempt.pop(phase, None)
                 return (True, result)
 
             except self.NON_RETRYABLE_ERRORS:
+                self.current_attempt.pop(phase, None)
                 raise  # Don't catch these
 
             except Exception as e:
@@ -315,7 +359,8 @@ class PhaseRecovery:
 
                 if self.is_retryable(e, phase) and attempts <= config["max_retries"]:
                     delay = self.get_retry_delay(e, phase)
-                    self.log(f"  [recovery] Retrying in {delay:.0f}s...")
+                    next_timeout = self.get_escalated_timeout(phase, attempts)
+                    self.log(f"  [recovery] Retrying in {delay:.0f}s with {next_timeout}s timeout...")
                     await asyncio.sleep(delay)
                 else:
                     # Log full traceback for debugging
@@ -324,8 +369,10 @@ class PhaseRecovery:
                     if self.should_trigger_rollback(phase):
                         self.log(f"  [recovery] CRITICAL: Phase '{phase}' requires rollback")
 
+                    self.current_attempt.pop(phase, None)
                     return (False, str(e))
 
+        self.current_attempt.pop(phase, None)
         return (False, "Max retries exceeded")
 
 
@@ -2144,6 +2191,8 @@ class NomicLoop:
         from consuming the entire time budget. Also tracks phase duration
         metrics for analysis and tuning.
 
+        Uses escalated timeouts on retry attempts (1.3x per attempt, up to 2x).
+
         Args:
             phase: Phase name (context, debate, design, implement, verify, commit)
             coro: Async coroutine to execute
@@ -2155,8 +2204,14 @@ class NomicLoop:
         Raises:
             PhaseError: If timeout occurs and no fallback provided
         """
-        timeout = PhaseRecovery.PHASE_TIMEOUTS.get(phase, 600)
-        self._log(f"  [timeout] Phase '{phase}' has {timeout}s budget")
+        # Get current attempt from phase_recovery for timeout escalation
+        attempt = self.phase_recovery.current_attempt.get(phase, 0)
+        timeout = self.phase_recovery.get_escalated_timeout(phase, attempt)
+
+        if attempt > 0:
+            self._log(f"  [timeout] Phase '{phase}' retry {attempt}: escalated to {timeout}s budget")
+        else:
+            self._log(f"  [timeout] Phase '{phase}' has {timeout}s budget")
         self._stream_emit("on_phase_start", phase, timeout)
 
         # Track phase start time for metrics
