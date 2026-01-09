@@ -43,19 +43,43 @@
   );
 }
 
-/* Light theme - clean but still techy */
+/* Light theme - warm, humanistic but still techy */
+/* Inspired by claude.ai's warm cream tones, blended 50% with terminal aesthetic */
 [data-theme="light"] {
-  --bg: #f0f0f0;
-  --surface: #ffffff;
-  --surface-elevated: #f8f8f8;
-  --border: #d0d0d0;
-  --border-glow: #00800040;
-  --text: #1a1a1a;
-  --text-muted: #666666;
-  --acid-green: #00aa00;
-  --acid-cyan: #0088aa;
-  --accent: #00aa00;
-  --accent-glow: rgba(0, 170, 0, 0.2);
+  --bg: #f7f5f2;              /* warm gray-cream */
+  --surface: #fdfcfa;          /* warm off-white */
+  --surface-elevated: #f9f7f4; /* warm elevated surface */
+  --border: #e2ded8;           /* warm border */
+  --border-glow: #2d8a4040;    /* softer green glow */
+  --text: #2c2a28;             /* warm dark brown-black */
+  --text-muted: #736f68;       /* warm muted text */
+
+  /* Softer, warmer accent colors for light mode */
+  --acid-green: #2d8a40;       /* forest green - warmer */
+  --acid-cyan: #1a7a8c;        /* teal - warmer */
+  --acid-magenta: #9c3d7a;     /* dusty rose */
+  --acid-yellow: #c9a227;      /* golden ochre */
+  --matrix-green: #3d9050;
+  --terminal-green: #4a9f5c;
+
+  --accent: #2d8a40;
+  --accent-glow: rgba(45, 138, 64, 0.15);
+  --success: #2d8a40;
+  --warning: #c9a227;
+  --purple: #7c4d9c;           /* muted purple */
+  --gold: #b8942a;             /* antique gold */
+  --crimson: #b84444;          /* muted red */
+  --cyan: #1a7a8c;
+
+  /* Softer terminal effects in light mode */
+  --terminal-glow: 0 0 8px rgba(45, 138, 64, 0.3);
+  --scanline: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.02),
+    rgba(0, 0, 0, 0.02) 1px,
+    transparent 1px,
+    transparent 2px
+  );
 }
 
 * {
@@ -342,4 +366,86 @@ input:focus, textarea:focus {
   border-color: var(--acid-green);
   box-shadow: 0 0 10px var(--accent-glow);
   outline: none;
+}
+
+/* Mobile-first responsive utilities */
+@media (max-width: 640px) {
+  body {
+    font-size: 13px;
+  }
+
+  .card, .card-terminal {
+    padding: 0.75rem;
+  }
+
+  /* Reduce glow effects on mobile for performance */
+  .glow-text, .glow-text-subtle {
+    text-shadow: none;
+  }
+
+  .glow, .glow-border {
+    box-shadow: none;
+  }
+
+  /* Disable CRT effects on mobile for performance */
+  .crt-overlay::before {
+    display: none;
+  }
+}
+
+/* Tablet adjustments */
+@media (min-width: 641px) and (max-width: 1024px) {
+  body {
+    font-size: 13px;
+  }
+}
+
+/* Larger screens - increase max width */
+@media (min-width: 1536px) {
+  .card {
+    padding: 1.25rem;
+  }
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .crt-flicker,
+  .acid-gradient,
+  .matrix-rain,
+  .cursor-blink,
+  .pulse-glow,
+  .typewriter,
+  .boot-line {
+    animation: none;
+  }
+}
+
+/* Light mode specific adjustments */
+[data-theme="light"] {
+  /* Softer shadows in light mode */
+  .glow {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  }
+
+  .glow-border {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Warmer scrollbar in light mode */
+  ::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    opacity: 0.6;
+  }
+
+  /* Selection in light mode */
+  ::selection {
+    background: var(--accent);
+    color: white;
+  }
+
+  /* Softer link hover in light mode */
+  a:hover {
+    text-shadow: none;
+    opacity: 0.8;
+  }
 }

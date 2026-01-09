@@ -140,7 +140,7 @@ export function Scanlines({ opacity = 0.03 }: { opacity?: number }) {
   );
 }
 
-// CRT corner vignette effect
+// CRT corner vignette effect (reduced intensity)
 export function CRTVignette() {
   return (
     <div
@@ -150,7 +150,7 @@ export function CRTVignette() {
           ellipse at center,
           transparent 0%,
           transparent 60%,
-          rgba(0, 0, 0, 0.3) 100%
+          rgba(0, 0, 0, 0.15) 100%
         )`,
       }}
     />

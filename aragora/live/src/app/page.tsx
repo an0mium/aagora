@@ -323,94 +323,103 @@ export default function Home() {
           />
         )}
 
-        {/* Header */}
+        {/* Header - Responsive */}
         <header className="border-b border-acid-green/30 bg-surface/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-            {/* ASCII Logo */}
-            <AsciiBannerCompact connected={connected} />
+          <div className="max-w-screen-2xl mx-auto px-3 sm:px-4 lg:px-6 py-2 sm:py-3">
+            <div className="flex items-center justify-between gap-2">
+              {/* ASCII Logo */}
+              <AsciiBannerCompact connected={connected} />
 
-            <div className="flex items-center gap-3">
-              {/* View Mode Toggle */}
-              <div className="flex items-center gap-0.5 bg-bg border border-acid-green/30 p-0.5 font-mono text-xs">
-                <button
-                  onClick={() => setViewMode('tabs')}
-                  className={`px-2 py-1 transition-colors ${
-                    viewMode === 'tabs'
-                      ? 'bg-acid-green text-bg'
-                      : 'text-text-muted hover:text-acid-green'
-                  }`}
-                >
-                  [TABS]
-                </button>
-                <button
-                  onClick={() => setViewMode('stream')}
-                  className={`px-2 py-1 transition-colors ${
-                    viewMode === 'stream'
-                      ? 'bg-acid-green text-bg'
-                      : 'text-text-muted hover:text-acid-green'
-                  }`}
-                >
-                  [STREAM]
-                </button>
-              </div>
-
-              {/* Deep Audit Toggle */}
-              <DeepAuditToggle
-                isActive={viewMode === 'deep-audit'}
-                onToggle={() => setViewMode(viewMode === 'deep-audit' ? 'tabs' : 'deep-audit')}
-              />
-
-              {/* Compare Button */}
-              <CompareButton onClick={() => setShowCompare(true)} />
-
-              {/* Status Pill */}
-              <StatusPill connected={connected} phase={currentPhase} />
-
-              {/* Backend Selector */}
-              <BackendSelector compact />
-
-              {/* Theme Toggle */}
-              <ThemeToggle />
-
-              {/* Loop Selector - Only show if multiple loops */}
-              {activeLoops.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-text-muted text-xs font-mono">{activeLoops.length} LOOPS</span>
-                  <select
-                    value={selectedLoopId || ''}
-                    onChange={(e) => selectLoop(e.target.value)}
-                    className="bg-bg border border-acid-green/30 px-2 py-1 text-xs font-mono text-acid-green"
+              {/* Mobile: Minimal controls */}
+              <div className="flex items-center gap-1 sm:gap-2 lg:gap-3">
+                {/* View Mode Toggle - Hidden on mobile */}
+                <div className="hidden sm:flex items-center gap-0.5 bg-bg border border-acid-green/30 p-0.5 font-mono text-xs">
+                  <button
+                    onClick={() => setViewMode('tabs')}
+                    className={`px-2 py-1 transition-colors ${
+                      viewMode === 'tabs'
+                        ? 'bg-acid-green text-bg'
+                        : 'text-text-muted hover:text-acid-green'
+                    }`}
                   >
-                    {activeLoops.map((loop) => (
-                      <option key={loop.loop_id} value={loop.loop_id}>
-                        {loop.name} (C{loop.cycle}, {formatRelativeTime(loop.started_at)})
-                      </option>
-                    ))}
-                  </select>
+                    [TABS]
+                  </button>
+                  <button
+                    onClick={() => setViewMode('stream')}
+                    className={`px-2 py-1 transition-colors ${
+                      viewMode === 'stream'
+                        ? 'bg-acid-green text-bg'
+                        : 'text-text-muted hover:text-acid-green'
+                    }`}
+                  >
+                    [STREAM]
+                  </button>
                 </div>
-              )}
-              {/* Single loop indicator */}
-              {activeLoops.length === 1 && (
-                <span className="text-acid-cyan text-xs font-mono">
-                  {activeLoops[0].name}
-                </span>
-              )}
+
+                {/* Deep Audit Toggle - Hidden on small screens */}
+                <div className="hidden md:block">
+                  <DeepAuditToggle
+                    isActive={viewMode === 'deep-audit'}
+                    onToggle={() => setViewMode(viewMode === 'deep-audit' ? 'tabs' : 'deep-audit')}
+                  />
+                </div>
+
+                {/* Compare Button - Hidden on mobile */}
+                <div className="hidden lg:block">
+                  <CompareButton onClick={() => setShowCompare(true)} />
+                </div>
+
+                {/* Status Pill - Always visible */}
+                <StatusPill connected={connected} phase={currentPhase} />
+
+                {/* Backend Selector - Hidden on mobile */}
+                <div className="hidden sm:block">
+                  <BackendSelector compact />
+                </div>
+
+                {/* Theme Toggle - Always visible */}
+                <ThemeToggle />
+
+                {/* Loop Selector - Only show if multiple loops, hidden on mobile */}
+                {activeLoops.length > 1 && (
+                  <div className="hidden md:flex items-center gap-2">
+                    <span className="text-text-muted text-xs font-mono">{activeLoops.length} LOOPS</span>
+                    <select
+                      value={selectedLoopId || ''}
+                      onChange={(e) => selectLoop(e.target.value)}
+                      className="bg-bg border border-acid-green/30 px-2 py-1 text-xs font-mono text-acid-green"
+                    >
+                      {activeLoops.map((loop) => (
+                        <option key={loop.loop_id} value={loop.loop_id}>
+                          {loop.name} (C{loop.cycle}, {formatRelativeTime(loop.started_at)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {/* Single loop indicator - Hidden on mobile */}
+                {activeLoops.length === 1 && (
+                  <span className="hidden sm:inline text-acid-cyan text-xs font-mono">
+                    {activeLoops[0].name}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </header>
 
-      {/* Main Content */}
-      <div className="container mx-auto px-4 py-6 space-y-6">
+      {/* Main Content - Wider container */}
+      <div className="max-w-screen-2xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
         {/* Error Banner */}
         {error && (
-          <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-warning text-xl">⚠️</span>
+          <div className="bg-warning/10 border border-warning/30 p-3 sm:p-4 flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="text-warning">⚠</span>
               <span className="text-warning">{error}</span>
             </div>
             <button
               onClick={() => setError(null)}
-              className="text-warning hover:text-warning/80"
+              className="text-warning hover:text-warning/80 px-2"
             >
               ✕
             </button>
@@ -431,10 +440,10 @@ export default function Home() {
         {/* Verdict Card (when available) */}
         {hasVerdict && <VerdictCard events={events} />}
 
-        {/* Main Panels */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Agent Activity - Switch based on view mode */}
-          <div className="lg:col-span-2 min-h-[500px]">
+        {/* Main Panels - Responsive grid with wider main panel */}
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 lg:gap-6">
+          {/* Agent Activity - Takes more space on wider screens */}
+          <div className="xl:col-span-3 min-h-[400px] sm:min-h-[500px]">
             {viewMode === 'deep-audit' ? (
               <DeepAuditView
                 events={events}
@@ -451,7 +460,7 @@ export default function Home() {
           </div>
 
           {/* Side Panel - Organized into Collapsible Sections */}
-          <div className="lg:col-span-1 space-y-2">
+          <div className="xl:col-span-1 space-y-2">
             {/* Section 1: Core Debate - expanded by default */}
             <CollapsibleSection id="core-debate" title="CORE DEBATE" defaultOpen={true}>
               <PanelErrorBoundary panelName="Document Upload">
@@ -570,35 +579,21 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Footer */}
-        <footer className="text-center text-xs font-mono py-8 border-t border-acid-green/20 mt-8">
-          <div className="text-acid-green/50 mb-2">
-            {'═'.repeat(40)}
-          </div>
+        {/* Footer - Simplified */}
+        <footer className="text-center text-xs font-mono py-6 sm:py-8 border-t border-border mt-6 sm:mt-8">
           <p className="text-text-muted">
-            {'>'} ARAGORA NOMIC LOOP // REAL-TIME MONITORING
+            ARAGORA // MULTI-AGENT DEBATE
           </p>
-          <p className="text-acid-cyan mt-2">
+          <p className="text-accent mt-2">
             <a
               href="https://aragora.ai"
-              className="hover:text-acid-green transition-colors"
+              className="hover:opacity-80 transition-opacity"
               target="_blank"
               rel="noopener noreferrer"
             >
-              [ ARAGORA.AI ]
+              aragora.ai
             </a>
           </p>
-          <div className="mt-4 text-text-muted/50 text-[10px] max-w-2xl mx-auto">
-            Built on{' '}
-            <a href="https://github.com/AI-Counsel/ai-counsel" className="text-acid-green/50 hover:text-acid-green" target="_blank" rel="noopener noreferrer">ai-counsel</a>{' | '}
-            <a href="https://github.com/Tsinghua-MARS-Lab/DebateLLM" className="text-acid-green/50 hover:text-acid-green" target="_blank" rel="noopener noreferrer">DebateLLM</a>{' | '}
-            <a href="https://github.com/camel-ai/camel" className="text-acid-green/50 hover:text-acid-green" target="_blank" rel="noopener noreferrer">CAMEL-AI</a>{' | '}
-            <a href="https://github.com/joonspk-research/generative_agents" className="text-acid-green/50 hover:text-acid-green" target="_blank" rel="noopener noreferrer">Generative Agents</a>{' | '}
-            <a href="https://heavy3.ai" className="text-acid-green/50 hover:text-acid-green" target="_blank" rel="noopener noreferrer">Heavy3.ai</a>
-          </div>
-          <div className="text-acid-green/50 mt-4">
-            {'═'.repeat(40)}
-          </div>
         </footer>
       </div>
 
