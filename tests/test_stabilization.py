@@ -36,7 +36,7 @@ def test_diagnostic_script():
     """Test diagnostic script imports and runs."""
     from scripts.verify_system_health import diagnose_system, prioritize_fixes
     diag = diagnose_system()
-    assert 'agent_failures' in diag
+    assert 'agent_health' in diag
     assert 'loop_id_routing' in diag
     priorities = prioritize_fixes(diag)
     assert isinstance(priorities, list)
