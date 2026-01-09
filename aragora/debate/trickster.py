@@ -1,0 +1,425 @@
+"""
+Evidence-Powered Trickster - Hollow Consensus Detection & Challenge System.
+
+This module implements the "trickster" pattern for maintaining intellectual rigor
+in multi-agent debates. It detects when agents are reaching consensus without
+substantive evidence backing, and injects targeted challenges to restore rigor.
+
+The system operates in three phases:
+1. Monitor - Continuously assess evidence quality during debate rounds
+2. Detect - Identify hollow consensus (high convergence, low evidence quality)
+3. Intervene - Inject targeted challenges based on specific quality gaps
+
+Integration patterns:
+- Works alongside wisdom_injector.py (similar intervention architecture)
+- Uses convergence.py for semantic similarity detection
+- Leverages roles.py QUALITY_CHALLENGER role for interventions
+- Can trigger breakpoints.py HOLLOW_CONSENSUS events
+
+Based on the Aragora nomic loop debate proposal for "Evidence-Powered Trickster"
+that identified evidence quality and intervention timing as dual aspects of
+maintaining intellectual rigor in AI debates.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Optional
+
+from aragora.debate.evidence_quality import (
+    EvidenceQualityAnalyzer,
+    EvidenceQualityScore,
+    HollowConsensusAlert,
+    HollowConsensusDetector,
+)
+from aragora.debate.roles import CognitiveRole, RoleAssignment, ROLE_PROMPTS
+
+logger = logging.getLogger(__name__)
+
+
+class InterventionType(Enum):
+    """Types of trickster interventions."""
+
+    CHALLENGE_PROMPT = "challenge_prompt"  # Inject challenge into next round
+    QUALITY_ROLE = "quality_role"  # Assign QUALITY_CHALLENGER role
+    EXTENDED_ROUND = "extended_round"  # Add extra round for evidence
+    BREAKPOINT = "breakpoint"  # Trigger human review breakpoint
+
+
+@dataclass
+class TricksterIntervention:
+    """A trickster intervention to restore debate rigor."""
+
+    intervention_type: InterventionType
+    round_num: int
+    target_agents: list[str]
+    challenge_text: str
+    evidence_gaps: dict[str, list[str]]  # agent -> list of gaps
+    priority: float  # 0-1, higher = more urgent
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TricksterConfig:
+    """Configuration for the trickster system."""
+
+    # Thresholds
+    min_quality_threshold: float = 0.4  # Minimum acceptable evidence quality
+    hollow_detection_threshold: float = 0.3  # Alert severity to trigger
+    intervention_cooldown_rounds: int = 2  # Rounds between interventions
+
+    # Features
+    enable_challenge_prompts: bool = True
+    enable_role_assignment: bool = True
+    enable_extended_rounds: bool = False
+    enable_breakpoints: bool = True
+
+    # Limits
+    max_challenges_per_round: int = 3
+    max_interventions_total: int = 5
+
+
+@dataclass
+class TricksterState:
+    """Internal state tracking for the trickster."""
+
+    interventions: list[TricksterIntervention] = field(default_factory=list)
+    quality_history: list[dict[str, EvidenceQualityScore]] = field(
+        default_factory=list
+    )
+    last_intervention_round: int = -10
+    hollow_alerts: list[HollowConsensusAlert] = field(default_factory=list)
+    total_interventions: int = 0
+
+
+class EvidencePoweredTrickster:
+    """
+    The Evidence-Powered Trickster - maintains intellectual rigor in debates.
+
+    This class monitors evidence quality during debates and intervenes when
+    it detects hollow consensus forming. It operates passively until triggered,
+    then injects targeted challenges based on specific evidence gaps.
+
+    Usage:
+        trickster = EvidencePoweredTrickster()
+
+        # In debate round loop:
+        intervention = trickster.check_and_intervene(
+            responses={"agent1": "...", "agent2": "..."},
+            convergence_similarity=0.85,
+            round_num=2,
+        )
+
+        if intervention:
+            # Apply intervention (inject prompt, assign role, etc.)
+            apply_intervention(intervention)
+    """
+
+    def __init__(
+        self,
+        config: Optional[TricksterConfig] = None,
+        on_intervention: Optional[Callable[[TricksterIntervention], None]] = None,
+        on_alert: Optional[Callable[[HollowConsensusAlert], None]] = None,
+    ):
+        """
+        Initialize the trickster.
+
+        Args:
+            config: Configuration options
+            on_intervention: Callback when intervention is triggered
+            on_alert: Callback when hollow consensus is detected
+        """
+        self.config = config or TricksterConfig()
+        self.on_intervention = on_intervention
+        self.on_alert = on_alert
+
+        self._state = TricksterState()
+        self._analyzer = EvidenceQualityAnalyzer()
+        self._detector = HollowConsensusDetector(
+            min_quality_threshold=self.config.min_quality_threshold,
+        )
+
+    def check_and_intervene(
+        self,
+        responses: dict[str, str],
+        convergence_similarity: float,
+        round_num: int,
+    ) -> Optional[TricksterIntervention]:
+        """
+        Check evidence quality and potentially intervene.
+
+        This is the main entry point, called after each debate round.
+
+        Args:
+            responses: Agent name -> response text
+            convergence_similarity: Semantic similarity from ConvergenceDetector
+            round_num: Current round number
+
+        Returns:
+            TricksterIntervention if intervention needed, None otherwise
+        """
+        # Analyze evidence quality
+        quality_scores = self._analyzer.analyze_batch(responses, round_num)
+        self._state.quality_history.append(quality_scores)
+
+        # Check for hollow consensus
+        alert = self._detector.check(responses, convergence_similarity, round_num)
+        self._state.hollow_alerts.append(alert)
+
+        if self.on_alert and alert.detected:
+            self.on_alert(alert)
+
+        # Decide on intervention
+        if not alert.detected:
+            logger.debug(f"trickster_pass round={round_num} reason=quality_acceptable")
+            return None
+
+        if alert.severity < self.config.hollow_detection_threshold:
+            logger.debug(
+                f"trickster_pass round={round_num} "
+                f"reason=below_threshold severity={alert.severity:.2f}"
+            )
+            return None
+
+        # Check cooldown
+        rounds_since = round_num - self._state.last_intervention_round
+        if rounds_since < self.config.intervention_cooldown_rounds:
+            logger.debug(
+                f"trickster_cooldown round={round_num} "
+                f"rounds_since={rounds_since}"
+            )
+            return None
+
+        # Check max interventions
+        if self._state.total_interventions >= self.config.max_interventions_total:
+            logger.debug(
+                f"trickster_limit round={round_num} "
+                f"total={self._state.total_interventions}"
+            )
+            return None
+
+        # Create intervention
+        intervention = self._create_intervention(
+            alert, quality_scores, round_num
+        )
+
+        # Track state
+        self._state.interventions.append(intervention)
+        self._state.last_intervention_round = round_num
+        self._state.total_interventions += 1
+
+        logger.info(
+            f"trickster_intervene round={round_num} "
+            f"type={intervention.intervention_type.value} "
+            f"targets={intervention.target_agents}"
+        )
+
+        if self.on_intervention:
+            self.on_intervention(intervention)
+
+        return intervention
+
+    def _create_intervention(
+        self,
+        alert: HollowConsensusAlert,
+        quality_scores: dict[str, EvidenceQualityScore],
+        round_num: int,
+    ) -> TricksterIntervention:
+        """Create an appropriate intervention based on the alert."""
+        # Identify lowest quality agents
+        sorted_agents = sorted(
+            alert.agent_scores.items(),
+            key=lambda x: x[1],
+        )
+        target_agents = [
+            agent for agent, score in sorted_agents
+            if score < self.config.min_quality_threshold
+        ][:self.config.max_challenges_per_round]
+
+        if not target_agents:
+            target_agents = [sorted_agents[0][0]] if sorted_agents else []
+
+        # Identify evidence gaps per agent
+        evidence_gaps: dict[str, list[str]] = {}
+        for agent, score in quality_scores.items():
+            gaps = []
+            if score.citation_density < 0.2:
+                gaps.append("citations")
+            if score.specificity_score < 0.3:
+                gaps.append("specificity")
+            if score.logical_chain_score < 0.3:
+                gaps.append("reasoning")
+            if score.evidence_diversity < 0.2:
+                gaps.append("evidence_diversity")
+            if gaps:
+                evidence_gaps[agent] = gaps
+
+        # Build challenge text
+        challenge_text = self._build_challenge(
+            alert, evidence_gaps, target_agents
+        )
+
+        # Determine intervention type
+        intervention_type = self._select_intervention_type(alert, round_num)
+
+        return TricksterIntervention(
+            intervention_type=intervention_type,
+            round_num=round_num,
+            target_agents=target_agents,
+            challenge_text=challenge_text,
+            evidence_gaps=evidence_gaps,
+            priority=alert.severity,
+            metadata={
+                "avg_quality": alert.avg_quality,
+                "min_quality": alert.min_quality,
+                "quality_variance": alert.quality_variance,
+                "reason": alert.reason,
+            },
+        )
+
+    def _build_challenge(
+        self,
+        alert: HollowConsensusAlert,
+        evidence_gaps: dict[str, list[str]],
+        target_agents: list[str],
+    ) -> str:
+        """Build the challenge prompt text."""
+        lines = [
+            "## QUALITY CHALLENGE - Evidence Review Required",
+            "",
+            "The current discussion shows signs of **hollow consensus** - "
+            "positions are converging without sufficient evidence backing.",
+            "",
+        ]
+
+        # Use recommended challenges from detector
+        if alert.recommended_challenges:
+            lines.append("### Specific Challenges:")
+            for challenge in alert.recommended_challenges:
+                lines.append(f"- {challenge}")
+            lines.append("")
+
+        # Add agent-specific gaps
+        if evidence_gaps:
+            lines.append("### Evidence Gaps by Agent:")
+            for agent, gaps in evidence_gaps.items():
+                gaps_str = ", ".join(gaps)
+                lines.append(f"- **{agent}**: Missing {gaps_str}")
+            lines.append("")
+
+        lines.extend([
+            "### Before Proceeding:",
+            "1. Provide specific citations or data sources",
+            "2. Replace vague language with concrete numbers",
+            "3. Give real examples that demonstrate your points",
+            "4. Explain the logical chain from premise to conclusion",
+            "",
+            "*This challenge was triggered by the Evidence-Powered Trickster system.*",
+        ])
+
+        return "\n".join(lines)
+
+    def _select_intervention_type(
+        self,
+        alert: HollowConsensusAlert,
+        round_num: int,
+    ) -> InterventionType:
+        """Select the most appropriate intervention type."""
+        # High severity -> breakpoint if enabled
+        if alert.severity > 0.8 and self.config.enable_breakpoints:
+            return InterventionType.BREAKPOINT
+
+        # First intervention -> role assignment if enabled
+        if (
+            self._state.total_interventions == 0
+            and self.config.enable_role_assignment
+        ):
+            return InterventionType.QUALITY_ROLE
+
+        # Default -> challenge prompt
+        if self.config.enable_challenge_prompts:
+            return InterventionType.CHALLENGE_PROMPT
+
+        # Fallback
+        return InterventionType.CHALLENGE_PROMPT
+
+    def get_quality_challenger_assignment(
+        self,
+        agent_name: str,
+        round_num: int,
+    ) -> RoleAssignment:
+        """
+        Get a QUALITY_CHALLENGER role assignment for an agent.
+
+        Use this when intervention_type is QUALITY_ROLE.
+        """
+        return RoleAssignment(
+            agent_name=agent_name,
+            role=CognitiveRole.QUALITY_CHALLENGER,
+            round_num=round_num,
+            role_prompt=ROLE_PROMPTS[CognitiveRole.QUALITY_CHALLENGER],
+        )
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get trickster statistics for debugging/monitoring."""
+        avg_quality_per_round = []
+        for round_scores in self._state.quality_history:
+            if round_scores:
+                avg = sum(s.overall_quality for s in round_scores.values()) / len(
+                    round_scores
+                )
+                avg_quality_per_round.append(avg)
+
+        return {
+            "total_interventions": self._state.total_interventions,
+            "hollow_alerts_detected": sum(
+                1 for a in self._state.hollow_alerts if a.detected
+            ),
+            "avg_quality_per_round": avg_quality_per_round,
+            "interventions": [
+                {
+                    "round": i.round_num,
+                    "type": i.intervention_type.value,
+                    "targets": i.target_agents,
+                    "priority": i.priority,
+                }
+                for i in self._state.interventions
+            ],
+        }
+
+    def reset(self) -> None:
+        """Reset trickster state for a new debate."""
+        self._state = TricksterState()
+
+
+def create_trickster_for_debate(
+    min_quality: float = 0.4,
+    enable_breakpoints: bool = True,
+) -> EvidencePoweredTrickster:
+    """
+    Factory function to create a trickster for a debate.
+
+    Args:
+        min_quality: Minimum acceptable evidence quality (0-1)
+        enable_breakpoints: Whether to allow human review triggers
+
+    Returns:
+        Configured EvidencePoweredTrickster instance
+    """
+    config = TricksterConfig(
+        min_quality_threshold=min_quality,
+        enable_breakpoints=enable_breakpoints,
+    )
+    return EvidencePoweredTrickster(config=config)
+
+
+__all__ = [
+    "InterventionType",
+    "TricksterIntervention",
+    "TricksterConfig",
+    "TricksterState",
+    "EvidencePoweredTrickster",
+    "create_trickster_for_debate",
+]

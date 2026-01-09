@@ -29,6 +29,7 @@ class BreakpointTrigger(Enum):
     EXPLICIT_APPEAL = "explicit_appeal"  # Agent explicitly requests human input
     ROUND_LIMIT = "round_limit"  # Maximum rounds reached without consensus
     SAFETY_CONCERN = "safety_concern"  # Potential safety issue detected
+    HOLLOW_CONSENSUS = "hollow_consensus"  # Evidence-Powered Trickster: agreement without substance
     CUSTOM = "custom"  # Custom trigger condition
 
 
