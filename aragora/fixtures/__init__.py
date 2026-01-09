@@ -70,10 +70,11 @@ def load_demo_consensus(consensus_memory: Optional[object] = None) -> int:
                 # Map strength string to enum
                 strength_map = {
                     "strong": ConsensusStrength.STRONG,
-                    "medium": ConsensusStrength.MEDIUM,
+                    "medium": ConsensusStrength.MODERATE,  # JSON uses "medium", enum uses MODERATE
+                    "moderate": ConsensusStrength.MODERATE,
                     "weak": ConsensusStrength.WEAK,
                 }
-                strength = strength_map.get(demo.get("strength", "medium"), ConsensusStrength.MEDIUM)
+                strength = strength_map.get(demo.get("strength", "medium"), ConsensusStrength.MODERATE)
 
                 logger.debug(f"Seeding demo {i+1}: {demo['topic'][:50]}...")
                 consensus_memory.store_consensus(
