@@ -1,17 +1,10 @@
-"""Storage utilities for Aragora."""
+"""
+Aragora Storage Module.
 
-from aragora.storage.base_database import BaseDatabase
-from aragora.storage.schema import (
-    DatabaseManager,
-    Migration,
-    SchemaManager,
-    safe_add_column,
-)
+Provides persistent storage backends for users, organizations, and usage tracking.
+"""
 
-__all__ = [
-    "BaseDatabase",
-    "DatabaseManager",
-    "Migration",
-    "SchemaManager",
-    "safe_add_column",
-]
+from .base_database import BaseDatabase
+from .user_store import UserStore
+
+__all__ = ["BaseDatabase", "UserStore"]
