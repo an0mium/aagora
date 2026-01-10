@@ -33,6 +33,7 @@ from aragora.debate.roles import (
     RoleRotationConfig,
     RoleRotator,
 )
+from aragora.debate.role_matcher import RoleMatcher, RoleMatchingConfig
 from aragora.debate.topology import TopologySelector
 from aragora.debate.judge_selector import JudgeSelector, JudgeScoringMixin
 from aragora.debate.sanitization import OutputSanitizer

@@ -233,10 +233,11 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     # Check database
     print("\n💾 Databases:")
-    from aragora.config import DB_PATH, DB_INSIGHTS_PATH
+    from aragora.config import DB_MEMORY_PATH, DB_INSIGHTS_PATH, DB_ELO_PATH
     db_paths = [
-        (DB_PATH, "Critique store"),
+        (DB_MEMORY_PATH, "Memory store"),
         (DB_INSIGHTS_PATH, "Insights store"),
+        (DB_ELO_PATH, "ELO rankings"),
     ]
     for db_path, name in db_paths:
         if Path(db_path).exists():

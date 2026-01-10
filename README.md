@@ -360,13 +360,14 @@ Aragora has evolved through 21 phases of self-improvement, with the nomic loop d
 
 ## Roadmap
 
-- [x] **Phase 1-20**: Core framework with 56 integrated features ✓
+- [x] **Phase 1-21**: Core framework with 65+ integrated features ✓
 - [x] **Position Flip Detection**: Track agent position reversals and consistency scores ✓
 - [x] **Hybrid Model Architecture**: Gemini=Designer, Claude=Implementer, Codex=Verifier ✓
 - [x] **Security Hardening**: API key header auth, rate limiting, input validation ✓
-- [ ] **Phase 12**: LeanBackend for Lean 4 theorem proving
-- [ ] **Phase 13**: Emergent society simulation (ala Project Sid)
-- [ ] **Phase 14**: Multi-codebase coordination
+- [x] **Feature Integration**: PerformanceMonitor, CalibrationTracker, Airlock, Telemetry ✓
+- [ ] **LeanBackend**: Lean 4 theorem proving integration
+- [ ] **Emergent Society**: Society simulation (ala Project Sid)
+- [ ] **Multi-Codebase**: Cross-repository coordination
 
 ## Deployment
 
