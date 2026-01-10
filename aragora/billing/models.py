@@ -1,0 +1,457 @@
+"""
+Billing Data Models.
+
+Core data structures for user management, organizations, and subscriptions.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import secrets
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Optional
+from uuid import uuid4
+
+
+class SubscriptionTier(Enum):
+    """Available subscription tiers."""
+
+    FREE = "free"
+    STARTER = "starter"
+    PROFESSIONAL = "professional"
+    ENTERPRISE = "enterprise"
+
+
+@dataclass
+class TierLimits:
+    """Limits for a subscription tier."""
+
+    debates_per_month: int
+    users_per_org: int
+    api_access: bool
+    all_agents: bool
+    custom_agents: bool
+    sso_enabled: bool
+    audit_logs: bool
+    priority_support: bool
+    price_monthly_cents: int  # Price in cents
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "debates_per_month": self.debates_per_month,
+            "users_per_org": self.users_per_org,
+            "api_access": self.api_access,
+            "all_agents": self.all_agents,
+            "custom_agents": self.custom_agents,
+            "sso_enabled": self.sso_enabled,
+            "audit_logs": self.audit_logs,
+            "priority_support": self.priority_support,
+            "price_monthly_cents": self.price_monthly_cents,
+        }
+
+
+# Tier configurations
+TIER_LIMITS: dict[SubscriptionTier, TierLimits] = {
+    SubscriptionTier.FREE: TierLimits(
+        debates_per_month=10,
+        users_per_org=1,
+        api_access=False,
+        all_agents=False,
+        custom_agents=False,
+        sso_enabled=False,
+        audit_logs=False,
+        priority_support=False,
+        price_monthly_cents=0,
+    ),
+    SubscriptionTier.STARTER: TierLimits(
+        debates_per_month=50,
+        users_per_org=2,
+        api_access=False,
+        all_agents=False,
+        custom_agents=False,
+        sso_enabled=False,
+        audit_logs=False,
+        priority_support=False,
+        price_monthly_cents=9900,  # $99
+    ),
+    SubscriptionTier.PROFESSIONAL: TierLimits(
+        debates_per_month=200,
+        users_per_org=10,
+        api_access=True,
+        all_agents=True,
+        custom_agents=False,
+        sso_enabled=False,
+        audit_logs=True,
+        priority_support=False,
+        price_monthly_cents=29900,  # $299
+    ),
+    SubscriptionTier.ENTERPRISE: TierLimits(
+        debates_per_month=999999,  # Unlimited
+        users_per_org=999999,
+        api_access=True,
+        all_agents=True,
+        custom_agents=True,
+        sso_enabled=True,
+        audit_logs=True,
+        priority_support=True,
+        price_monthly_cents=99900,  # $999 base
+    ),
+}
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
+    """
+    Hash a password with salt using SHA-256.
+
+    Args:
+        password: Plain text password
+        salt: Optional salt (generated if not provided)
+
+    Returns:
+        Tuple of (hash, salt)
+    """
+    if salt is None:
+        salt = secrets.token_hex(32)
+    hash_input = f"{salt}{password}".encode("utf-8")
+    password_hash = hashlib.sha256(hash_input).hexdigest()
+    return password_hash, salt
+
+
+def verify_password(password: str, password_hash: str, salt: str) -> bool:
+    """
+    Verify a password against a hash.
+
+    Args:
+        password: Plain text password to verify
+        password_hash: Stored hash
+        salt: Stored salt
+
+    Returns:
+        True if password matches
+    """
+    computed_hash, _ = hash_password(password, salt)
+    return secrets.compare_digest(computed_hash, password_hash)
+
+
+@dataclass
+class User:
+    """A user account."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    email: str = ""
+    password_hash: str = ""
+    password_salt: str = ""
+    name: str = ""
+    org_id: Optional[str] = None
+    role: str = "member"  # owner, admin, member
+    is_active: bool = True
+    email_verified: bool = False
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+    last_login_at: Optional[datetime] = None
+
+    # API access
+    api_key: Optional[str] = None
+    api_key_created_at: Optional[datetime] = None
+
+    def set_password(self, password: str) -> None:
+        """Set user password."""
+        self.password_hash, self.password_salt = hash_password(password)
+        self.updated_at = datetime.utcnow()
+
+    def verify_password(self, password: str) -> bool:
+        """Verify user password."""
+        return verify_password(password, self.password_hash, self.password_salt)
+
+    def generate_api_key(self) -> str:
+        """Generate a new API key for this user."""
+        self.api_key = f"ara_{secrets.token_urlsafe(32)}"
+        self.api_key_created_at = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
+        return self.api_key
+
+    def revoke_api_key(self) -> None:
+        """Revoke the user's API key."""
+        self.api_key = None
+        self.api_key_created_at = None
+        self.updated_at = datetime.utcnow()
+
+    def to_dict(self, include_sensitive: bool = False) -> dict[str, Any]:
+        """Convert to dictionary."""
+        data = {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "org_id": self.org_id,
+            "role": self.role,
+            "is_active": self.is_active,
+            "email_verified": self.email_verified,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
+            "has_api_key": self.api_key is not None,
+        }
+        if include_sensitive:
+            data["api_key"] = self.api_key
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "User":
+        """Create from dictionary."""
+        user = cls(
+            id=data.get("id", str(uuid4())),
+            email=data.get("email", ""),
+            password_hash=data.get("password_hash", ""),
+            password_salt=data.get("password_salt", ""),
+            name=data.get("name", ""),
+            org_id=data.get("org_id"),
+            role=data.get("role", "member"),
+            is_active=data.get("is_active", True),
+            email_verified=data.get("email_verified", False),
+            api_key=data.get("api_key"),
+        )
+        if "created_at" in data and data["created_at"]:
+            if isinstance(data["created_at"], str):
+                user.created_at = datetime.fromisoformat(data["created_at"])
+            else:
+                user.created_at = data["created_at"]
+        if "updated_at" in data and data["updated_at"]:
+            if isinstance(data["updated_at"], str):
+                user.updated_at = datetime.fromisoformat(data["updated_at"])
+            else:
+                user.updated_at = data["updated_at"]
+        if "last_login_at" in data and data["last_login_at"]:
+            if isinstance(data["last_login_at"], str):
+                user.last_login_at = datetime.fromisoformat(data["last_login_at"])
+            else:
+                user.last_login_at = data["last_login_at"]
+        if "api_key_created_at" in data and data["api_key_created_at"]:
+            if isinstance(data["api_key_created_at"], str):
+                user.api_key_created_at = datetime.fromisoformat(data["api_key_created_at"])
+            else:
+                user.api_key_created_at = data["api_key_created_at"]
+        return user
+
+
+@dataclass
+class Organization:
+    """An organization (team/company)."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    name: str = ""
+    slug: str = ""  # URL-friendly name
+    tier: SubscriptionTier = SubscriptionTier.FREE
+    owner_id: Optional[str] = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    # Billing
+    stripe_customer_id: Optional[str] = None
+    stripe_subscription_id: Optional[str] = None
+
+    # Usage tracking (reset monthly)
+    debates_used_this_month: int = 0
+    billing_cycle_start: datetime = field(default_factory=datetime.utcnow)
+
+    # Settings
+    settings: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def limits(self) -> TierLimits:
+        """Get limits for this organization's tier."""
+        return TIER_LIMITS[self.tier]
+
+    @property
+    def debates_remaining(self) -> int:
+        """Get remaining debates this month."""
+        return max(0, self.limits.debates_per_month - self.debates_used_this_month)
+
+    @property
+    def is_at_limit(self) -> bool:
+        """Check if organization has reached debate limit."""
+        return self.debates_used_this_month >= self.limits.debates_per_month
+
+    def increment_debates(self, count: int = 1) -> bool:
+        """
+        Increment debate count.
+
+        Returns:
+            True if successful, False if at limit
+        """
+        if self.is_at_limit:
+            return False
+        self.debates_used_this_month += count
+        self.updated_at = datetime.utcnow()
+        return True
+
+    def reset_monthly_usage(self) -> None:
+        """Reset monthly usage counters."""
+        self.debates_used_this_month = 0
+        self.billing_cycle_start = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "slug": self.slug,
+            "tier": self.tier.value,
+            "owner_id": self.owner_id,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "stripe_customer_id": self.stripe_customer_id,
+            "stripe_subscription_id": self.stripe_subscription_id,
+            "debates_used_this_month": self.debates_used_this_month,
+            "billing_cycle_start": self.billing_cycle_start.isoformat(),
+            "debates_remaining": self.debates_remaining,
+            "is_at_limit": self.is_at_limit,
+            "limits": self.limits.to_dict(),
+            "settings": self.settings,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Organization":
+        """Create from dictionary."""
+        org = cls(
+            id=data.get("id", str(uuid4())),
+            name=data.get("name", ""),
+            slug=data.get("slug", ""),
+            tier=SubscriptionTier(data.get("tier", "free")),
+            owner_id=data.get("owner_id"),
+            stripe_customer_id=data.get("stripe_customer_id"),
+            stripe_subscription_id=data.get("stripe_subscription_id"),
+            debates_used_this_month=data.get("debates_used_this_month", 0),
+            settings=data.get("settings", {}),
+        )
+        if "created_at" in data and data["created_at"]:
+            if isinstance(data["created_at"], str):
+                org.created_at = datetime.fromisoformat(data["created_at"])
+            else:
+                org.created_at = data["created_at"]
+        if "updated_at" in data and data["updated_at"]:
+            if isinstance(data["updated_at"], str):
+                org.updated_at = datetime.fromisoformat(data["updated_at"])
+            else:
+                org.updated_at = data["updated_at"]
+        if "billing_cycle_start" in data and data["billing_cycle_start"]:
+            if isinstance(data["billing_cycle_start"], str):
+                org.billing_cycle_start = datetime.fromisoformat(data["billing_cycle_start"])
+            else:
+                org.billing_cycle_start = data["billing_cycle_start"]
+        return org
+
+
+@dataclass
+class Subscription:
+    """A subscription record."""
+
+    id: str = field(default_factory=lambda: str(uuid4()))
+    org_id: str = ""
+    tier: SubscriptionTier = SubscriptionTier.FREE
+    status: str = "active"  # active, canceled, past_due, trialing
+    stripe_subscription_id: Optional[str] = None
+    stripe_price_id: Optional[str] = None
+
+    # Billing period
+    current_period_start: datetime = field(default_factory=datetime.utcnow)
+    current_period_end: datetime = field(
+        default_factory=lambda: datetime.utcnow() + timedelta(days=30)
+    )
+    cancel_at_period_end: bool = False
+
+    # Trial
+    trial_start: Optional[datetime] = None
+    trial_end: Optional[datetime] = None
+
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    @property
+    def is_active(self) -> bool:
+        """Check if subscription is active."""
+        return self.status in ("active", "trialing")
+
+    @property
+    def is_trialing(self) -> bool:
+        """Check if subscription is in trial."""
+        if self.status != "trialing":
+            return False
+        if self.trial_end is None:
+            return False
+        return datetime.utcnow() < self.trial_end
+
+    @property
+    def days_until_renewal(self) -> int:
+        """Get days until next renewal."""
+        delta = self.current_period_end - datetime.utcnow()
+        return max(0, delta.days)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "org_id": self.org_id,
+            "tier": self.tier.value,
+            "status": self.status,
+            "stripe_subscription_id": self.stripe_subscription_id,
+            "stripe_price_id": self.stripe_price_id,
+            "current_period_start": self.current_period_start.isoformat(),
+            "current_period_end": self.current_period_end.isoformat(),
+            "cancel_at_period_end": self.cancel_at_period_end,
+            "trial_start": self.trial_start.isoformat() if self.trial_start else None,
+            "trial_end": self.trial_end.isoformat() if self.trial_end else None,
+            "is_active": self.is_active,
+            "is_trialing": self.is_trialing,
+            "days_until_renewal": self.days_until_renewal,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Subscription":
+        """Create from dictionary."""
+        sub = cls(
+            id=data.get("id", str(uuid4())),
+            org_id=data.get("org_id", ""),
+            tier=SubscriptionTier(data.get("tier", "free")),
+            status=data.get("status", "active"),
+            stripe_subscription_id=data.get("stripe_subscription_id"),
+            stripe_price_id=data.get("stripe_price_id"),
+            cancel_at_period_end=data.get("cancel_at_period_end", False),
+        )
+        for field_name in ["current_period_start", "current_period_end", "trial_start",
+                          "trial_end", "created_at", "updated_at"]:
+            if field_name in data and data[field_name]:
+                value = data[field_name]
+                if isinstance(value, str):
+                    value = datetime.fromisoformat(value)
+                setattr(sub, field_name, value)
+        return sub
+
+
+def generate_slug(name: str) -> str:
+    """Generate URL-friendly slug from name."""
+    import re
+    slug = name.lower()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    slug = slug.strip("-")
+    return slug[:50] or "org"
+
+
+__all__ = [
+    "SubscriptionTier",
+    "TierLimits",
+    "TIER_LIMITS",
+    "User",
+    "Organization",
+    "Subscription",
+    "hash_password",
+    "verify_password",
+    "generate_slug",
+]

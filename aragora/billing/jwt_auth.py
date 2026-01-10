@@ -321,7 +321,7 @@ class UserAuthContext:
         return self.role in ("owner", "admin")
 
 
-def extract_user_from_request(handler: Any) -> UserAuthContext:
+def extract_user_from_request(handler: Any, user_store=None) -> UserAuthContext:
     """
     Extract user authentication from a request.
 
@@ -331,6 +331,7 @@ def extract_user_from_request(handler: Any) -> UserAuthContext:
 
     Args:
         handler: HTTP request handler
+        user_store: Optional user store for API key validation against database
 
     Returns:
         UserAuthContext with authentication info
@@ -359,7 +360,7 @@ def extract_user_from_request(handler: Any) -> UserAuthContext:
 
         # Check if it's an API key
         if token.startswith("ara_"):
-            return _validate_api_key(token, context)
+            return _validate_api_key(token, context, user_store)
 
         # Validate as JWT
         payload = validate_access_token(token)
@@ -374,18 +375,18 @@ def extract_user_from_request(handler: Any) -> UserAuthContext:
     return context
 
 
-def _validate_api_key(api_key: str, context: UserAuthContext) -> UserAuthContext:
+def _validate_api_key(api_key: str, context: UserAuthContext, user_store=None) -> UserAuthContext:
     """
     Validate an API key and populate context.
 
-    NOTE: Currently uses format-based validation only. For production use,
-    implement database lookup to validate against stored API keys.
+    Performs format validation and optional database lookup if user_store is provided.
 
-    API key format: ara_<random_string> (minimum 10 chars after prefix)
+    API key format: ara_<random_string> (minimum 15 chars total)
 
     Args:
         api_key: API key string (expected format: ara_xxxxx)
         context: Context to populate
+        user_store: Optional user store for database validation
 
     Returns:
         Updated context with authentication status
@@ -396,15 +397,41 @@ def _validate_api_key(api_key: str, context: UserAuthContext) -> UserAuthContext
         context.authenticated = False
         return context
 
-    # TODO: Implement database lookup for production
-    # - Query api_keys table by hashed key
-    # - Check key is not expired/revoked
-    # - Load associated user_id, org_id, permissions
-    # For now, accept valid format (development mode)
+    # Database lookup if store available
+    if user_store is not None:
+        try:
+            # Look up user by API key
+            user = user_store.get_user_by_api_key(api_key)
+            if user is None:
+                logger.warning(f"api_key_not_found key_prefix={api_key[:8]}...")
+                context.authenticated = False
+                return context
+
+            # Check if user is active
+            if not user.is_active:
+                logger.warning(f"api_key_user_inactive user_id={user.id}")
+                context.authenticated = False
+                return context
+
+            # Populate context with user info
+            context.authenticated = True
+            context.user_id = user.id
+            context.email = user.email
+            context.org_id = user.org_id
+            context.role = user.role
+            context.token_type = "api_key"
+            logger.debug(f"api_key_validated user_id={user.id}")
+            return context
+
+        except Exception as e:
+            logger.error(f"api_key_validation_error: {e}")
+            context.authenticated = False
+            return context
+
+    # Fallback: format-only validation (development mode)
     logger.debug(f"api_key_format_valid key_prefix={api_key[:8]}... (no db validation)")
     context.authenticated = True
     context.token_type = "api_key"
-
     return context
 
 
