@@ -1,0 +1,368 @@
+"""
+Evolution A/B testing endpoint handlers.
+
+Endpoints:
+- GET /api/evolution/ab-tests - List all A/B tests
+- GET /api/evolution/ab-tests/{agent}/active - Get active test for agent
+- POST /api/evolution/ab-tests - Start new A/B test
+- GET /api/evolution/ab-tests/{id} - Get specific test
+- POST /api/evolution/ab-tests/{id}/record - Record debate result
+- POST /api/evolution/ab-tests/{id}/conclude - Conclude test
+- DELETE /api/evolution/ab-tests/{id} - Cancel test
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from .base import (
+    BaseHandler,
+    HandlerResult,
+    json_response,
+    error_response,
+    handle_errors,
+    validate_path_segment,
+    get_clamped_int_param,
+)
+
+logger = logging.getLogger(__name__)
+
+# Try to import A/B testing module
+try:
+    from aragora.evolution.ab_testing import (
+        ABTest,
+        ABTestManager,
+        ABTestStatus,
+    )
+    AB_TESTING_AVAILABLE = True
+except ImportError:
+    AB_TESTING_AVAILABLE = False
+    ABTestManager = None
+
+
+class EvolutionABTestingHandler(BaseHandler):
+    """Handler for evolution A/B testing endpoints."""
+
+    ROUTES = [
+        "/api/evolution/ab-tests",
+        "/api/evolution/ab-tests/",
+    ]
+
+    AUTH_REQUIRED_ENDPOINTS = [
+        "/api/evolution/ab-tests",
+    ]
+
+    def __init__(self, ctx: dict = None):
+        """Initialize with context."""
+        super().__init__(ctx)
+        self._manager: Optional[ABTestManager] = None
+
+    @property
+    def manager(self) -> Optional[ABTestManager]:
+        """Lazy-load A/B test manager."""
+        if self._manager is None and AB_TESTING_AVAILABLE:
+            db_path = self.ctx.get("ab_tests_db", "ab_tests.db")
+            self._manager = ABTestManager(db_path=db_path)
+        return self._manager
+
+    def can_handle(self, path: str) -> bool:
+        """Check if this handler can process the given path."""
+        return path.startswith("/api/evolution/ab-tests")
+
+    def handle(self, path: str, query_params: dict, handler=None) -> Optional[HandlerResult]:
+        """Route GET requests."""
+        if not AB_TESTING_AVAILABLE:
+            return error_response("A/B testing module not available", 503)
+
+        if path == "/api/evolution/ab-tests" or path == "/api/evolution/ab-tests/":
+            return self._list_tests(query_params)
+
+        # Parse path segments
+        parts = path.rstrip("/").split("/")
+        # /api/evolution/ab-tests/{id}
+        # parts: ['', 'api', 'evolution', 'ab-tests', '{id}', ...]
+
+        if len(parts) >= 5:
+            segment = parts[4]
+
+            # GET /api/evolution/ab-tests/{agent}/active
+            if len(parts) == 6 and parts[5] == "active":
+                return self._get_active_test(segment)
+
+            # GET /api/evolution/ab-tests/{id}
+            if len(parts) == 5:
+                return self._get_test(segment)
+
+        return None
+
+    def handle_post(self, path: str, body: dict, handler=None) -> Optional[HandlerResult]:
+        """Route POST requests."""
+        if not AB_TESTING_AVAILABLE:
+            return error_response("A/B testing module not available", 503)
+
+        # POST /api/evolution/ab-tests - Create new test
+        if path == "/api/evolution/ab-tests" or path == "/api/evolution/ab-tests/":
+            return self._create_test(body)
+
+        parts = path.rstrip("/").split("/")
+
+        if len(parts) >= 6:
+            test_id = parts[4]
+            action = parts[5]
+
+            # POST /api/evolution/ab-tests/{id}/record
+            if action == "record":
+                return self._record_result(test_id, body)
+
+            # POST /api/evolution/ab-tests/{id}/conclude
+            if action == "conclude":
+                return self._conclude_test(test_id, body)
+
+        return None
+
+    def handle_delete(self, path: str, handler=None) -> Optional[HandlerResult]:
+        """Route DELETE requests."""
+        if not AB_TESTING_AVAILABLE:
+            return error_response("A/B testing module not available", 503)
+
+        parts = path.rstrip("/").split("/")
+
+        # DELETE /api/evolution/ab-tests/{id}
+        if len(parts) == 5:
+            test_id = parts[4]
+            return self._cancel_test(test_id)
+
+        return None
+
+    @handle_errors("list A/B tests")
+    def _list_tests(self, query_params: dict) -> HandlerResult:
+        """List all A/B tests with optional filters."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        agent = query_params.get("agent")
+        status = query_params.get("status")
+        limit = get_clamped_int_param(query_params, "limit", 50, min_val=1, max_val=200)
+
+        # Get tests from database
+        if agent:
+            tests = self.manager.get_agent_tests(agent, limit=limit)
+        else:
+            # Get all tests (need to add this method or query directly)
+            tests = self._get_all_tests(limit, status)
+
+        return json_response({
+            "tests": [t.to_dict() for t in tests],
+            "count": len(tests),
+        })
+
+    def _get_all_tests(self, limit: int, status: Optional[str] = None) -> list:
+        """Get all tests with optional status filter."""
+        import sqlite3
+        from aragora.config import DB_TIMEOUT_SECONDS
+        from aragora.evolution.ab_testing import ABTest
+
+        with sqlite3.connect(
+            str(self.manager.db_path),
+            timeout=DB_TIMEOUT_SECONDS
+        ) as conn:
+            cursor = conn.cursor()
+
+            if status:
+                cursor.execute(
+                    """
+                    SELECT * FROM ab_tests
+                    WHERE status = ?
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT * FROM ab_tests
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+
+            return [ABTest.from_row(row) for row in cursor.fetchall()]
+
+    @handle_errors("get A/B test")
+    def _get_test(self, test_id: str) -> HandlerResult:
+        """Get a specific A/B test."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        valid, err = validate_path_segment(test_id, "test_id")
+        if not valid:
+            return error_response(err or "Invalid test ID", 400)
+
+        test = self.manager.get_test(test_id)
+        if not test:
+            return error_response("A/B test not found", 404)
+
+        return json_response(test.to_dict())
+
+    @handle_errors("get active A/B test")
+    def _get_active_test(self, agent: str) -> HandlerResult:
+        """Get the active A/B test for an agent."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        valid, err = validate_path_segment(agent, "agent")
+        if not valid:
+            return error_response(err or "Invalid agent name", 400)
+
+        test = self.manager.get_active_test(agent)
+        if not test:
+            return json_response({
+                "agent": agent,
+                "has_active_test": False,
+                "test": None,
+            })
+
+        return json_response({
+            "agent": agent,
+            "has_active_test": True,
+            "test": test.to_dict(),
+        })
+
+    @handle_errors("create A/B test")
+    def _create_test(self, body: dict) -> HandlerResult:
+        """Create a new A/B test."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        agent = body.get("agent")
+        if not agent:
+            return error_response("agent is required", 400)
+
+        baseline_version = body.get("baseline_version")
+        evolved_version = body.get("evolved_version")
+
+        if baseline_version is None or evolved_version is None:
+            return error_response(
+                "baseline_version and evolved_version are required",
+                400,
+            )
+
+        try:
+            test = self.manager.start_test(
+                agent=agent,
+                baseline_version=int(baseline_version),
+                evolved_version=int(evolved_version),
+                metadata=body.get("metadata"),
+            )
+
+            return json_response({
+                "message": "A/B test created",
+                "test": test.to_dict(),
+            }, status=201)
+
+        except ValueError as e:
+            return error_response(str(e), 409)  # Conflict
+
+    @handle_errors("record A/B test result")
+    def _record_result(self, test_id: str, body: dict) -> HandlerResult:
+        """Record a debate result for an A/B test."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        valid, err = validate_path_segment(test_id, "test_id")
+        if not valid:
+            return error_response(err or "Invalid test ID", 400)
+
+        # Get the test to find the agent
+        test = self.manager.get_test(test_id)
+        if not test:
+            return error_response("A/B test not found", 404)
+
+        if test.status.value != "active":
+            return error_response("Cannot record results for concluded test", 400)
+
+        debate_id = body.get("debate_id")
+        variant = body.get("variant")
+        won = body.get("won")
+
+        if not debate_id:
+            return error_response("debate_id is required", 400)
+
+        if variant not in ("baseline", "evolved"):
+            return error_response(
+                "variant must be 'baseline' or 'evolved'",
+                400,
+            )
+
+        if won is None:
+            return error_response("won is required", 400)
+
+        updated_test = self.manager.record_result(
+            agent=test.agent,
+            debate_id=debate_id,
+            variant=variant,
+            won=bool(won),
+        )
+
+        if not updated_test:
+            return error_response("Failed to record result", 500)
+
+        return json_response({
+            "message": "Result recorded",
+            "test": updated_test.to_dict(),
+        })
+
+    @handle_errors("conclude A/B test")
+    def _conclude_test(self, test_id: str, body: dict) -> HandlerResult:
+        """Conclude an A/B test."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        valid, err = validate_path_segment(test_id, "test_id")
+        if not valid:
+            return error_response(err or "Invalid test ID", 400)
+
+        force = body.get("force", False)
+
+        try:
+            result = self.manager.conclude_test(test_id, force=force)
+
+            return json_response({
+                "message": "A/B test concluded",
+                "result": {
+                    "test_id": result.test_id,
+                    "winner": result.winner,
+                    "confidence": result.confidence,
+                    "recommendation": result.recommendation,
+                    "stats": result.stats,
+                },
+            })
+
+        except ValueError as e:
+            return error_response(str(e), 400)
+
+    @handle_errors("cancel A/B test")
+    def _cancel_test(self, test_id: str) -> HandlerResult:
+        """Cancel an active A/B test."""
+        if not self.manager:
+            return error_response("A/B testing not configured", 503)
+
+        valid, err = validate_path_segment(test_id, "test_id")
+        if not valid:
+            return error_response(err or "Invalid test ID", 400)
+
+        success = self.manager.cancel_test(test_id)
+
+        if not success:
+            return error_response(
+                "A/B test not found or already concluded",
+                404,
+            )
+
+        return json_response({
+            "message": "A/B test cancelled",
+            "test_id": test_id,
+        })

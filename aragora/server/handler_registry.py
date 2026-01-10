@@ -59,6 +59,7 @@ try:
         CalibrationHandler,
         RoutingHandler,
         EvolutionHandler,
+        EvolutionABTestingHandler,
         PluginsHandler,
         BroadcastHandler,
         AudioHandler,
@@ -106,6 +107,7 @@ except ImportError:
     CalibrationHandler = None  # type: ignore[misc, assignment]
     RoutingHandler = None  # type: ignore[misc, assignment]
     EvolutionHandler = None  # type: ignore[misc, assignment]
+    EvolutionABTestingHandler = None  # type: ignore[misc, assignment]
     PluginsHandler = None  # type: ignore[misc, assignment]
     BroadcastHandler = None  # type: ignore[misc, assignment]
     AudioHandler = None  # type: ignore[misc, assignment]
@@ -152,6 +154,7 @@ HANDLER_REGISTRY: List[Tuple[str, Any]] = [
     ("_introspection_handler", IntrospectionHandler),
     ("_calibration_handler", CalibrationHandler),
     ("_routing_handler", RoutingHandler),
+    ("_evolution_ab_testing_handler", EvolutionABTestingHandler),
     ("_evolution_handler", EvolutionHandler),
     ("_plugins_handler", PluginsHandler),
     ("_audio_handler", AudioHandler),

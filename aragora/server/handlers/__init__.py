@@ -49,6 +49,7 @@ from .introspection import IntrospectionHandler
 from .calibration import CalibrationHandler
 from .routing import RoutingHandler
 from .evolution import EvolutionHandler
+from .evolution_ab_testing import EvolutionABTestingHandler
 from .plugins import PluginsHandler
 from .broadcast import BroadcastHandler
 from .audio import AudioHandler
@@ -95,6 +96,7 @@ ALL_HANDLERS = [
     IntrospectionHandler,
     CalibrationHandler,
     RoutingHandler,
+    EvolutionABTestingHandler,  # More specific: /api/evolution/ab-tests
     EvolutionHandler,
     PluginsHandler,
     AudioHandler,
@@ -146,6 +148,7 @@ __all__ = [
     "CalibrationHandler",
     "RoutingHandler",
     "EvolutionHandler",
+    "EvolutionABTestingHandler",
     "PluginsHandler",
     "AudioHandler",
     "SocialMediaHandler",
