@@ -34,7 +34,7 @@ class GraphDebatesHandler(BaseHandler):
         "/api/debates/graph",
     ]
 
-    @handle_errors
+    @handle_errors("graph debates GET")
     async def handle_get(self, handler, path: str, query_params: dict) -> HandlerResult:
         """Handle GET requests for graph debates."""
         # Extract debate ID from path if present
@@ -56,7 +56,7 @@ class GraphDebatesHandler(BaseHandler):
 
         return error_response("Not found", 404)
 
-    @handle_errors
+    @handle_errors("graph debates POST")
     async def handle_post(self, handler, path: str, data: dict) -> HandlerResult:
         """Handle POST requests for graph debates.
 
