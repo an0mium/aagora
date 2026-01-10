@@ -58,6 +58,14 @@ def _create_verify_claims_callback(arena: "Arena"):
     # Lazy import formal verification to avoid circular imports
     _formal_manager = None
 
+    def _track_verification(status: str, time_ms: float) -> None:
+        """Track verification metrics (lazy import to avoid circular imports)."""
+        try:
+            from aragora.server.handlers.metrics import track_verification
+            track_verification(status, time_ms)
+        except ImportError:
+            pass  # Metrics not available
+
     def _get_formal_manager():
         nonlocal _formal_manager
         if _formal_manager is None:
@@ -117,21 +125,30 @@ def _create_verify_claims_callback(arena: "Arena"):
                         claim_type=claim_type,
                         timeout_seconds=5.0,  # Short timeout for debate flow
                     )
+                    verification_time = result.proof_search_time_ms or 0.0
+
                     if result.status == FormalProofStatus.PROOF_FOUND:
                         verified_count += 1
+                        _track_verification("z3_verified", verification_time)
                         logger.debug(
                             f"claim_z3_verified type={claim_type} "
-                            f"proof_time_ms={result.proof_search_time_ms:.1f}"
+                            f"proof_time_ms={verification_time:.1f}"
                         )
                         continue
                     elif result.status == FormalProofStatus.PROOF_FAILED:
                         # Z3 found a counterexample - claim is false
+                        _track_verification("z3_disproved", verification_time)
                         logger.debug(
                             f"claim_z3_disproved type={claim_type} "
                             f"error={result.error_message}"
                         )
                         continue  # Don't count disproved claims
-                    # Other statuses (timeout, translation failed): fall through to confidence check
+                    elif result.status == FormalProofStatus.TIMEOUT:
+                        _track_verification("z3_timeout", verification_time)
+                    else:
+                        # Translation failed or other status
+                        _track_verification("z3_translation_failed", verification_time)
+                    # Fall through to confidence check
                 except Exception as e:
                     logger.debug(f"Z3 verification failed for claim: {e}")
 
@@ -139,6 +156,7 @@ def _create_verify_claims_callback(arena: "Arena"):
             # Threshold: 0.5+ confidence from pattern matching
             if confidence >= 0.5:
                 verified_count += 1
+                _track_verification("confidence_fallback", 0.0)
                 logger.debug(
                     f"claim_verified type={claim_type} "
                     f"confidence={confidence:.2f}"
