@@ -428,6 +428,182 @@ class RedditIngestor(PulseIngestor):
         return mock_topics[:limit]
 
 
+class GitHubTrendingIngestor(PulseIngestor):
+    """GitHub Trending repositories ingestor using GitHub Search API.
+
+    Uses the GitHub Search API to find recently created repositories
+    with high star counts, simulating "trending" repositories.
+    No authentication required for basic usage (60 requests/hour limit).
+    """
+
+    def __init__(self, access_token: Optional[str] = None, **kwargs):
+        """Initialize GitHub trending ingestor.
+
+        Args:
+            access_token: Optional GitHub personal access token for higher rate limits
+                          (5000 requests/hour authenticated vs 60 unauthenticated)
+        """
+        super().__init__(api_key=access_token, **kwargs)
+        self.base_url = "https://api.github.com"
+        # Set lower rate limit delay for unauthenticated requests
+        if not access_token:
+            self.rate_limit_delay = 2.0  # Be more conservative without auth
+
+    async def fetch_trending(self, limit: int = 10) -> List[TrendingTopic]:
+        """Fetch trending repositories from GitHub.
+
+        Queries recently created repositories sorted by stars to simulate
+        trending repositories. Uses the Search API which doesn't require auth.
+        """
+        limit = max(1, min(limit, 30))  # GitHub API returns max 30 per page
+
+        async def _fetch():
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Build headers
+                headers = {
+                    "Accept": "application/vnd.github.v3+json",
+                    "User-Agent": "Aragora/1.0 (debate-platform)",
+                }
+                if self.api_key:
+                    headers["Authorization"] = f"token {self.api_key}"
+
+                # Search for repositories created in the last 7 days, sorted by stars
+                from datetime import datetime, timedelta
+                week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+                url = f"{self.base_url}/search/repositories"
+                params = {
+                    "q": f"created:>{week_ago}",
+                    "sort": "stars",
+                    "order": "desc",
+                    "per_page": limit,
+                }
+
+                response = await client.get(url, headers=headers, params=params)
+
+                # Check for rate limiting
+                if response.status_code == 403:
+                    remaining = response.headers.get("X-RateLimit-Remaining", "0")
+                    if remaining == "0":
+                        reset_time = response.headers.get("X-RateLimit-Reset", "")
+                        logger.warning(f"GitHub rate limit exceeded. Reset at: {reset_time}")
+                        raise Exception("GitHub API rate limit exceeded")
+
+                response.raise_for_status()
+                data = response.json()
+
+                # Validate response
+                if "items" not in data:
+                    raise ValueError("Invalid GitHub API response format")
+
+                topics = []
+                for repo in data["items"][:limit]:
+                    topic = TrendingTopic(
+                        platform="github",
+                        topic=f"{repo['full_name']}: {repo.get('description', 'No description')[:100]}",
+                        volume=repo.get("stargazers_count", 0),
+                        category=self._categorize_repo(repo),
+                        raw_data={
+                            "full_name": repo["full_name"],
+                            "url": repo["html_url"],
+                            "stars": repo.get("stargazers_count", 0),
+                            "forks": repo.get("forks_count", 0),
+                            "language": repo.get("language"),
+                            "description": repo.get("description"),
+                            "created_at": repo.get("created_at"),
+                            "topics": repo.get("topics", []),
+                        }
+                    )
+                    topics.append(topic)
+
+                logger.debug(f"Fetched {len(topics)} trending GitHub repositories")
+                return topics
+
+        return await self._retry_with_backoff(
+            _fetch,
+            fallback_fn=lambda: self._mock_trending_data(limit)
+        )
+
+    def _categorize_repo(self, repo: Dict[str, Any]) -> str:
+        """Categorize repository based on language and topics."""
+        language = (repo.get("language") or "").lower()
+        topics = [t.lower() for t in repo.get("topics", [])]
+        description = (repo.get("description") or "").lower()
+
+        # Check topics first (most specific)
+        ai_keywords = ["machine-learning", "deep-learning", "ai", "llm", "gpt", "neural-network"]
+        if any(t in topics for t in ai_keywords) or any(k in description for k in ["ai", "llm", "machine learning"]):
+            return "ai"
+
+        web_keywords = ["react", "vue", "angular", "frontend", "web", "nextjs"]
+        if any(t in topics for t in web_keywords):
+            return "web"
+
+        devops_keywords = ["docker", "kubernetes", "devops", "ci-cd", "infrastructure"]
+        if any(t in topics for t in devops_keywords):
+            return "devops"
+
+        security_keywords = ["security", "pentesting", "vulnerability", "ctf"]
+        if any(t in topics for t in security_keywords):
+            return "security"
+
+        # Fall back to language
+        lang_categories = {
+            "rust": "systems",
+            "go": "systems",
+            "c": "systems",
+            "c++": "systems",
+            "python": "programming",
+            "javascript": "web",
+            "typescript": "web",
+        }
+        if language in lang_categories:
+            return lang_categories[language]
+
+        return "programming"
+
+    def _mock_trending_data(self, limit: int) -> List[TrendingTopic]:
+        """Mock GitHub trending data for development/testing."""
+        mock_topics = [
+            TrendingTopic(
+                "github",
+                "anthropics/claude-code: Official Anthropic CLI for Claude",
+                8500,
+                "ai",
+                raw_data={"full_name": "anthropics/claude-code", "language": "TypeScript"}
+            ),
+            TrendingTopic(
+                "github",
+                "rust-lang/cargo: The Rust package manager",
+                5200,
+                "systems",
+                raw_data={"full_name": "rust-lang/cargo", "language": "Rust"}
+            ),
+            TrendingTopic(
+                "github",
+                "vercel/ai: Build AI-powered applications with React",
+                4100,
+                "ai",
+                raw_data={"full_name": "vercel/ai", "language": "TypeScript"}
+            ),
+            TrendingTopic(
+                "github",
+                "kubernetes/kubernetes: Production-Grade Container Scheduling",
+                3800,
+                "devops",
+                raw_data={"full_name": "kubernetes/kubernetes", "language": "Go"}
+            ),
+            TrendingTopic(
+                "github",
+                "fastapi/fastapi: FastAPI framework for building APIs with Python",
+                3200,
+                "web",
+                raw_data={"full_name": "fastapi/fastapi", "language": "Python"}
+            ),
+        ]
+        return mock_topics[:limit]
+
+
 class PulseManager:
     """Manages multiple ingestors and coordinates trending topic collection."""
 

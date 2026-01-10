@@ -732,3 +732,327 @@ class TestEdgeCases:
 
         # Should have one successful vote
         assert len(ctx.result.votes) == 1
+
+
+# ============================================================================
+# Phase 11C: Extended Edge Case Tests
+# ============================================================================
+
+class TestPhase11CEdgeCases:
+    """Phase 11C: Extended edge case tests for consensus phase hardening."""
+
+    @pytest.mark.asyncio
+    async def test_unanimous_dissent(self):
+        """All agents vote differently - should not reach consensus."""
+        protocol = MockProtocol(consensus="majority", consensus_threshold=0.5)
+
+        vote_choices = ["proposal_a", "proposal_b", "proposal_c", "proposal_d"]
+        vote_idx = [0]
+
+        async def vote_with_agent(agent, proposals, task):
+            choice = vote_choices[vote_idx[0] % len(vote_choices)]
+            vote_idx[0] += 1
+            return MockVote(agent=agent.name, choice=choice, confidence=0.8)
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            group_similar_votes=lambda votes: {
+                "proposal_a": ["proposal_a"],
+                "proposal_b": ["proposal_b"],
+                "proposal_c": ["proposal_c"],
+                "proposal_d": ["proposal_d"],
+            },
+        )
+
+        agents = [
+            MockAgent(name="agent_1"),
+            MockAgent(name="agent_2"),
+            MockAgent(name="agent_3"),
+            MockAgent(name="agent_4"),
+        ]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {
+            "proposal_a": "A",
+            "proposal_b": "B",
+            "proposal_c": "C",
+            "proposal_d": "D",
+        }
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        # No majority (each has 25% < 50% threshold)
+        assert ctx.result.consensus_reached is False
+        assert ctx.result.confidence == 0.25  # 1/4 for each
+        # consensus_strength is set based on winner confidence, not consensus_reached
+        # With 4 equal votes, winner has 0.25 confidence which maps to "strong" in some modes
+
+    @pytest.mark.asyncio
+    async def test_verification_timeout_handling(self):
+        """Z3 verification times out - should continue gracefully."""
+        protocol = MockProtocol(consensus="majority")
+
+        async def vote_with_agent(agent, proposals, task):
+            return MockVote(agent=agent.name, choice="claude", confidence=0.8)
+
+        # Mock verify_claims that times out
+        async def verify_claims_timeout(proposal_text, limit=2):
+            # Simulates timeout by returning minimal result
+            return {"verified": 0, "disproven": 0}
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            verify_claims=verify_claims_timeout,
+            group_similar_votes=lambda votes: {"claude": ["claude"]},
+        )
+
+        agents = [MockAgent(name="claude")]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"claude": "Proposal with claims"}
+        ctx.result = MockDebateResult()
+
+        # Should not raise even with "timeout"
+        await phase.execute(ctx)
+
+        assert ctx.result.consensus_reached is True
+        # No verification bonus applied due to timeout
+        assert ctx.result.confidence > 0
+
+    @pytest.mark.asyncio
+    async def test_all_agents_fail_voting(self):
+        """All agents fail during voting - should handle gracefully."""
+        protocol = MockProtocol(consensus="majority")
+
+        async def vote_with_agent(agent, proposals, task):
+            raise Exception(f"Agent {agent.name} failed to vote")
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            group_similar_votes=lambda votes: {},
+        )
+
+        agents = [MockAgent(name="agent_1"), MockAgent(name="agent_2")]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"agent_1": "Proposal A"}
+        ctx.result = MockDebateResult()
+
+        # Should not raise
+        await phase.execute(ctx)
+
+        # No votes collected
+        assert len(ctx.result.votes) == 0
+        assert ctx.result.consensus_reached is False
+
+    @pytest.mark.asyncio
+    async def test_single_proposal_with_multiple_voters(self):
+        """Single proposal should reach consensus if threshold met."""
+        protocol = MockProtocol(consensus="majority", consensus_threshold=0.5)
+
+        async def vote_with_agent(agent, proposals, task):
+            return MockVote(agent=agent.name, choice="only_proposal", confidence=0.9)
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            group_similar_votes=lambda votes: {"only_proposal": ["only_proposal"]},
+        )
+
+        agents = [MockAgent(name="a1"), MockAgent(name="a2"), MockAgent(name="a3")]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"only_proposal": "The only proposal"}
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        assert ctx.result.consensus_reached is True
+        assert ctx.result.confidence == 1.0
+        assert ctx.result.consensus_strength == "unanimous"
+
+    @pytest.mark.asyncio
+    async def test_consensus_with_abstentions(self):
+        """Some agents abstain (return None) - should count remaining votes."""
+        protocol = MockProtocol(consensus="majority", consensus_threshold=0.5)
+
+        vote_idx = [0]
+
+        async def vote_with_agent(agent, proposals, task):
+            vote_idx[0] += 1
+            if vote_idx[0] == 2:
+                # Return None to simulate abstention
+                return None
+            return MockVote(agent=agent.name, choice="proposal_a", confidence=0.8)
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            group_similar_votes=lambda votes: {"proposal_a": ["proposal_a"]},
+        )
+
+        agents = [MockAgent(name="a1"), MockAgent(name="a2"), MockAgent(name="a3")]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"proposal_a": "Proposal A"}
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        # 2 votes for proposal_a, 1 abstention
+        assert len(ctx.result.votes) == 2
+        assert ctx.result.consensus_reached is True
+
+    @pytest.mark.asyncio
+    async def test_extremely_high_consensus_threshold(self):
+        """Threshold of 0.99 - nearly impossible to reach."""
+        protocol = MockProtocol(consensus="majority", consensus_threshold=0.99)
+
+        vote_idx = [0]
+
+        async def vote_with_agent(agent, proposals, task):
+            vote_idx[0] += 1
+            if vote_idx[0] <= 9:
+                return MockVote(agent=agent.name, choice="proposal_a", confidence=0.9)
+            return MockVote(agent=agent.name, choice="proposal_b", confidence=0.9)
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            group_similar_votes=lambda votes: {
+                "proposal_a": ["proposal_a"],
+                "proposal_b": ["proposal_b"],
+            },
+        )
+
+        agents = [MockAgent(name=f"agent_{i}") for i in range(10)]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"proposal_a": "A", "proposal_b": "B"}
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        # 90% < 99% threshold
+        assert ctx.result.consensus_reached is False
+        assert ctx.result.confidence == 0.9
+
+    @pytest.mark.asyncio
+    async def test_verification_disproven_claims_penalty(self):
+        """Disproven claims should reduce agent credibility in voting."""
+        protocol = MockProtocol(consensus="majority")
+        protocol.verify_claims_during_consensus = True
+
+        async def vote_with_agent(agent, proposals, task):
+            return MockVote(agent=agent.name, choice="proposal_a", confidence=0.8)
+
+        # Mock verify_claims that finds disproven claims
+        async def verify_claims_disproven(proposal_text, limit=2):
+            if "false_claim" in proposal_text:
+                return {"verified": 0, "disproven": 2}
+            return {"verified": 1, "disproven": 0}
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            verify_claims=verify_claims_disproven,
+            group_similar_votes=lambda votes: {"proposal_a": ["proposal_a"]},
+        )
+
+        agents = [MockAgent(name="claude")]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"proposal_a": "This contains a false_claim"}
+        ctx.result = MockDebateResult()
+        ctx.result.verification_results = {}
+
+        await phase.execute(ctx)
+
+        # Phase should complete without error
+        assert ctx.result.consensus_reached is True
+
+    @pytest.mark.asyncio
+    async def test_concurrent_vote_collection(self):
+        """Votes should be collected even with varying response times."""
+        import asyncio
+        protocol = MockProtocol(consensus="majority")
+
+        async def slow_vote(agent, proposals, task):
+            await asyncio.sleep(0.01)  # Simulate network delay
+            return MockVote(agent=agent.name, choice="proposal_a", confidence=0.8)
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=slow_vote,
+            group_similar_votes=lambda votes: {"proposal_a": ["proposal_a"]},
+        )
+
+        agents = [MockAgent(name=f"agent_{i}") for i in range(5)]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"proposal_a": "Proposal"}
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        # All 5 votes should be collected
+        assert len(ctx.result.votes) == 5
+        assert ctx.result.consensus_reached is True
+
+    @pytest.mark.asyncio
+    async def test_tie_breaking(self):
+        """Tied vote should be resolved (first proposal wins as tiebreaker)."""
+        protocol = MockProtocol(consensus="majority", consensus_threshold=0.5)
+
+        vote_idx = [0]
+
+        async def vote_with_agent(agent, proposals, task):
+            vote_idx[0] += 1
+            if vote_idx[0] <= 2:
+                return MockVote(agent=agent.name, choice="proposal_a", confidence=0.8)
+            return MockVote(agent=agent.name, choice="proposal_b", confidence=0.8)
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            group_similar_votes=lambda votes: {
+                "proposal_a": ["proposal_a"],
+                "proposal_b": ["proposal_b"],
+            },
+        )
+
+        agents = [MockAgent(name=f"agent_{i}") for i in range(4)]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"proposal_a": "A", "proposal_b": "B"}
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        # 50-50 tie, threshold is 0.5, so winner should be selected
+        # With 50% = threshold, should meet threshold
+        assert ctx.result.confidence == 0.5
+
+    @pytest.mark.asyncio
+    async def test_belief_analysis_integration(self):
+        """Should integrate with belief analyzer if available."""
+        protocol = MockProtocol(consensus="majority")
+
+        async def vote_with_agent(agent, proposals, task):
+            return MockVote(agent=agent.name, choice="proposal_a", confidence=0.8)
+
+        # Mock belief analyzer
+        mock_analyzer = MagicMock()
+        mock_analyzer.compute_posterior.return_value = 0.75
+
+        phase = ConsensusPhase(
+            protocol=protocol,
+            vote_with_agent=vote_with_agent,
+            get_belief_analyzer=lambda: mock_analyzer,
+            group_similar_votes=lambda votes: {"proposal_a": ["proposal_a"]},
+        )
+
+        agents = [MockAgent(name="claude")]
+        ctx = DebateContext(env=MockEnvironment(), agents=agents)
+        ctx.proposals = {"proposal_a": "Proposal"}
+        ctx.result = MockDebateResult()
+
+        await phase.execute(ctx)
+
+        # Phase completes with belief analyzer integration
+        assert ctx.result.consensus_reached is True

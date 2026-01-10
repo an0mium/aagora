@@ -7,6 +7,7 @@ from aragora.pulse.ingestor import (
     TwitterIngestor,
     HackerNewsIngestor,
     RedditIngestor,
+    GitHubTrendingIngestor,
     PulseManager,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "TwitterIngestor",
     "HackerNewsIngestor",
     "RedditIngestor",
+    "GitHubTrendingIngestor",
     "PulseManager",
 ]
