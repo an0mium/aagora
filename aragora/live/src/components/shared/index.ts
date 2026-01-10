@@ -15,3 +15,6 @@ export type { TabNavigationProps, Tab } from './TabNavigation';
 
 export { PanelHeader } from './PanelHeader';
 export type { PanelHeaderProps } from './PanelHeader';
+
+export { PanelContainer, PanelHeaderSimple, CollapsiblePanelHeader } from './PanelContainer';
+export type { PanelContainerProps, PanelHeaderSimpleProps, CollapsiblePanelHeaderProps } from './PanelContainer';
