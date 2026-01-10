@@ -125,7 +125,7 @@ class AuthHandler(BaseHandler):
     @log_request("user registration")
     def _handle_register(self, handler) -> HandlerResult:
         """Handle user registration."""
-        from aragora.billing.models import User, Organization, generate_slug
+        from aragora.billing.models import hash_password
         from aragora.billing.jwt_auth import create_token_pair
 
         # Parse request body
@@ -152,40 +152,35 @@ class AuthHandler(BaseHandler):
         # Get user store
         user_store = self._get_user_store()
         if not user_store:
-            # In-memory fallback for development
-            user_store = self.ctx.setdefault("user_store", InMemoryUserStore())
+            return error_response("User service unavailable", 503)
 
         # Check if email already exists
         existing = user_store.get_user_by_email(email)
         if existing:
             return error_response("Email already registered", 409)
 
-        # Create organization if name provided
-        org_id = None
-        if org_name:
-            org = Organization(
-                name=org_name,
-                slug=generate_slug(org_name),
+        # Hash password
+        password_hash, password_salt = hash_password(password)
+
+        # Create user first (without org)
+        try:
+            user = user_store.create_user(
+                email=email,
+                password_hash=password_hash,
+                password_salt=password_salt,
+                name=name or email.split("@")[0],
             )
-            user_store.save_organization(org)
-            org_id = org.id
+        except ValueError as e:
+            return error_response(str(e), 409)
 
-        # Create user
-        user = User(
-            email=email,
-            name=name or email.split("@")[0],
-            org_id=org_id,
-            role="owner" if org_id else "member",
-        )
-        user.set_password(password)
-
-        # If org created, set user as owner
-        if org_id:
-            org.owner_id = user.id
-            user_store.save_organization(org)
-
-        # Save user
-        user_store.save_user(user)
+        # Create organization if name provided
+        if org_name:
+            org = user_store.create_organization(
+                name=org_name,
+                owner_id=user.id,
+            )
+            # Refresh user to get updated org_id
+            user = user_store.get_user_by_id(user.id)
 
         # Create tokens
         tokens = create_token_pair(
@@ -242,8 +237,7 @@ class AuthHandler(BaseHandler):
             return error_response("Invalid email or password", 401)
 
         # Update last login
-        user.last_login_at = datetime.utcnow()
-        user_store.save_user(user)
+        user_store.update_user(user.id, last_login_at=datetime.utcnow())
 
         # Create tokens
         tokens = create_token_pair(
@@ -384,12 +378,14 @@ class AuthHandler(BaseHandler):
             return error_response("User not found", 404)
 
         # Update allowed fields
+        updates = {}
         if "name" in body:
-            user.name = str(body["name"]).strip()[:100]
+            updates["name"] = str(body["name"]).strip()[:100]
 
         # Save updates
-        user.updated_at = datetime.utcnow()
-        user_store.save_user(user)
+        if updates:
+            user_store.update_user(user.id, **updates)
+            user = user_store.get_user_by_id(user.id)
 
         return json_response({"user": user.to_dict()})
 
@@ -434,8 +430,13 @@ class AuthHandler(BaseHandler):
             return error_response("Current password is incorrect", 401)
 
         # Set new password
-        user.set_password(new_password)
-        user_store.save_user(user)
+        from aragora.billing.models import hash_password
+        password_hash, password_salt = hash_password(new_password)
+        user_store.update_user(
+            user.id,
+            password_hash=password_hash,
+            password_salt=password_salt,
+        )
 
         logger.info(f"Password changed for user: {user.email}")
 
@@ -470,8 +471,13 @@ class AuthHandler(BaseHandler):
                 )
 
         # Generate new API key
-        api_key = user.generate_api_key()
-        user_store.save_user(user)
+        import secrets
+        api_key = f"ara_{secrets.token_urlsafe(32)}"
+        user_store.update_user(
+            user.id,
+            api_key=api_key,
+            api_key_created_at=datetime.utcnow(),
+        )
 
         logger.info(f"API key generated for user: {user.email}")
 
@@ -504,8 +510,7 @@ class AuthHandler(BaseHandler):
             return error_response("User not found", 404)
 
         # Revoke API key
-        user.revoke_api_key()
-        user_store.save_user(user)
+        user_store.update_user(user.id, api_key=None, api_key_created_at=None)
 
         logger.info(f"API key revoked for user: {user.email}")
 

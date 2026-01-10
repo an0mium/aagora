@@ -419,6 +419,33 @@ class UserStore:
                 return self._row_to_org(row)
         return None
 
+    def get_organization_by_subscription(self, subscription_id: str) -> Optional[Organization]:
+        """Get organization by Stripe subscription ID."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT * FROM organizations WHERE stripe_subscription_id = ?",
+                (subscription_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_org(row)
+        return None
+
+    def reset_org_usage(self, org_id: str) -> bool:
+        """Reset monthly usage for a single organization."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE organizations
+                SET debates_used_this_month = 0,
+                    billing_cycle_start = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (datetime.utcnow().isoformat(), datetime.utcnow().isoformat(), org_id),
+            )
+            return cursor.rowcount > 0
+
     def update_organization(self, org_id: str, **fields) -> bool:
         """Update organization fields."""
         if not fields:

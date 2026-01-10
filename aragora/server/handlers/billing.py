@@ -524,7 +524,7 @@ class BillingHandler(BaseHandler):
 
     def _handle_checkout_completed(self, event, user_store) -> HandlerResult:
         """Handle checkout.session.completed event."""
-        from aragora.billing.models import Organization, SubscriptionTier
+        from aragora.billing.models import SubscriptionTier
 
         session = event.object
         metadata = event.metadata
@@ -544,16 +544,20 @@ class BillingHandler(BaseHandler):
         if user_store and org_id:
             org = user_store.get_organization_by_id(org_id)
             if org:
-                # Update organization with Stripe IDs and tier
-                org.stripe_customer_id = customer_id
-                org.stripe_subscription_id = subscription_id
+                # Parse tier
                 try:
-                    org.tier = SubscriptionTier(tier_str)
+                    tier = SubscriptionTier(tier_str)
                 except ValueError:
-                    org.tier = SubscriptionTier.STARTER
-                org.updated_at = datetime.utcnow()
-                user_store.save_organization(org)
-                logger.info(f"Updated org {org_id} with subscription")
+                    tier = SubscriptionTier.STARTER
+
+                # Update organization with Stripe IDs and tier
+                user_store.update_organization(
+                    org_id,
+                    stripe_customer_id=customer_id,
+                    stripe_subscription_id=subscription_id,
+                    tier=tier,
+                )
+                logger.info(f"Updated org {org_id} with subscription, tier={tier.value}")
 
         return json_response({"received": True})
 
@@ -581,12 +585,18 @@ class BillingHandler(BaseHandler):
         )
 
         # Update organization tier if price changed
-        if user_store and price_id:
-            tier = get_tier_from_price_id(price_id)
-            if tier:
-                # Find org by subscription ID
-                # (would need to iterate or have an index in production)
-                pass
+        if user_store and subscription_id:
+            org = user_store.get_organization_by_subscription(subscription_id)
+            if org:
+                updates = {}
+                if price_id:
+                    tier = get_tier_from_price_id(price_id)
+                    if tier:
+                        updates["tier"] = tier
+
+                if updates:
+                    user_store.update_organization(org.id, **updates)
+                    logger.info(f"Updated org {org.id} tier from subscription update")
 
         return json_response({"received": True})
 
@@ -599,8 +609,16 @@ class BillingHandler(BaseHandler):
 
         logger.info(f"Subscription deleted: {subscription_id}")
 
-        # In production, update organization to free tier
-        # and clear subscription ID
+        # Downgrade organization to free tier and clear subscription ID
+        if user_store and subscription_id:
+            org = user_store.get_organization_by_subscription(subscription_id)
+            if org:
+                user_store.update_organization(
+                    org.id,
+                    tier=SubscriptionTier.FREE,
+                    stripe_subscription_id=None,
+                )
+                logger.info(f"Downgraded org {org.id} to FREE tier after subscription deletion")
 
         return json_response({"received": True})
 
@@ -617,9 +635,11 @@ class BillingHandler(BaseHandler):
         )
 
         # Reset monthly usage counters on successful payment
-        if user_store:
-            # Find org by customer ID and reset usage
-            pass
+        if user_store and customer_id:
+            org = user_store.get_organization_by_stripe_customer(customer_id)
+            if org:
+                user_store.reset_org_usage(org.id)
+                logger.info(f"Reset usage for org {org.id} after invoice payment")
 
         return json_response({"received": True})
 
@@ -628,14 +648,23 @@ class BillingHandler(BaseHandler):
         invoice = event.object
         customer_id = invoice.get("customer")
         subscription_id = invoice.get("subscription")
+        attempt_count = invoice.get("attempt_count", 1)
 
         logger.warning(
             f"Invoice payment failed: customer={customer_id}, "
-            f"subscription={subscription_id}"
+            f"subscription={subscription_id}, attempt={attempt_count}"
         )
 
-        # In production, send notification to user and possibly
-        # downgrade access after grace period
+        # After multiple failed attempts, consider downgrading
+        # Stripe typically retries 3-4 times over ~3 weeks
+        if user_store and customer_id and attempt_count >= 3:
+            org = user_store.get_organization_by_stripe_customer(customer_id)
+            if org:
+                # Mark org with payment issue (could add a flag field)
+                logger.warning(
+                    f"Org {org.id} has repeated payment failures, "
+                    f"consider downgrade after grace period"
+                )
 
         return json_response({"received": True})
 
