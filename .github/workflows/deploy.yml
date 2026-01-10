@@ -126,7 +126,11 @@ jobs:
             echo "Restarting service..."
             sudo systemctl restart aragora
             echo "Checking service status..."
-            sleep 3
+            sleep 5
+            if ! sudo systemctl is-active --quiet aragora; then
+              echo "::error::Service failed to start! Showing recent logs:"
+              sudo journalctl -u aragora -n 50 --no-pager || true
+            fi
             sudo systemctl status aragora --no-pager || true
             echo "Deploy complete"
           ENDSSH
@@ -182,7 +186,12 @@ jobs:
             echo "Restarting service..."
             sudo systemctl restart aragora-staging 2>/dev/null || sudo systemctl restart aragora
             echo "Checking service status..."
-            sleep 3
+            sleep 5
+            if ! sudo systemctl is-active --quiet aragora-staging 2>/dev/null && ! sudo systemctl is-active --quiet aragora; then
+              echo "::error::Service failed to start! Showing recent logs:"
+              sudo journalctl -u aragora-staging -n 50 --no-pager 2>/dev/null || true
+              sudo journalctl -u aragora -n 50 --no-pager 2>/dev/null || true
+            fi
             sudo systemctl status aragora-staging --no-pager 2>/dev/null || sudo systemctl status aragora --no-pager || true
             echo "Deploy complete"
           EOF
