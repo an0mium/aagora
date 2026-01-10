@@ -110,11 +110,14 @@ class TestDebateProtocol:
         assert protocol.user_vote_weight == 0.5
 
     def test_timeout_defaults(self):
-        """Timeout parameters should have sensible defaults."""
+        """Timeout parameters should have sensible defaults from config."""
+        from aragora.config import DEBATE_TIMEOUT_SECONDS, AGENT_TIMEOUT_SECONDS
+
         protocol = DebateProtocol()
 
-        assert protocol.timeout_seconds == 0  # No timeout by default
-        assert protocol.round_timeout_seconds == 120  # 2 minutes per round
+        # Uses config constants for consistent timeout hierarchy
+        assert protocol.timeout_seconds == DEBATE_TIMEOUT_SECONDS  # 15 min default
+        assert protocol.round_timeout_seconds == AGENT_TIMEOUT_SECONDS + 60  # Agent timeout + margin
 
 
 # =============================================================================

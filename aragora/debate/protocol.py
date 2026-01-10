@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Optional
 
+from aragora.config import DEBATE_TIMEOUT_SECONDS, AGENT_TIMEOUT_SECONDS
 from aragora.debate.roles import RoleRotationConfig
 from aragora.debate.role_matcher import RoleMatchingConfig
 from aragora.resilience import CircuitBreaker  # Re-export for backwards compatibility
@@ -111,9 +112,14 @@ class DebateProtocol:
     role_matching_config: Optional[RoleMatchingConfig] = None  # Custom matching config
 
     # Debate timeout (seconds) - prevents runaway debates
-    # 0 = no timeout (default for backward compatibility)
-    timeout_seconds: int = 0  # Max time for entire debate (0 = unlimited)
-    round_timeout_seconds: int = 120  # Max time per round (2 minutes per round)
+    # Uses ARAGORA_DEBATE_TIMEOUT env var (default 900s = 15 min)
+    # Set to 0 for unlimited (not recommended for production)
+    timeout_seconds: int = DEBATE_TIMEOUT_SECONDS  # Max time for entire debate
+
+    # Round timeout should exceed agent timeout (AGENT_TIMEOUT_SECONDS)
+    # to allow at least one agent to complete. Default allows 1-2 agents serially
+    # or many agents in parallel. Uses AGENT_TIMEOUT + 60s margin.
+    round_timeout_seconds: int = AGENT_TIMEOUT_SECONDS + 60  # Per-round timeout
 
     # Breakpoints: Human-in-the-loop intervention points
     # When enabled, debates can pause at critical moments for human guidance
@@ -132,6 +138,10 @@ class DebateProtocol:
     # Challenges convergence that lacks evidence quality
     enable_trickster: bool = False  # Enable hollow consensus detection
     trickster_sensitivity: float = 0.7  # Threshold for triggering challenges
+
+    # Prompt evolution: Learn from debate outcomes to improve agent prompts
+    # When enabled, PromptEvolver extracts winning patterns and updates prompts
+    enable_evolution: bool = False  # Enable prompt evolution from debate outcomes
 
 
 def user_vote_multiplier(intensity: int, protocol: DebateProtocol) -> float:

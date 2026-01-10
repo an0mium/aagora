@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
+from aragora.agents.errors import _build_error_action
 from aragora.config import AGENT_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
@@ -191,8 +192,16 @@ class ConsensusPhase:
 
     # Default timeout for consensus phase (can be overridden via protocol)
     # Judge mode needs more time due to LLM generation latency
-    DEFAULT_CONSENSUS_TIMEOUT = 300  # 5 minutes (increased from 3 min for complex debates)
-    JUDGE_TIMEOUT_PER_ATTEMPT = 180  # Per-judge timeout for fallback retries (increased from 90s)
+    DEFAULT_CONSENSUS_TIMEOUT = AGENT_TIMEOUT_SECONDS + 60  # Agent timeout + margin
+
+    # Per-judge timeout for fallback retries
+    JUDGE_TIMEOUT_PER_ATTEMPT = AGENT_TIMEOUT_SECONDS - 60  # Slightly less than full agent timeout
+
+    # Outer timeout for collecting ALL votes
+    # This is a hard cap to prevent N*agent_timeout runaway. Votes are collected
+    # in parallel, so this should be sufficient for most cases. With sequential
+    # voting (rare), partial votes are returned when this expires.
+    VOTE_COLLECTION_TIMEOUT = AGENT_TIMEOUT_SECONDS + 60  # Same as consensus timeout
 
     async def execute(self, ctx: "DebateContext") -> None:
         """
@@ -223,8 +232,9 @@ class ConsensusPhase:
             )
             await self._handle_fallback_consensus(ctx, reason="timeout")
         except Exception as e:
+            category, msg, _ = _build_error_action(e, "consensus")
             logger.error(
-                f"consensus_error mode={consensus_mode} error={type(e).__name__}: {e}",
+                f"consensus_error mode={consensus_mode} category={category} error={msg}",
                 exc_info=True
             )
             await self._handle_fallback_consensus(ctx, reason=f"error: {type(e).__name__}")
@@ -542,12 +552,17 @@ class ConsensusPhase:
         result.consensus_reached = False
 
     async def _collect_votes(self, ctx: "DebateContext") -> list["Vote"]:
-        """Collect votes from all agents."""
+        """Collect votes from all agents with outer timeout protection.
+
+        Uses VOTE_COLLECTION_TIMEOUT to prevent total vote collection time from
+        exceeding reasonable bounds (N agents * per-agent timeout could be very long).
+        If timeout is reached, returns partial votes collected so far.
+        """
         if not self._vote_with_agent:
             logger.warning("No vote_with_agent callback, skipping votes")
             return []
 
-        votes = []
+        votes: list["Vote"] = []
         task = ctx.env.task if ctx.env else ""
 
         async def cast_vote(agent):
@@ -565,36 +580,54 @@ class ConsensusPhase:
             except Exception as e:
                 return (agent, e)
 
-        vote_tasks = [asyncio.create_task(cast_vote(agent)) for agent in ctx.agents]
+        async def collect_all_votes():
+            vote_tasks = [asyncio.create_task(cast_vote(agent)) for agent in ctx.agents]
 
-        for completed_task in asyncio.as_completed(vote_tasks):
-            try:
-                agent, vote_result = await completed_task
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"task_exception phase=vote error={e}")
-                continue
+            for completed_task in asyncio.as_completed(vote_tasks):
+                try:
+                    agent, vote_result = await completed_task
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"task_exception phase=vote error={e}")
+                    continue
 
-            if vote_result is None or isinstance(vote_result, Exception):
-                if isinstance(vote_result, Exception):
-                    logger.error(f"vote_error agent={agent.name} error={vote_result}")
+                if vote_result is None or isinstance(vote_result, Exception):
+                    if isinstance(vote_result, Exception):
+                        logger.error(f"vote_error agent={agent.name} error={vote_result}")
+                    else:
+                        logger.error(f"vote_error agent={agent.name} error=vote returned None")
                 else:
-                    logger.error(f"vote_error agent={agent.name} error=vote returned None")
-            else:
-                votes.append(vote_result)
-                self._handle_vote_success(ctx, agent, vote_result)
+                    votes.append(vote_result)
+                    self._handle_vote_success(ctx, agent, vote_result)
+
+        # Apply outer timeout to prevent N*agent_timeout runaway
+        try:
+            await asyncio.wait_for(
+                collect_all_votes(),
+                timeout=self.VOTE_COLLECTION_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"vote_collection_timeout collected={len(votes)} "
+                f"expected={len(ctx.agents)} timeout={self.VOTE_COLLECTION_TIMEOUT}s"
+            )
+            # Return partial votes - better than nothing
 
         return votes
 
     async def _collect_votes_with_errors(
         self, ctx: "DebateContext"
     ) -> tuple[list["Vote"], int]:
-        """Collect votes, tracking error count for unanimity calculation."""
+        """Collect votes with error tracking and outer timeout protection.
+
+        Used for unanimity mode where we need to track errors.
+        Uses VOTE_COLLECTION_TIMEOUT to prevent runaway collection time.
+        """
         if not self._vote_with_agent:
             return [], 0
 
-        votes = []
+        votes: list["Vote"] = []
         voting_errors = 0
         task = ctx.env.task if ctx.env else ""
 
@@ -613,27 +646,45 @@ class ConsensusPhase:
             except Exception as e:
                 return (agent, e)
 
-        vote_tasks = [asyncio.create_task(cast_vote(agent)) for agent in ctx.agents]
+        async def collect_all_votes():
+            nonlocal voting_errors
+            vote_tasks = [asyncio.create_task(cast_vote(agent)) for agent in ctx.agents]
 
-        for completed_task in asyncio.as_completed(vote_tasks):
-            try:
-                agent, vote_result = await completed_task
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"task_exception phase=unanimous_vote error={e}")
-                voting_errors += 1
-                continue
+            for completed_task in asyncio.as_completed(vote_tasks):
+                try:
+                    agent, vote_result = await completed_task
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"task_exception phase=unanimous_vote error={e}")
+                    voting_errors += 1
+                    continue
 
-            if vote_result is None or isinstance(vote_result, Exception):
-                if isinstance(vote_result, Exception):
-                    logger.error(f"vote_error_unanimous agent={agent.name} error={vote_result}")
+                if vote_result is None or isinstance(vote_result, Exception):
+                    if isinstance(vote_result, Exception):
+                        logger.error(f"vote_error_unanimous agent={agent.name} error={vote_result}")
+                    else:
+                        logger.error(f"vote_error_unanimous agent={agent.name} error=vote returned None")
+                    voting_errors += 1
                 else:
-                    logger.error(f"vote_error_unanimous agent={agent.name} error=vote returned None")
-                voting_errors += 1
-            else:
-                votes.append(vote_result)
-                self._handle_vote_success(ctx, agent, vote_result, unanimous=True)
+                    votes.append(vote_result)
+                    self._handle_vote_success(ctx, agent, vote_result, unanimous=True)
+
+        # Apply outer timeout to prevent N*agent_timeout runaway
+        try:
+            await asyncio.wait_for(
+                collect_all_votes(),
+                timeout=self.VOTE_COLLECTION_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            # Treat timeout as errors for missing votes
+            missing = len(ctx.agents) - len(votes) - voting_errors
+            voting_errors += missing
+            logger.warning(
+                f"vote_collection_timeout_unanimous collected={len(votes)} "
+                f"errors={voting_errors} expected={len(ctx.agents)} "
+                f"timeout={self.VOTE_COLLECTION_TIMEOUT}s"
+            )
 
         return votes, voting_errors
 
@@ -909,7 +960,8 @@ class ConsensusPhase:
                         )
                 logger.debug(f"calibration_recorded predictions={len(result.votes)}")
             except Exception as e:
-                logger.warning(f"calibration_error error={e}")
+                category, msg, exc_info = _build_error_action(e, "calibration")
+                logger.warning(f"calibration_error category={category} error={msg}", exc_info=exc_info)
 
     def _set_unanimous_winner(
         self,
@@ -970,7 +1022,8 @@ class ConsensusPhase:
                         )
                 logger.debug(f"calibration_recorded_unanimous predictions={len(result.votes)}")
             except Exception as e:
-                logger.warning(f"calibration_error_unanimous error={e}")
+                category, msg, exc_info = _build_error_action(e, "calibration")
+                logger.warning(f"calibration_error_unanimous category={category} error={msg}", exc_info=exc_info)
 
     def _set_no_unanimity(
         self,
