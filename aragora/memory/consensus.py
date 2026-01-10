@@ -419,6 +419,52 @@ class ConsensusMemory:
 
         return record
 
+    def update_cruxes(
+        self,
+        consensus_id: str,
+        cruxes: list[dict],
+    ) -> bool:
+        """Attach belief cruxes to an existing consensus record.
+
+        Cruxes are the key points of contention that drove the debate.
+        Storing them enables future debates on similar topics to seed
+        discussion around known areas of disagreement.
+
+        Args:
+            consensus_id: The ID of the consensus record to update
+            cruxes: List of crux dicts with keys like 'claim', 'positions', 'resolution'
+
+        Returns:
+            True if update succeeded, False if consensus not found
+        """
+        with get_wal_connection(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT data FROM consensus WHERE id = ?",
+                (consensus_id,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                return False
+
+            consensus_data: dict = safe_json_loads(
+                row[0], {}, context=f"consensus:{consensus_id}"
+            )
+            # Store up to 5 cruxes to avoid bloat
+            consensus_data["belief_cruxes"] = cruxes[:5]
+
+            cursor.execute(
+                "UPDATE consensus SET data = ? WHERE id = ?",
+                (json.dumps(consensus_data), consensus_id),
+            )
+            conn.commit()
+
+        logger.debug(
+            f"Updated consensus {consensus_id} with {len(cruxes[:5])} cruxes"
+        )
+        return True
+
     def get_consensus(self, consensus_id: str) -> Optional[ConsensusRecord]:
         """Get a consensus record by ID."""
         with get_wal_connection(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:

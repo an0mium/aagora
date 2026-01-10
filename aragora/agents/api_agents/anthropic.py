@@ -105,6 +105,12 @@ class AnthropicAPIAgent(QuotaFallbackMixin, APIAgent):
             "messages": [{"role": "user", "content": full_prompt}],
         }
 
+        # Apply generation parameters from persona if set
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+
         if self.system_prompt:
             payload["system"] = self.system_prompt
 
@@ -164,6 +170,12 @@ class AnthropicAPIAgent(QuotaFallbackMixin, APIAgent):
             "messages": [{"role": "user", "content": full_prompt}],
             "stream": True,
         }
+
+        # Apply generation parameters from persona if set
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
 
         if self.system_prompt:
             payload["system"] = self.system_prompt

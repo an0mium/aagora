@@ -143,6 +143,9 @@ class DebateResult:
     # Belief network analysis - identifies key claims that drive disagreement
     debate_cruxes: list[dict] = field(default_factory=list)  # From BeliefPropagationAnalyzer
     evidence_suggestions: list[dict] = field(default_factory=list)  # Claims needing evidence
+    # Novelty tracking - semantic distance from prior proposals
+    per_agent_novelty: dict[str, list[float]] = field(default_factory=dict)  # Agent -> novelty by round
+    avg_novelty: float = 1.0  # Average novelty (1.0 = fresh ideas, 0.0 = repetitive)
 
     def summary(self) -> str:
         """Human-readable summary of the debate."""

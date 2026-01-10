@@ -57,7 +57,7 @@ PERSONALITY_TRAITS = [
 
 @dataclass
 class Persona:
-    """An agent's persona with traits and expertise."""
+    """An agent's persona with traits, expertise, and generation parameters."""
 
     agent_name: str
     description: str = ""
@@ -65,6 +65,11 @@ class Persona:
     expertise: dict[str, float] = field(default_factory=dict)  # domain -> score 0-1
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    # Generation parameters for diversity
+    temperature: float = 0.7  # Default sampling temperature
+    top_p: float = 1.0  # Nucleus sampling threshold
+    frequency_penalty: float = 0.0  # Penalize repeated tokens
 
     @property
     def top_expertise(self) -> list[tuple[str, float]]:
@@ -94,6 +99,15 @@ class Persona:
                 parts.append(f"Your expertise areas: {exp_str}")
 
         return "\n".join(parts) if parts else ""
+
+    @property
+    def generation_params(self) -> dict[str, float]:
+        """Get generation parameters for LLM calls."""
+        return {
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "frequency_penalty": self.frequency_penalty,
+        }
 
 
 class PersonaManager:
@@ -412,42 +426,70 @@ class PersonaManager:
 
 
 # Default personas for common agent types
+# Temperature profiles based on personality:
+# - Conservative agents: 0.5-0.6 (deterministic, safety-focused)
+# - Balanced agents: 0.7 (standard)
+# - Innovative/contrarian agents: 0.8-0.9 (creative, unconventional)
 DEFAULT_PERSONAS = {
     "claude": Persona(
         agent_name="claude",
         description="Thoughtful analyzer focused on correctness and safety",
         traits=["thorough", "diplomatic", "conservative"],
         expertise={"security": 0.8, "error_handling": 0.7, "documentation": 0.6},
+        temperature=0.6,  # More deterministic for safety-critical analysis
+        top_p=0.95,
     ),
     "codex": Persona(
         agent_name="codex",
         description="Pragmatic coder focused on working solutions",
         traits=["pragmatic", "direct", "innovative"],
         expertise={"architecture": 0.7, "performance": 0.6, "api_design": 0.6},
+        temperature=0.75,  # Slightly above average for innovation
     ),
     "gemini": Persona(
         agent_name="gemini",
         description="Versatile assistant with broad knowledge",
         traits=["collaborative", "thorough"],
         expertise={"testing": 0.6, "documentation": 0.6, "code_style": 0.5},
+        temperature=0.7,  # Balanced default
     ),
     "grok": Persona(
         agent_name="grok",
         description="Bold thinker willing to challenge conventions",
         traits=["contrarian", "innovative", "direct"],
         expertise={"architecture": 0.6, "performance": 0.5},
+        temperature=0.9,  # High for creative/unconventional ideas
+        frequency_penalty=0.1,  # Encourage novel token choices
     ),
     "qwen": Persona(
         agent_name="qwen",
         description="Detail-oriented with strong technical depth",
         traits=["thorough", "pragmatic"],
         expertise={"concurrency": 0.6, "database": 0.6, "performance": 0.5},
+        temperature=0.65,  # Lower for precision in technical details
     ),
     "deepseek": Persona(
         agent_name="deepseek",
         description="Efficient problem solver with cost-conscious approach",
         traits=["pragmatic", "direct"],
         expertise={"architecture": 0.6, "api_design": 0.5},
+        temperature=0.7,  # Balanced default
+    ),
+    "synthesizer": Persona(
+        agent_name="synthesizer",
+        description="Integrates diverse viewpoints into coherent conclusions",
+        traits=["collaborative", "diplomatic"],
+        expertise={"documentation": 0.7, "architecture": 0.6},
+        temperature=0.5,  # Low for consistent integration
+        top_p=0.9,
+    ),
+    "lateral": Persona(
+        agent_name="lateral",
+        description="Finds unexpected connections and novel approaches",
+        traits=["innovative", "contrarian"],
+        expertise={"architecture": 0.5, "testing": 0.5},
+        temperature=0.85,  # High for novel connections
+        frequency_penalty=0.15,  # Strongly encourage novelty
     ),
 }
 

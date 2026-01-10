@@ -14,6 +14,7 @@ class APIAgent(CritiqueMixin, Agent):
 
     Includes circuit breaker protection for graceful failure handling.
     Supports dependency injection of circuit breaker for better testability.
+    Supports persona-based generation parameters for diversity.
     """
 
     def __init__(
@@ -26,6 +27,10 @@ class APIAgent(CritiqueMixin, Agent):
         base_url: str | None = None,
         circuit_breaker: CircuitBreaker | None = None,
         enable_circuit_breaker: bool = True,
+        # Generation parameters (can be set from Persona)
+        temperature: float | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
     ):
         super().__init__(name, model, role)
         self.timeout = timeout
@@ -33,6 +38,11 @@ class APIAgent(CritiqueMixin, Agent):
         self.base_url = base_url
         self.agent_type = "api"  # Default for API agents
         self.enable_circuit_breaker = enable_circuit_breaker
+
+        # Generation parameters (from persona or explicit)
+        self.temperature = temperature  # None means use provider default
+        self.top_p = top_p
+        self.frequency_penalty = frequency_penalty
 
         # Use provided circuit breaker or create a new local instance
         # This avoids global state and improves testability
@@ -45,6 +55,31 @@ class APIAgent(CritiqueMixin, Agent):
             )
         else:
             self._circuit_breaker = None
+
+    def set_generation_params(
+        self,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+    ) -> None:
+        """Set generation parameters, typically from a Persona."""
+        if temperature is not None:
+            self.temperature = temperature
+        if top_p is not None:
+            self.top_p = top_p
+        if frequency_penalty is not None:
+            self.frequency_penalty = frequency_penalty
+
+    def get_generation_params(self) -> dict[str, float]:
+        """Get generation parameters as a dict (excludes None values)."""
+        params = {}
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        if self.top_p is not None:
+            params["top_p"] = self.top_p
+        if self.frequency_penalty is not None:
+            params["frequency_penalty"] = self.frequency_penalty
+        return params
 
     @property
     def circuit_breaker(self) -> CircuitBreaker | None:

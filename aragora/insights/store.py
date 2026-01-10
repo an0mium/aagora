@@ -666,5 +666,4 @@ class InsightStore:
                 f.write(json.dumps(event_data) + '\n')
         except Exception as e:
             # Never crash main loop due to logging, but note the failure
-            import sys
-            print(f"[InsightStore] Warning: Failed to log wisdom event: {e}", file=sys.stderr)
+            logger.warning(f"Failed to log wisdom event: {e}")

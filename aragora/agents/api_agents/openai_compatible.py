@@ -97,6 +97,15 @@ class OpenAICompatibleMixin(QuotaFallbackMixin):
         }
         if stream:
             payload["stream"] = True
+
+        # Apply generation parameters from persona if set (from APIAgent)
+        if hasattr(self, 'temperature') and self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if hasattr(self, 'top_p') and self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if hasattr(self, 'frequency_penalty') and self.frequency_penalty is not None:
+            payload["frequency_penalty"] = self.frequency_penalty
+
         extra = self._build_extra_payload()
         if extra:
             payload.update(extra)
