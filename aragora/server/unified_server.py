@@ -794,8 +794,12 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
         """Internal POST handler with actual routing logic."""
         # Try modular handlers first (gradual migration)
         if path.startswith('/api/'):
-            if self._try_modular_handler(path, {}):
-                return
+            try:
+                if self._try_modular_handler(path, {}):
+                    return
+            except Exception as e:
+                logger.exception(f"Modular handler failed for {path}: {e}")
+                # Continue to legacy handlers
 
         # NOTE: /api/documents/upload is now handled by DocumentHandler
         if path == '/api/debate':
