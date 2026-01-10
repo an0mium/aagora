@@ -424,7 +424,12 @@ class ConsensusPhase:
         ctx.vote_tally = dict(vote_counts)
 
         # Check for unanimity
-        total_voters = len(votes) + voting_errors + user_vote_count
+        # Note: voting_errors are excluded from total_voters because agents that
+        # failed to vote shouldn't count against unanimity. If 5 agents vote and
+        # 3 timeout, unanimity is 5/5=100%, not 5/8=62.5%.
+        total_voters = len(votes) + user_vote_count
+        if voting_errors > 0:
+            logger.info(f"unanimous_vote_errors excluded={voting_errors} from total")
 
         most_common = vote_counts.most_common(1) if vote_counts else []
         if most_common and total_voters > 0:

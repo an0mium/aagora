@@ -18,20 +18,18 @@ from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
 from aragora.core import Agent, Critique, DebateResult, DisagreementReport, Environment, Message, Vote
 from aragora.debate.convergence import ConvergenceDetector
 from aragora.debate.disagreement import DisagreementReporter
-from aragora.debate.context_gatherer import ContextGatherer
 from aragora.debate.event_bridge import EventEmitterBridge
 from aragora.debate.immune_system import TransparentImmuneSystem, get_immune_system
 from aragora.debate.chaos_theater import ChaosDirector, get_chaos_director, DramaLevel
 from aragora.debate.audience_manager import AudienceManager
 from aragora.debate.autonomic_executor import AutonomicExecutor
+from aragora.debate.arena_phases import init_phases
 from aragora.debate.complexity_governor import (
     classify_task_complexity,
     get_complexity_governor,
 )
-from aragora.debate.memory_manager import MemoryManager
 from aragora.debate.optional_imports import OptionalImports
-from aragora.debate.prompt_builder import PromptBuilder
-from aragora.debate.protocol import CircuitBreaker, DebateProtocol, user_vote_multiplier
+from aragora.debate.protocol import CircuitBreaker, DebateProtocol
 from aragora.debate.roles import (
     RoleAssignment,
     RoleRotationConfig,
@@ -41,19 +39,8 @@ from aragora.debate.role_matcher import RoleMatcher, RoleMatchingConfig
 from aragora.debate.topology import TopologySelector
 from aragora.debate.judge_selector import JudgeSelector, JudgeScoringMixin
 from aragora.debate.sanitization import OutputSanitizer
-from aragora.reasoning.evidence_grounding import EvidenceGrounder
 from aragora.spectate.stream import SpectatorStream
 
-# Phase classes for orchestrator decomposition
-from aragora.debate.phases import (
-    ContextInitializer,
-    ProposalPhase,
-    DebateRoundsPhase,
-    ConsensusPhase,
-    AnalyticsPhase,
-    FeedbackPhase,
-    VotingPhase,
-)
 from aragora.debate.context import DebateContext
 
 logger = logging.getLogger(__name__)
@@ -756,178 +743,7 @@ class Arena:
 
     def _init_phases(self) -> None:
         """Initialize phase classes for orchestrator decomposition."""
-        # Voting phase (handles vote grouping, weighted counting, consensus detection)
-        self.voting_phase = VotingPhase(
-            protocol=self.protocol,
-            similarity_backend=None,  # Lazily initialized
-        )
-
-        # Citation extraction (Heavy3-inspired evidence grounding)
-        self.citation_extractor = None
-        ExtractorClass = OptionalImports.get_citation_extractor()
-        if ExtractorClass:
-            self.citation_extractor = ExtractorClass()
-
-        # Evidence grounder for creating grounded verdicts with citations
-        self.evidence_grounder = EvidenceGrounder(
-            evidence_pack=None,  # Set during research phase
-            citation_extractor=self.citation_extractor,
-        )
-
-        # Initialize PromptBuilder for centralized prompt construction
-        self.prompt_builder = PromptBuilder(
-            protocol=self.protocol,
-            env=self.env,
-            memory=self.memory,
-            continuum_memory=self.continuum_memory,
-            dissent_retriever=self.dissent_retriever,
-            role_rotator=self.role_rotator,
-            persona_manager=self.persona_manager,
-            flip_detector=self.flip_detector,
-            calibration_tracker=self.calibration_tracker,
-        )
-
-        # Initialize MemoryManager for centralized memory operations
-        self.memory_manager = MemoryManager(
-            continuum_memory=self.continuum_memory,
-            critique_store=self.memory,
-            debate_embeddings=self.debate_embeddings,
-            domain_extractor=self._extract_debate_domain,
-            event_emitter=self.event_emitter,
-            spectator=self.spectator,
-            loop_id=self.loop_id,
-        )
-
-        # Initialize ContextGatherer for research and evidence collection
-        self.context_gatherer = ContextGatherer(
-            evidence_store_callback=self._store_evidence_in_memory,
-            prompt_builder=self.prompt_builder,
-        )
-
-        # Phase 0: Context Initialization
-        self.context_initializer = ContextInitializer(
-            initial_messages=self.initial_messages,
-            trending_topic=self.trending_topic,
-            recorder=self.recorder,
-            debate_embeddings=self.debate_embeddings,
-            insight_store=self.insight_store,
-            memory=self.memory,
-            protocol=self.protocol,
-            evidence_collector=self.evidence_collector,
-            dissent_retriever=self.dissent_retriever,
-            pulse_manager=self.pulse_manager,
-            auto_fetch_trending=self.auto_fetch_trending,
-            fetch_historical_context=self._fetch_historical_context,
-            format_patterns_for_prompt=self._format_patterns_for_prompt,
-            get_successful_patterns_from_memory=self._get_successful_patterns_from_memory,
-            perform_research=self._perform_research,
-        )
-
-        # Phase 1: Initial Proposals
-        self.proposal_phase = ProposalPhase(
-            circuit_breaker=self.circuit_breaker,
-            position_tracker=self.position_tracker,
-            position_ledger=self.position_ledger,
-            recorder=self.recorder,
-            hooks=self.hooks,
-            build_proposal_prompt=self._build_proposal_prompt,
-            generate_with_agent=self.autonomic.generate,
-            with_timeout=self.autonomic.with_timeout,
-            notify_spectator=self._notify_spectator,
-            update_role_assignments=self._update_role_assignments,
-            record_grounded_position=self._record_grounded_position,
-            extract_citation_needs=self._extract_citation_needs,
-        )
-
-        # Phase 2: Debate Rounds (critique/revision loop)
-        self.debate_rounds_phase = DebateRoundsPhase(
-            protocol=self.protocol,
-            circuit_breaker=self.circuit_breaker,
-            convergence_detector=self.convergence_detector,
-            recorder=self.recorder,
-            hooks=self.hooks,
-            update_role_assignments=self._update_role_assignments,
-            assign_stances=self._assign_stances,
-            select_critics_for_proposal=self._select_critics_for_proposal,
-            critique_with_agent=self.autonomic.critique,
-            build_revision_prompt=self._build_revision_prompt,
-            generate_with_agent=self.autonomic.generate,
-            with_timeout=self.autonomic.with_timeout,
-            notify_spectator=self._notify_spectator,
-            record_grounded_position=self._record_grounded_position,
-            check_judge_termination=self._check_judge_termination,
-            check_early_stopping=self._check_early_stopping,
-        )
-
-        # Phase 3: Consensus Resolution
-        self.consensus_phase = ConsensusPhase(
-            protocol=self.protocol,
-            elo_system=self.elo_system,
-            memory=self.memory,
-            agent_weights=self.agent_weights,
-            flip_detector=self.flip_detector,
-            position_tracker=self.position_tracker,
-            calibration_tracker=self.calibration_tracker,
-            recorder=self.recorder,
-            hooks=self.hooks,
-            user_votes=self.user_votes,  # type: ignore[arg-type]
-            vote_with_agent=self.autonomic.vote,
-            with_timeout=self.autonomic.with_timeout,
-            select_judge=self._select_judge,
-            build_judge_prompt=self._build_judge_prompt,
-            generate_with_agent=self.autonomic.generate,
-            group_similar_votes=self._group_similar_votes,
-            get_calibration_weight=self._get_calibration_weight,
-            notify_spectator=self._notify_spectator,
-            drain_user_events=self._drain_user_events,
-            extract_debate_domain=self._extract_debate_domain,
-            get_belief_analyzer=OptionalImports.get_belief_analyzer,
-            user_vote_multiplier=user_vote_multiplier,
-            # Verification callback for claim verification during consensus
-            # When protocol.verify_claims_during_consensus is True, this callback
-            # is used to verify claims in proposals and boost verified ones.
-            # Future: wire to verification_manager.verify_claims_in_text()
-            verify_claims=None,
-        )
-
-        # Phases 4-6: Analytics
-        self.analytics_phase = AnalyticsPhase(
-            memory=self.memory,
-            insight_store=self.insight_store,
-            recorder=self.recorder,
-            event_emitter=self.event_emitter,
-            hooks=self.hooks,
-            loop_id=self.loop_id,
-            notify_spectator=self._notify_spectator,
-            update_agent_relationships=self._update_agent_relationships,
-            generate_disagreement_report=self._generate_disagreement_report,
-            create_grounded_verdict=self._create_grounded_verdict,
-            verify_claims_formally=self._verify_claims_formally,
-            format_conclusion=self._format_conclusion,
-        )
-
-        # Phase 7: Feedback Loops
-        self.feedback_phase = FeedbackPhase(
-            elo_system=self.elo_system,
-            persona_manager=self.persona_manager,
-            position_ledger=self.position_ledger,
-            relationship_tracker=self.relationship_tracker,
-            moment_detector=self.moment_detector,
-            debate_embeddings=self.debate_embeddings,
-            flip_detector=self.flip_detector,
-            continuum_memory=self.continuum_memory,
-            event_emitter=self.event_emitter,
-            loop_id=self.loop_id,
-            emit_moment_event=self._emit_moment_event,
-            store_debate_outcome_as_memory=self._store_debate_outcome_as_memory,
-            update_continuum_memory_outcomes=self._update_continuum_memory_outcomes,
-            index_debate_async=self._index_debate_async,
-            consensus_memory=self.consensus_memory,
-            calibration_tracker=self.calibration_tracker,
-            population_manager=self.population_manager,
-            auto_evolve=self.auto_evolve,
-            breeding_threshold=self.breeding_threshold,
-        )
+        init_phases(self)
 
     def _require_agents(self) -> list[Agent]:
         """Return agents list, raising error if empty.
