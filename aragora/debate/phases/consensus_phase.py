@@ -328,7 +328,7 @@ class ConsensusPhase:
             else:
                 result.final_answer = f"[No proposals available - consensus fallback ({reason})]"
             result.consensus_reached = False
-            result.confidence = 0.0
+            result.confidence = 0.5  # Neutral default, not failure
             result.consensus_strength = "fallback"
 
         logger.info(f"consensus_fallback reason={reason} winner={winner_agent}")
