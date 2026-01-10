@@ -73,10 +73,12 @@ The following endpoints were identified as unused but are now connected:
 
 ## Server Configuration
 
-The unified server runs on port 8080 by default and serves both HTTP API and static files.
+The unified server exposes HTTP on port 8080 and WebSocket on port 8765 by default.
 
 ```bash
-python -m aragora.server --port 8080 --nomic-dir .nomic
+aragora serve
+# Or directly:
+python -m aragora.server --http-port 8080 --port 8765 --nomic-dir .nomic
 ```
 
 ## Authentication

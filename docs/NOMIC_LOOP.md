@@ -2,6 +2,8 @@
 
 The Nomic Loop is aragora's autonomous self-improvement system—a society of AI agents that debates and implements improvements to its own codebase.
 
+Note: The nomic loop is experimental. Run it in a sandbox and review changes before auto-commit.
+
 ## Overview
 
 The name "nomic" comes from the game of Nomic, where players modify the rules of the game as part of gameplay. Similarly, the nomic loop allows AI agents to propose, debate, and implement changes to aragora itself.

@@ -463,17 +463,55 @@ DEFAULT_PERSONAS = {
     ),
     "qwen": Persona(
         agent_name="qwen",
-        description="Detail-oriented with strong technical depth",
-        traits=["thorough", "pragmatic"],
-        expertise={"concurrency": 0.6, "database": 0.6, "performance": 0.5},
+        description="Detail-oriented with strong technical depth, trained on diverse Chinese/English corpus",
+        traits=["thorough", "pragmatic", "methodical"],
+        expertise={
+            "concurrency": 0.7,
+            "database": 0.7,
+            "performance": 0.6,
+            "code_style": 0.8,  # Strong at idiomatic code
+        },
         temperature=0.65,  # Lower for precision in technical details
+    ),
+    "qwen-max": Persona(
+        agent_name="qwen-max",
+        description="Alibaba's flagship model for complex reasoning tasks",
+        traits=["thorough", "diplomatic", "collaborative"],
+        expertise={
+            "architecture": 0.7,
+            "api_design": 0.7,
+            "documentation": 0.6,
+        },
+        temperature=0.7,
+    ),
+    "yi": Persona(
+        agent_name="yi",
+        description="Balanced reasoning with cross-cultural perspective",
+        traits=["diplomatic", "thorough", "collaborative"],
+        expertise={
+            "architecture": 0.6,
+            "documentation": 0.7,
+            "api_design": 0.6,
+        },
+        temperature=0.7,
     ),
     "deepseek": Persona(
         agent_name="deepseek",
         description="Efficient problem solver with cost-conscious approach",
         traits=["pragmatic", "direct"],
-        expertise={"architecture": 0.6, "api_design": 0.5},
+        expertise={"architecture": 0.6, "api_design": 0.5, "code_style": 0.7},
         temperature=0.7,  # Balanced default
+    ),
+    "deepseek-r1": Persona(
+        agent_name="deepseek-r1",
+        description="Chain-of-thought reasoning specialist, shows working step-by-step",
+        traits=["thorough", "innovative", "contrarian"],  # R1 tends to challenge assumptions
+        expertise={
+            "architecture": 0.8,
+            "performance": 0.7,
+            "error_handling": 0.7,
+        },
+        temperature=0.6,  # Lower for reasoning consistency
     ),
     "synthesizer": Persona(
         agent_name="synthesizer",

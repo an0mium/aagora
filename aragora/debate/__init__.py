@@ -113,6 +113,24 @@ from aragora.debate.chaos_theater import (
     theatrical_timeout,
     theatrical_error,
 )
+from aragora.debate.outcome_tracker import (
+    OutcomeTracker,
+    ConsensusOutcome,
+    CalibrationBucket,
+)
+from aragora.debate.evidence_linker import (
+    EvidenceClaimLinker,
+    EvidenceLink,
+    ClaimAnalysis,
+    EvidenceCoverageResult,
+)
+from aragora.debate.cross_proposal_analyzer import (
+    CrossProposalAnalyzer,
+    CrossProposalAnalysis,
+    SharedEvidence,
+    Contradiction,
+    EvidenceGap,
+)
 
 __all__ = [
     "Arena",
@@ -215,4 +233,19 @@ __all__ = [
     "get_chaos_director",
     "theatrical_timeout",
     "theatrical_error",
+    # Outcome Tracker
+    "OutcomeTracker",
+    "ConsensusOutcome",
+    "CalibrationBucket",
+    # Evidence-Claim Linker
+    "EvidenceClaimLinker",
+    "EvidenceLink",
+    "ClaimAnalysis",
+    "EvidenceCoverageResult",
+    # Cross-Proposal Analyzer
+    "CrossProposalAnalyzer",
+    "CrossProposalAnalysis",
+    "SharedEvidence",
+    "Contradiction",
+    "EvidenceGap",
 ]

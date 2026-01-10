@@ -31,8 +31,8 @@ XAI_API_KEY=xai-xxx              # Grok
 ## 3. Run Your First Debate
 
 ```bash
-python -m aragora.debate "Should we use microservices or monolith?" \
-  --agents anthropic-api openai-api
+aragora ask "Should we use microservices or monolith?" \
+  --agents anthropic-api,openai-api
 ```
 
 Expected output:
@@ -52,26 +52,27 @@ Final Answer: [synthesized recommendation]
 ### View in Terminal
 Results are printed directly. For longer debates, pipe to a file:
 ```bash
-python -m aragora.debate "..." --agents ... > debate.log
+aragora ask "..." --agents anthropic-api,openai-api > debate.log
 ```
 
 ### Start Live Dashboard
 ```bash
-python -m aragora.server
+aragora serve
 # Open http://localhost:8080
 ```
 
 ### View Recorded Replays
 ```bash
-ls .nomic/replays/
-python -m aragora.replay view <debate-id>
+curl http://localhost:8080/api/replays
+# Fetch a specific replay
+curl http://localhost:8080/api/replays/<replay-id>
 ```
 
 ## Common Options
 
 ```bash
 # More agents
---agents anthropic-api openai-api gemini-api grok
+--agents anthropic-api,openai-api,gemini,grok
 
 # More rounds (deeper debate)
 --rounds 5
@@ -81,10 +82,13 @@ python -m aragora.replay view <debate-id>
 --consensus unanimous  # All agents agree
 --consensus judge      # One agent decides
 
-# Add web research
---research
+# Add context
+--context "Include latency and cost constraints"
 
-# Verbose output
+# Disable learning
+--no-learn
+
+# Verbose output (global)
 --verbose
 ```
 
@@ -92,21 +96,21 @@ python -m aragora.replay view <debate-id>
 
 ```bash
 # Technical architecture
-python -m aragora.debate "Design a caching strategy for 10M users" \
-  --agents anthropic-api openai-api gemini-api --rounds 4
+aragora ask "Design a caching strategy for 10M users" \
+  --agents anthropic-api,openai-api,gemini --rounds 4
 
 # Code review
-python -m aragora.debate "Review this code for security issues: $(cat myfile.py)" \
-  --agents anthropic-api openai-api --consensus unanimous
+aragora ask "Review this code for security issues: $(cat myfile.py)" \
+  --agents anthropic-api,openai-api --consensus unanimous
 
 # Decision making
-python -m aragora.debate "React vs Vue vs Svelte for our new project" \
-  --agents anthropic-api openai-api gemini-api grok --research
+aragora ask "React vs Vue vs Svelte for our new project" \
+  --agents anthropic-api,openai-api,gemini,grok
 ```
 
 ## Next Steps
 
-- **Run the Nomic Loop:** Self-improving debates - see `docs/NOMIC_LOOP.md`
+- **Run the Nomic Loop (experimental):** Self-improving debates - see `docs/NOMIC_LOOP.md`
 - **API Integration:** Build on Aragora - see `docs/API_REFERENCE.md`
 - **Configuration:** All options - see `docs/ENVIRONMENT.md`
 - **Architecture:** How it works - see `docs/ARCHITECTURE.md`
@@ -120,9 +124,9 @@ export ANTHROPIC_API_KEY=your-key
 ```
 
 ### "Agent timed out"
-Increase timeout:
+Increase the debate timeout via environment:
 ```bash
---timeout 120  # 2 minutes per agent response
+export ARAGORA_DEBATE_TIMEOUT=1200  # seconds
 ```
 
 ### "Rate limit exceeded"
@@ -131,5 +135,5 @@ Wait a moment or use fewer agents. API providers have rate limits.
 ### "Connection refused on port 8080"
 Another service is using that port. Use a different port:
 ```bash
-python -m aragora.server --port 8081
+aragora serve --api-port 8081
 ```

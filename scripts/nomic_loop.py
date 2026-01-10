@@ -87,6 +87,16 @@ try:
     from scripts.nomic.safety import (
         PROTECTED_FILES as _PROTECTED_FILES,
         SAFETY_PREAMBLE as _SAFETY_PREAMBLE,
+        compute_file_checksum as _compute_file_checksum,
+        init_protected_checksums as _init_protected_checksums,
+        verify_protected_files_unchanged as _verify_protected_files_unchanged,
+        get_protected_checksums as _get_protected_checksums,
+        ConstitutionVerifier as _ConstitutionVerifier,
+        DEFAULT_CONSTITUTION_PATH as _DEFAULT_CONSTITUTION_PATH,
+    )
+    from aragora.debate.outcome_tracker import (
+        OutcomeTracker as _OutcomeTracker,
+        ConsensusOutcome as _ConsensusOutcome,
     )
     from scripts.nomic.config import (
         NOMIC_AUTO_COMMIT as _NOMIC_AUTO_COMMIT,
@@ -1251,6 +1261,24 @@ class AgentCircuitBreaker:
             "task_success_rates": dict(self.task_success_rate),
         }
 
+if _NOMIC_PACKAGE_AVAILABLE:
+    # Prefer extracted helpers when available to avoid inline duplication.
+    PhaseError = _PhaseError
+    PhaseRecovery = _PhaseRecovery
+    AgentCircuitBreaker = _AgentCircuitBreaker
+    PROTECTED_FILES = _PROTECTED_FILES
+    SAFETY_PREAMBLE = _SAFETY_PREAMBLE
+    _compute_file_checksum = _compute_file_checksum
+    _init_protected_checksums = _init_protected_checksums
+    verify_protected_files_unchanged = _verify_protected_files_unchanged
+    _get_protected_checksums = _get_protected_checksums
+    _ConstitutionVerifier = _ConstitutionVerifier
+    DEFAULT_CONSTITUTION_PATH = _DEFAULT_CONSTITUTION_PATH
+    NOMIC_AUTO_COMMIT = _NOMIC_AUTO_COMMIT
+    NOMIC_AUTO_CONTINUE = _NOMIC_AUTO_CONTINUE
+    NOMIC_MAX_CYCLE_SECONDS = _NOMIC_MAX_CYCLE_SECONDS
+    NOMIC_STALL_THRESHOLD = _NOMIC_STALL_THRESHOLD
+
 
 class NomicLoop:
     """
@@ -1340,8 +1368,34 @@ class NomicLoop:
                 print(f"[circuit-breaker] Failed to restore state: {e}")
 
         # Initialize protected file checksums for integrity verification
-        _init_protected_checksums(self.aragora_path)
-        print(f"[security] Initialized checksums for {len(_PROTECTED_FILE_CHECKSUMS)} protected files")
+        checksums = _init_protected_checksums(self.aragora_path)
+        print(f"[security] Initialized checksums for {len(checksums)} protected files")
+
+        # Initialize Constitution verifier for cryptographic safety rules
+        self.constitution_verifier = None
+        try:
+            constitution_path = self.nomic_dir / "constitution.json"
+            if constitution_path.exists():
+                self.constitution_verifier = _ConstitutionVerifier(constitution_path)
+                if self.constitution_verifier.is_available():
+                    rules = len(self.constitution_verifier.constitution.rules)
+                    print(f"[constitution] Loaded v{self.constitution_verifier.constitution.version} with {rules} rules")
+                else:
+                    print(f"[constitution] File exists but failed to load")
+            else:
+                print(f"[constitution] No constitution.json found (safety rules disabled)")
+        except Exception as e:
+            print(f"[constitution] Failed to initialize: {e}")
+
+        # Initialize OutcomeTracker for calibration and learning
+        self.outcome_tracker = None
+        try:
+            outcomes_path = self.nomic_dir / "outcomes.db"
+            self.outcome_tracker = _OutcomeTracker(outcomes_path)
+            stats = self.outcome_tracker.get_overall_stats()
+            print(f"[outcomes] Tracker initialized ({stats['total_outcomes']} historical outcomes, {stats['success_rate']:.0%} success rate)")
+        except Exception as e:
+            print(f"[outcomes] Failed to initialize: {e}")
 
         # Supabase persistence for history tracking
         self.persistence = None
@@ -9053,6 +9107,21 @@ Be concise - this is a quality gate, not a full review."""
         # Store for timeout handler (run_cycle wrapper can access for rollback)
         self._cycle_backup_path = backup_path
 
+        # === SAFETY: Verify Constitution signature (cryptographic safety) ===
+        if self.constitution_verifier and self.constitution_verifier.is_available():
+            if not self.constitution_verifier.verify_signature():
+                self._log("[CRITICAL] Constitution signature invalid - cycle aborted")
+                self._log("  The constitution.json file may have been tampered with.")
+                self._log("  Re-sign with: python scripts/sign_constitution.py sign")
+                return {
+                    "cycle": self.cycle_count,
+                    "started": cycle_start.isoformat(),
+                    "ended": datetime.now().isoformat(),
+                    "outcome": "constitution_violation",
+                    "error": "Constitution signature verification failed",
+                }
+            self._log(f"  [constitution] Signature verified (v{self.constitution_verifier.constitution.version})")
+
         cycle_result = {
             "cycle": self.cycle_count,
             "started": cycle_start.isoformat(),
@@ -9726,6 +9795,41 @@ Working directory: {self.aragora_path}
             total_duration = sum(m["duration"] for m in self._phase_metrics.values())
             overall_efficiency = (total_duration / total_budget * 100) if total_budget > 0 else 0
             self._log(f"\n  [metrics] Cycle {self.cycle_count} phase efficiency: {overall_efficiency:.0f}% ({total_duration:.0f}s / {total_budget}s budget)")
+
+        # Record outcome for calibration and learning
+        if self.outcome_tracker:
+            try:
+                # Extract test counts from verify result
+                verify_phases = cycle_result.get("phases", {}).get("verify", {})
+                tests_passed = 0
+                tests_failed = 0
+                for check in verify_phases.get("checks", []):
+                    if check.get("check") == "tests":
+                        output = check.get("output", "")
+                        counts = self._count_test_results(output)
+                        tests_passed = counts.get("passed", 0)
+                        tests_failed = counts.get("failed", 0) + counts.get("errors", 0)
+                        break
+
+                # Get design confidence if available
+                design_result = cycle_result.get("phases", {}).get("design", {})
+                confidence = design_result.get("confidence", 0.5)
+
+                outcome = _ConsensusOutcome(
+                    debate_id=f"nomic-cycle-{self.cycle_count}",
+                    consensus_text=design_result.get("consensus", "")[:500],
+                    consensus_confidence=confidence,
+                    implementation_attempted=True,
+                    implementation_succeeded=cycle_result.get("outcome") in ("success", "partial_success"),
+                    tests_passed=tests_passed,
+                    tests_failed=tests_failed,
+                    rollback_triggered=cycle_result.get("outcome") == "verification_failed",
+                    failure_reason=cycle_result.get("error") if cycle_result.get("outcome") != "success" else None,
+                )
+                self.outcome_tracker.record_outcome(outcome)
+                self._log(f"  [outcomes] Recorded outcome: {cycle_result.get('outcome')} (confidence={confidence:.2f})")
+            except Exception as e:
+                self._log(f"  [outcomes] Failed to record: {e}")
 
         self.history.append(cycle_result)
 

@@ -34,6 +34,11 @@ from aragora.debate.evidence_quality import (
     HollowConsensusAlert,
     HollowConsensusDetector,
 )
+from aragora.debate.evidence_linker import EvidenceClaimLinker
+from aragora.debate.cross_proposal_analyzer import (
+    CrossProposalAnalyzer,
+    CrossProposalAnalysis,
+)
 from aragora.debate.roles import CognitiveRole, RoleAssignment, ROLE_PROMPTS
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,8 @@ class InterventionType(Enum):
     EXTENDED_ROUND = "extended_round"  # Add extra round for evidence
     BREAKPOINT = "breakpoint"  # Trigger human review breakpoint
     NOVELTY_CHALLENGE = "novelty_challenge"  # Challenge agents to seek fresh perspectives
+    EVIDENCE_GAP = "evidence_gap"  # Challenge agents on unsupported claims
+    ECHO_CHAMBER = "echo_chamber"  # Challenge agents to seek independent sources
 
 
 @dataclass
@@ -123,6 +130,7 @@ class EvidencePoweredTrickster:
         config: Optional[TricksterConfig] = None,
         on_intervention: Optional[Callable[[TricksterIntervention], None]] = None,
         on_alert: Optional[Callable[[HollowConsensusAlert], None]] = None,
+        linker: Optional[EvidenceClaimLinker] = None,
     ):
         """
         Initialize the trickster.
@@ -131,6 +139,7 @@ class EvidencePoweredTrickster:
             config: Configuration options
             on_intervention: Callback when intervention is triggered
             on_alert: Callback when hollow consensus is detected
+            linker: Evidence-claim linker for semantic evidence validation
         """
         self.config = config or TricksterConfig()
         self.on_intervention = on_intervention
@@ -141,6 +150,10 @@ class EvidencePoweredTrickster:
         self._detector = HollowConsensusDetector(
             min_quality_threshold=self.config.min_quality_threshold,
         )
+
+        # New semantic evidence-claim linking
+        self._linker = linker or EvidenceClaimLinker()
+        self._cross_analyzer = CrossProposalAnalyzer(self._linker)
 
     def check_and_intervene(
         self,
@@ -172,7 +185,28 @@ class EvidencePoweredTrickster:
         if self.on_alert and alert.detected:
             self.on_alert(alert)
 
-        # Decide on intervention
+        # NEW: Cross-proposal analysis for converging responses
+        cross_analysis: Optional[CrossProposalAnalysis] = None
+        if convergence_similarity > 0.6:
+            cross_analysis = self._cross_analyzer.analyze(responses)
+
+            # Check for evidence gaps (claims without any supporting evidence)
+            if cross_analysis.evidence_gaps:
+                intervention = self._create_evidence_gap_intervention(
+                    cross_analysis, round_num
+                )
+                if intervention:
+                    return self._record_intervention(intervention, round_num)
+
+            # Check for echo chamber (agents citing same limited evidence)
+            if cross_analysis.redundancy_score > 0.7:
+                intervention = self._create_echo_chamber_intervention(
+                    cross_analysis, round_num
+                )
+                if intervention:
+                    return self._record_intervention(intervention, round_num)
+
+        # Decide on intervention based on traditional hollow consensus check
         if not alert.detected:
             logger.debug(f"trickster_pass round={round_num} reason=quality_acceptable")
             return None
@@ -203,8 +237,27 @@ class EvidencePoweredTrickster:
 
         # Create intervention
         intervention = self._create_intervention(
-            alert, quality_scores, round_num
+            alert, quality_scores, round_num, cross_analysis
         )
+
+        return self._record_intervention(intervention, round_num)
+
+    def _record_intervention(
+        self,
+        intervention: TricksterIntervention,
+        round_num: int,
+    ) -> TricksterIntervention:
+        """Record an intervention and update state."""
+        # Check cooldown
+        rounds_since = round_num - self._state.last_intervention_round
+        if rounds_since < self.config.intervention_cooldown_rounds:
+            logger.debug(f"trickster_cooldown round={round_num}")
+            return intervention  # Still return for caller, but skip recording
+
+        # Check max interventions
+        if self._state.total_interventions >= self.config.max_interventions_total:
+            logger.debug(f"trickster_limit round={round_num}")
+            return intervention
 
         # Track state
         self._state.interventions.append(intervention)
@@ -222,11 +275,122 @@ class EvidencePoweredTrickster:
 
         return intervention
 
+    def _create_evidence_gap_intervention(
+        self,
+        cross_analysis: CrossProposalAnalysis,
+        round_num: int,
+    ) -> Optional[TricksterIntervention]:
+        """Create intervention for evidence gaps."""
+        if not cross_analysis.evidence_gaps:
+            return None
+
+        top_gap = cross_analysis.evidence_gaps[0]
+
+        challenge_text = self._build_evidence_gap_challenge(cross_analysis)
+
+        return TricksterIntervention(
+            intervention_type=InterventionType.EVIDENCE_GAP,
+            round_num=round_num,
+            target_agents=top_gap.agents_making_claim,
+            challenge_text=challenge_text,
+            evidence_gaps={},
+            priority=top_gap.gap_severity,
+            metadata={
+                "gap_claim": top_gap.claim[:200],
+                "gap_severity": top_gap.gap_severity,
+                "total_gaps": len(cross_analysis.evidence_gaps),
+            },
+        )
+
+    def _build_evidence_gap_challenge(
+        self,
+        cross_analysis: CrossProposalAnalysis,
+    ) -> str:
+        """Build challenge text for evidence gaps."""
+        lines = [
+            "## EVIDENCE GAP DETECTED",
+            "",
+            "Multiple agents are making claims **without supporting evidence**.",
+            "Before reaching consensus, please address these gaps:",
+            "",
+        ]
+
+        for gap in cross_analysis.evidence_gaps[:3]:
+            agents_str = ", ".join(gap.agents_making_claim)
+            lines.append(f"- **Claim by {agents_str}**: \"{gap.claim[:100]}...\"")
+            lines.append("  → No evidence provided by any agent")
+            lines.append("")
+
+        lines.extend([
+            "### Required Actions:",
+            "1. Provide specific sources or data supporting these claims",
+            "2. If no evidence exists, reconsider the claim",
+            "3. Distinguish between speculation and supported conclusions",
+            "",
+            "*This challenge was triggered by cross-proposal evidence analysis.*",
+        ])
+
+        return "\n".join(lines)
+
+    def _create_echo_chamber_intervention(
+        self,
+        cross_analysis: CrossProposalAnalysis,
+        round_num: int,
+    ) -> Optional[TricksterIntervention]:
+        """Create intervention for echo chamber detection."""
+        if cross_analysis.redundancy_score <= 0.7:
+            return None
+
+        challenge_text = self._build_echo_chamber_challenge(cross_analysis)
+
+        return TricksterIntervention(
+            intervention_type=InterventionType.ECHO_CHAMBER,
+            round_num=round_num,
+            target_agents=list(cross_analysis.agent_coverage.keys()),
+            challenge_text=challenge_text,
+            evidence_gaps={},
+            priority=cross_analysis.redundancy_score,
+            metadata={
+                "redundancy_score": cross_analysis.redundancy_score,
+                "unique_sources": cross_analysis.unique_evidence_sources,
+                "total_sources": cross_analysis.total_evidence_sources,
+            },
+        )
+
+    def _build_echo_chamber_challenge(
+        self,
+        cross_analysis: CrossProposalAnalysis,
+    ) -> str:
+        """Build challenge text for echo chamber."""
+        lines = [
+            "## ECHO CHAMBER WARNING",
+            "",
+            f"Agents are citing the **same limited evidence** "
+            f"({cross_analysis.redundancy_score:.0%} redundancy).",
+            "",
+            f"- Unique evidence sources: {cross_analysis.unique_evidence_sources}",
+            f"- Total citations: {cross_analysis.total_evidence_sources}",
+            "",
+            "This suggests agents may be reinforcing each other's views "
+            "without independent validation.",
+            "",
+            "### Required Actions:",
+            "1. Each agent should seek **independent** evidence sources",
+            "2. Consider alternative interpretations of the shared evidence",
+            "3. Challenge assumptions that are based on repeated assertions",
+            "4. Look for evidence that might **contradict** the emerging consensus",
+            "",
+            "*This challenge was triggered by cross-proposal redundancy detection.*",
+        ]
+
+        return "\n".join(lines)
+
     def _create_intervention(
         self,
         alert: HollowConsensusAlert,
         quality_scores: dict[str, EvidenceQualityScore],
         round_num: int,
+        cross_analysis: Optional[CrossProposalAnalysis] = None,
     ) -> TricksterIntervention:
         """Create an appropriate intervention based on the alert."""
         # Identify lowest quality agents
@@ -265,6 +429,21 @@ class EvidencePoweredTrickster:
         # Determine intervention type
         intervention_type = self._select_intervention_type(alert, round_num)
 
+        # Build metadata including cross-analysis if available
+        metadata: dict[str, Any] = {
+            "avg_quality": alert.avg_quality,
+            "min_quality": alert.min_quality,
+            "quality_variance": alert.quality_variance,
+            "reason": alert.reason,
+        }
+
+        if cross_analysis:
+            metadata.update({
+                "cross_analysis_redundancy": cross_analysis.redundancy_score,
+                "cross_analysis_corroboration": cross_analysis.evidence_corroboration_score,
+                "cross_analysis_gaps_count": len(cross_analysis.evidence_gaps),
+            })
+
         return TricksterIntervention(
             intervention_type=intervention_type,
             round_num=round_num,
@@ -272,12 +451,7 @@ class EvidencePoweredTrickster:
             challenge_text=challenge_text,
             evidence_gaps=evidence_gaps,
             priority=alert.severity,
-            metadata={
-                "avg_quality": alert.avg_quality,
-                "min_quality": alert.min_quality,
-                "quality_variance": alert.quality_variance,
-                "reason": alert.reason,
-            },
+            metadata=metadata,
         )
 
     def _build_challenge(

@@ -64,7 +64,7 @@ The **Nomic Loop** is aragora's autonomous self-improvement system—a society o
 - **Live Streaming**: Watch debates in real-time at [live.aragora.ai](https://live.aragora.ai)
 
 ```bash
-# Run the nomic loop
+# Run the nomic loop (experimental; review changes before auto-commit)
 python scripts/run_nomic_with_stream.py run --cycles 24 --auto
 ```
 
@@ -87,17 +87,29 @@ pip install -e .
 export ANTHROPIC_API_KEY=your-key  # or OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY
 
 # Run a debate with API agents (recommended - no CLI tools needed)
-python -m aragora.debate "Design a rate limiter for 1M requests/sec" \
-  --agents anthropic-api openai-api
+aragora ask "Design a rate limiter for 1M requests/sec" \
+  --agents anthropic-api,openai-api
 
 # With more agents and custom consensus
-python -m aragora.debate "Implement a secure auth system" \
-  --agents anthropic-api openai-api gemini-api grok \
+aragora ask "Implement a secure auth system" \
+  --agents anthropic-api,openai-api,gemini,grok \
   --rounds 4 \
   --consensus majority
 ```
 
 > **See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the complete 5-minute setup guide.**
+
+## Supported Entry Points
+
+Stable interfaces (recommended):
+- `aragora ask` for debates (CLI)
+- `aragora serve` for the unified API + WebSocket server
+- `python -m aragora` as a CLI alias
+- `python -m aragora.server` for the server in scripts/automation
+
+Experimental/research (may change; use in a sandbox):
+- `scripts/nomic_loop.py` and `scripts/run_nomic_with_stream.py`
+- `aragora improve` (self-improvement mode)
 
 ## Prerequisites
 
@@ -217,6 +229,12 @@ aragora stats
 
 # View learned patterns
 aragora patterns --type security --limit 20
+
+# Run the API + WebSocket server
+aragora serve
+
+# System health check
+aragora doctor
 
 # Export for training
 aragora export --format jsonl > training_data.jsonl

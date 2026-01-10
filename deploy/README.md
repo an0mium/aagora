@@ -1,83 +1,99 @@
-# Aragora Production Deployment
+# Aragora Deployment Guide
 
-## Quick Deploy
+Deploy the Aragora server to keep `aragora.ai` running 24/7.
+
+## Quick Start (AWS Lightsail)
+
+1. **Launch Instance**
+   - Go to AWS Lightsail
+   - Create Ubuntu 22.04 instance (1GB RAM minimum, 2GB recommended)
+   - Select "Networking" and open ports: 80, 443, 8080, 8765
+
+2. **Connect and Install**
+   ```bash
+   ssh ubuntu@your-instance-ip
+   git clone https://github.com/yourusername/aragora.git
+   cd aragora
+   ./deploy/setup-server.sh
+   ```
+
+3. **Configure API Keys**
+   ```bash
+   sudo nano /opt/aragora/.env
+   ```
+   Add your keys:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...
+   OPENAI_API_KEY=sk-proj-...
+   OPENROUTER_API_KEY=sk-or-...
+   GEMINI_API_KEY=AIza...
+   XAI_API_KEY=xai-...
+   ```
+
+4. **Configure Domain**
+   ```bash
+   sudo nano /etc/nginx/sites-available/aragora
+   # Replace YOUR_DOMAIN with api.aragora.ai
+   sudo certbot --nginx -d api.aragora.ai
+   sudo systemctl restart aragora nginx
+   ```
+
+## Docker Deployment
+
+For containerized deployment:
 
 ```bash
-# 1. Clone and setup
-git clone https://github.com/an0mium/aragora.git /opt/aragora
-cd /opt/aragora
-python -m venv venv
-source venv/bin/activate
-pip install -e .
-
-# 2. Install systemd service
-sudo cp deploy/aragora.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable aragora
-sudo systemctl start aragora
-
-# 3. Install nginx config
-sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/aragora
-sudo ln -s /etc/nginx/sites-available/aragora /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-
-# 4. Setup SSL (Let's Encrypt)
-sudo certbot --nginx -d api.aragora.ai
+cd deploy
+docker-compose up -d
 ```
 
-## Architecture
+## Management Commands
 
-```
-                    ┌──────────────────┐
-                    │   Nginx (443)    │
-                    │ api.aragora.ai   │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┴──────────────┐
-              │                             │
-              ▼                             ▼
-    ┌─────────────────┐          ┌─────────────────┐
-    │  HTTP API       │          │  WebSocket      │
-    │  Port 8080      │          │  Port 8765      │
-    │  /api/*         │          │  wss://         │
-    └─────────────────┘          └─────────────────┘
+```bash
+# Check status
+sudo systemctl status aragora
+
+# View logs
+sudo journalctl -u aragora -f
+
+# Restart server
+sudo systemctl restart aragora
+
+# Health check
+curl http://localhost:8080/healthz
 ```
 
 ## Ports
 
-| Service | Port | Protocol |
-|---------|------|----------|
-| HTTP API | 8080 | HTTP |
-| WebSocket | 8765 | WS |
-| Nginx | 443 | HTTPS/WSS |
+| Port | Service | Description |
+|------|---------|-------------|
+| 80   | nginx   | HTTP (redirects to HTTPS) |
+| 443  | nginx   | HTTPS |
+| 8080 | aragora | HTTP API (internal) |
+| 8765 | aragora | WebSocket (internal) |
+
+## Monitoring
+
+The server exposes health endpoints:
+- `GET /healthz` - Liveness probe
+- `GET /readyz` - Readiness probe  
+- `GET /api/health/detailed` - Detailed health
+
+## SSL/TLS
+
+Use Let's Encrypt for free SSL:
+```bash
+sudo certbot --nginx -d api.aragora.ai
+```
 
 ## Troubleshooting
 
-### WebSocket not connecting
-
+**Server won't start**
 ```bash
-# Check if server is running
-sudo systemctl status aragora
-
-# Test WebSocket directly
-wscat -c ws://localhost:8765
-
-# Check nginx config
-sudo nginx -t
-
-# View logs
-sudo journalctl -u aragora -f
+sudo journalctl -u aragora -n 100
+python -m aragora doctor
 ```
 
-### CORS issues
+**WebSocket fails** - Check ports 8765 open in security group
 
-Ensure `https://aragora.ai` is in the allowed origins:
-- Backend: `ARAGORA_ALLOWED_ORIGINS` env var
-- Nginx: CORS headers in nginx.conf
-
-### SSL certificate renewal
-
-```bash
-sudo certbot renew --dry-run
-```
+**API 500 errors** - Check .env keys, run doctor

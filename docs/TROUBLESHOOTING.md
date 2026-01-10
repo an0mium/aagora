@@ -218,7 +218,7 @@ python scripts/migrate_databases.py --validate
    ```bash
    # The server recreates empty databases on startup
    rm corrupted.db
-   python -m aragora.server.unified_server --port 8080
+   aragora serve
    ```
 
 ### Database Locking

@@ -7,7 +7,7 @@ Practical examples for using the Aragora HTTP and WebSocket APIs.
 Start the server:
 
 ```bash
-python -m aragora.server.unified_server --port 8080
+aragora serve
 ```
 
 Verify it's running:

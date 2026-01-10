@@ -4,6 +4,7 @@ Safety modules for nomic loop.
 Provides:
 - checksums: Protected file integrity verification
 - backups: Backup and restore functionality
+- constitution: Cryptographically signed immutable rules
 """
 
 from .checksums import (
@@ -21,6 +22,15 @@ from .backups import (
     verify_protected_files,
     list_backups,
 )
+from .constitution import (
+    Constitution,
+    ConstitutionRule,
+    ConstitutionVerifier,
+    ConstitutionViolation,
+    create_default_constitution,
+    save_constitution,
+    DEFAULT_CONSTITUTION_PATH,
+)
 
 __all__ = [
     # Checksums
@@ -36,4 +46,12 @@ __all__ = [
     "get_latest_backup",
     "verify_protected_files",
     "list_backups",
+    # Constitution
+    "Constitution",
+    "ConstitutionRule",
+    "ConstitutionVerifier",
+    "ConstitutionViolation",
+    "create_default_constitution",
+    "save_constitution",
+    "DEFAULT_CONSTITUTION_PATH",
 ]

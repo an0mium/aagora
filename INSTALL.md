@@ -49,7 +49,7 @@ XAI_API_KEY=your_xai_key
 python scripts/nomic_loop.py
 
 # Run the API server
-python -m aragora.server --host 0.0.0.0 --port 8765
+aragora serve --host 0.0.0.0 --ws-port 8765 --api-port 8080
 ```
 
 ## Production Deployment (AWS Lightsail)
@@ -110,6 +110,7 @@ docker build -t aragora .
 
 # Run with environment variables
 docker run -d \
+  -p 8080:8080 \
   -p 8765:8765 \
   -e GEMINI_API_KEY=your_key \
   -e ANTHROPIC_API_KEY=your_key \

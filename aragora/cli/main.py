@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Agora CLI - Multi-Agent Debate Framework
+Aragora CLI - Multi-Agent Debate Framework
 
 Usage:
-    agora ask "Design a rate limiter" --agents codex,claude --rounds 3
-    agora debate --task "Implement auth system" --agents codex,claude,openai
-    agora stats
+    aragora ask "Design a rate limiter" --agents anthropic-api,openai-api --rounds 3
+    aragora ask "Implement auth system" --agents anthropic-api,openai-api,gemini
+    aragora stats
 """
 
 import argparse
@@ -262,7 +262,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"  ⚠ Could not read state: {e}")
 
     print("\n" + "=" * 60)
-    print("Run 'agora ask' to start a debate or 'agora serve' to start the server")
+    print("Run 'aragora ask' to start a debate or 'aragora serve' to start the server")
 
 
 def cmd_patterns(args: argparse.Namespace) -> None:
@@ -517,6 +517,12 @@ def cmd_export(args: argparse.Namespace) -> None:
     print(f"Content Hash: {artifact.content_hash}")
 
 
+def cmd_doctor(_: argparse.Namespace) -> None:
+    """Handle 'doctor' command - run system health checks."""
+    from aragora.cli.doctor import main as doctor_main
+    sys.exit(doctor_main())
+
+
 def cmd_improve(args: argparse.Namespace) -> None:
     """Handle 'improve' command - self-improvement mode."""
     print("\n" + "=" * 60)
@@ -593,14 +599,14 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Agora - Multi-Agent Debate Framework",
+        description="Aragora - Multi-Agent Debate Framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  agora ask "Design a rate limiter" --agents codex,claude
-  agora ask "Implement auth" --agents codex,claude,openai --rounds 4
-  agora stats
-  agora patterns --type security
+  aragora ask "Design a rate limiter" --agents anthropic-api,openai-api
+  aragora ask "Implement auth" --agents anthropic-api,openai-api,gemini --rounds 4
+  aragora stats
+  aragora patterns --type security
         """,
     )
 
@@ -616,7 +622,10 @@ Examples:
         "--agents",
         "-a",
         default="codex,claude",
-        help="Comma-separated agents (codex,claude,openai). Use agent:role for specific roles.",
+        help=(
+            "Comma-separated agents (anthropic-api,openai-api,gemini,grok or codex,claude). "
+            "Use agent:role for specific roles."
+        ),
     )
     ask_parser.add_argument("--rounds", "-r", type=int, default=3, help="Number of debate rounds")
     ask_parser.add_argument(
@@ -677,6 +686,10 @@ Examples:
         help="Generate a demo export",
     )
     export_parser.set_defaults(func=cmd_export)
+
+    # Doctor command
+    doctor_parser = subparsers.add_parser("doctor", help="Run system health checks")
+    doctor_parser.set_defaults(func=cmd_doctor)
 
     # Improve command (self-improvement mode)
     improve_parser = subparsers.add_parser("improve", help="Self-improvement mode")
