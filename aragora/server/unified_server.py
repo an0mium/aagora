@@ -798,7 +798,10 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
                 # Continue to legacy handlers
 
         # NOTE: /api/documents/upload is now handled by DocumentHandler
-        if path == '/api/debate':
+        if path == '/api/debug/post-test':
+            # Simple diagnostic endpoint
+            self._send_json({"status": "ok", "message": "POST handling works"})
+        elif path == '/api/debate':
             self._start_debate()
         # NOTE: Broadcast, publishing, laboratory, routing, verification, probes,
         # plugins, insights routes are NOW HANDLED BY modular handlers (BroadcastHandler,
@@ -912,9 +915,19 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
 
         Rate limited: requires auth when enabled.
         """
+        logger.info("[_start_debate] Called")
+
         # Rate limit expensive debate creation
-        if not self._check_rate_limit():
+        try:
+            if not self._check_rate_limit():
+                logger.info("[_start_debate] Rate limit check failed")
+                return
+        except Exception as e:
+            logger.exception(f"[_start_debate] Rate limit check error: {e}")
+            self._send_json({"error": f"Rate limit check failed: {e}"}, status=500)
             return
+
+        logger.info("[_start_debate] Rate limit passed")
 
         # Tier-aware rate limiting based on subscription
         try:
