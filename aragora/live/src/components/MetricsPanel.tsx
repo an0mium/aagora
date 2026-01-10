@@ -130,7 +130,7 @@ export function MetricsPanel({ apiBase = DEFAULT_API_BASE }: MetricsPanelProps) 
     if (status === 'healthy') return 'text-green-400';
     if (status === 'degraded') return 'text-yellow-400';
     if (status === 'unhealthy') return 'text-red-400';
-    return 'text-gray-400';
+    return 'text-zinc-500 dark:text-zinc-400';
   };
 
   const formatAge = (seconds: number): string => {

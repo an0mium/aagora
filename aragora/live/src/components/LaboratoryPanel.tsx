@@ -132,7 +132,7 @@ export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE }: LaboratoryPanelP
       ethics: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
       creative: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
       analytical: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
-      general: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
+      general: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400 border-zinc-500/30',
     };
     return colors[domain] || colors.general;
   };

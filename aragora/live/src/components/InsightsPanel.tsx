@@ -190,7 +190,7 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
       case 'divergence':
         return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
       default:
-        return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+        return 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400 border-zinc-500/30';
     }
   };
 
@@ -211,7 +211,7 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
       case 'refinement':
         return 'bg-green-500/20 text-green-400 border-green-500/30';
       default:
-        return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+        return 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400 border-zinc-500/30';
     }
   };
 

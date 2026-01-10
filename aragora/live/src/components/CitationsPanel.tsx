@@ -48,7 +48,7 @@ const TYPE_CONFIG: Record<CitationType, { icon: string; label: string; color: st
   documentation: { icon: '📖', label: 'Docs', color: 'text-cyan-400' },
   official_source: { icon: '🏛️', label: 'Official', color: 'text-green-400' },
   code_repository: { icon: '💻', label: 'Code', color: 'text-orange-400' },
-  web_page: { icon: '🌐', label: 'Web', color: 'text-gray-400' },
+  web_page: { icon: '🌐', label: 'Web', color: 'text-zinc-500 dark:text-zinc-400' },
   internal_debate: { icon: '💬', label: 'Debate', color: 'text-accent' },
   unknown: { icon: '❓', label: 'Unknown', color: 'text-text-muted' },
 };
@@ -58,7 +58,7 @@ const QUALITY_CONFIG: Record<CitationQuality, { icon: string; label: string; col
   authoritative: { icon: '✓', label: 'Authoritative', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
   reputable: { icon: '○', label: 'Reputable', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' },
   mixed: { icon: '~', label: 'Mixed', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
-  unverified: { icon: '?', label: 'Unverified', color: 'bg-gray-500/20 text-gray-400 border-gray-500/30' },
+  unverified: { icon: '?', label: 'Unverified', color: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400 border-zinc-500/30' },
   questionable: { icon: '!', label: 'Questionable', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
 };
 

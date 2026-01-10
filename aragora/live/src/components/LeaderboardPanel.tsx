@@ -95,7 +95,7 @@ const getConsistencyColor = (consistency: number): string => {
 
 const getRankBadge = (rank: number): string => {
   if (rank === 1) return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
-  if (rank === 2) return 'bg-gray-400/20 text-gray-300 border-gray-400/30';
+  if (rank === 2) return 'bg-zinc-400/20 text-zinc-300 border-zinc-400/30';
   if (rank === 3) return 'bg-amber-600/20 text-amber-500 border-amber-600/30';
   return 'bg-surface text-text-muted border-border';
 };
