@@ -100,12 +100,17 @@ class GeminiAgent(QuotaFallbackMixin, APIAgent):
 
         url = f"{self.base_url}/models/{self.model}:generateContent"
 
+        # Build generation config with persona temperature if set
+        generation_config = {
+            "temperature": self.temperature if self.temperature is not None else 0.7,
+            "maxOutputTokens": 65536,  # Gemini 2.5 supports up to 65k output tokens
+        }
+        if self.top_p is not None:
+            generation_config["topP"] = self.top_p
+
         payload = {
             "contents": [{"parts": [{"text": full_prompt}]}],
-            "generationConfig": {
-                "temperature": 0.7,
-                "maxOutputTokens": 65536,  # Gemini 2.5 supports up to 65k output tokens
-            },
+            "generationConfig": generation_config,
         }
 
         headers = {
@@ -195,12 +200,17 @@ class GeminiAgent(QuotaFallbackMixin, APIAgent):
         # Use streamGenerateContent for streaming
         url = f"{self.base_url}/models/{self.model}:streamGenerateContent"
 
+        # Build generation config with persona temperature if set
+        generation_config = {
+            "temperature": self.temperature if self.temperature is not None else 0.7,
+            "maxOutputTokens": 65536,
+        }
+        if self.top_p is not None:
+            generation_config["topP"] = self.top_p
+
         payload = {
             "contents": [{"parts": [{"text": full_prompt}]}],
-            "generationConfig": {
-                "temperature": 0.7,
-                "maxOutputTokens": 65536,
-            },
+            "generationConfig": generation_config,
         }
 
         headers = {
