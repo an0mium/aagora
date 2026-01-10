@@ -114,6 +114,22 @@ except ImportError:
     _NOMIC_PHASES_AVAILABLE = False
     _NOMIC_PACKAGE_AVAILABLE = False
 
+# Import IssueGenerator for structured topic generation
+try:
+    from scripts.issue_generator import (
+        IssueGenerator,
+        IssueSelector,
+        Issue,
+        load_issue_history,
+        save_issue_attempt,
+    )
+    _ISSUE_GENERATOR_AVAILABLE = True
+except ImportError:
+    _ISSUE_GENERATOR_AVAILABLE = False
+    IssueGenerator = None
+    IssueSelector = None
+    Issue = None
+
 # =============================================================================
 # AUTOMATION FLAGS - Environment variables for CI/automation support
 # =============================================================================
@@ -2060,6 +2076,11 @@ class NomicLoop:
         if len(self._cycle_history) > self._max_cycle_history:
             self._cycle_history.pop(0)
 
+        # Record issue outcome if we were working on a structured issue
+        current_issue = getattr(self, '_current_issue', None)
+        if current_issue:
+            self._save_issue_outcome(current_issue, outcome)
+
     def _detect_cycle_deadlock(self) -> str:
         """Detect if we're stuck in a cycle pattern. Returns deadlock type or empty string."""
         if len(self._cycle_history) < 3:
@@ -3100,6 +3121,178 @@ The most valuable proposals combine deep analysis with actionable implementation
         except Exception as e:
             self._log(f"  [pulse] Error fetching trending topics: {e}")
             return ""
+
+    def _get_structured_topic(self) -> tuple[str, "Issue"]:
+        """Get a specific, scoped improvement topic from issue backlog.
+
+        Instead of asking "what should we improve?", scans the codebase for
+        concrete issues and selects one to focus the debate on.
+
+        Returns:
+            Tuple of (task_string, Issue) or (fallback_task, None)
+        """
+        if not _ISSUE_GENERATOR_AVAILABLE:
+            self._log("  [topics] IssueGenerator not available, using fallback")
+            return None, None
+
+        try:
+            # Generate issues from codebase
+            generator = IssueGenerator(self.aragora_path)
+            issues = generator.scan_for_issues()
+
+            if not issues:
+                self._log("  [topics] No issues found in codebase")
+                return None, None
+
+            # Load history of previously attempted issues
+            history = load_issue_history(self.nomic_dir)
+            selector = IssueSelector(issues, history)
+
+            # Select next unworked issue
+            issue = selector.select_next()
+            if not issue:
+                self._log("  [topics] All issues have been attempted, resetting backlog")
+                # All issues worked - get a fresh scan but don't use history
+                issue = issues[0] if issues else None
+                if not issue:
+                    return None, None
+
+            self._log(f"  [topics] Selected issue: {issue.title}")
+            self._log(f"  [topics] Category: {issue.category}, Priority: {issue.priority}, Complexity: {issue.complexity}")
+
+            # Build structured task prompt
+            task = f"""{SAFETY_PREAMBLE}
+
+## Issue to Address: {issue.title}
+
+**Category**: {issue.category}
+**Complexity**: {issue.complexity}
+**Files likely involved**: {', '.join(issue.file_hints[:5])}
+
+### Problem Description
+{issue.description}
+
+### Your Task
+Design a solution for this **specific issue**. Focus on:
+1. Root cause analysis - why does this problem exist?
+2. Minimal change - what's the smallest fix that fully addresses it?
+3. Verification - how do we confirm the fix works?
+
+**IMPORTANT**: Do NOT propose unrelated improvements. Stay focused on this issue.
+All agents should propose solutions to **this specific problem**.
+
+After debate, reach consensus on the best approach to fix this issue.
+"""
+            return task, issue
+
+        except Exception as e:
+            self._log(f"  [topics] Error generating structured topic: {e}")
+            return None, None
+
+    def _save_issue_outcome(self, issue: "Issue", outcome: str) -> None:
+        """Record the outcome of working on an issue."""
+        if not _ISSUE_GENERATOR_AVAILABLE or not issue:
+            return
+
+        try:
+            save_issue_attempt(self.nomic_dir, issue, outcome, self.cycle_count)
+            self._log(f"  [topics] Recorded issue outcome: {outcome}")
+        except Exception as e:
+            self._log(f"  [topics] Failed to save issue outcome: {e}")
+
+    def _calculate_proposal_alignment(self, proposals: dict[str, str]) -> float:
+        """Calculate semantic alignment between proposals using Jaccard similarity.
+
+        Returns a value between 0 (completely different) and 1 (identical).
+        Uses word overlap as a fast, API-free approximation.
+
+        Args:
+            proposals: Dict mapping agent name to proposal text
+
+        Returns:
+            Average pairwise Jaccard similarity score
+        """
+        if len(proposals) < 2:
+            return 1.0
+
+        def tokenize(text: str) -> set[str]:
+            """Extract significant words from text."""
+            import re
+            # Lowercase and extract words
+            words = re.findall(r'\b\w+\b', text.lower())
+            # Filter out very short words and common stop words
+            stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+                          'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+                          'would', 'could', 'should', 'may', 'might', 'must', 'shall',
+                          'can', 'need', 'to', 'of', 'in', 'for', 'on', 'with', 'at',
+                          'by', 'from', 'as', 'into', 'through', 'during', 'before',
+                          'after', 'above', 'below', 'between', 'under', 'again',
+                          'further', 'then', 'once', 'here', 'there', 'when', 'where',
+                          'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other',
+                          'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same',
+                          'so', 'than', 'too', 'very', 'just', 'and', 'but', 'if',
+                          'or', 'because', 'until', 'while', 'although', 'this', 'that',
+                          'these', 'those', 'it', 'its', 'we', 'you', 'they', 'them',
+                          'their', 'what', 'which', 'who', 'whom', 'i', 'me', 'my'}
+            return {w for w in words if len(w) >= 3 and w not in stop_words}
+
+        def jaccard_similarity(set1: set, set2: set) -> float:
+            """Calculate Jaccard similarity between two sets."""
+            if not set1 or not set2:
+                return 0.0
+            intersection = len(set1 & set2)
+            union = len(set1 | set2)
+            return intersection / union if union > 0 else 0.0
+
+        # Get word sets for each proposal
+        proposal_list = list(proposals.values())
+        word_sets = [tokenize(p) for p in proposal_list]
+
+        # Calculate pairwise similarities
+        similarities = []
+        for i in range(len(word_sets)):
+            for j in range(i + 1, len(word_sets)):
+                sim = jaccard_similarity(word_sets[i], word_sets[j])
+                similarities.append(sim)
+
+        avg_similarity = sum(similarities) / len(similarities) if similarities else 0.0
+
+        self._log(f"  [alignment] Proposal alignment score: {avg_similarity:.2f}")
+        return avg_similarity
+
+    def _get_judge_guidance(self, alignment: float, num_proposals: int) -> str:
+        """Get appropriate judge guidance based on proposal alignment.
+
+        When proposals are well-aligned, judge can simply pick the best.
+        When proposals diverge, judge needs explicit synthesis instructions.
+        """
+        if alignment >= 0.6:
+            return """
+Select the BEST proposal based on:
+1. Technical feasibility
+2. Impact on the specific issue
+3. Implementation simplicity
+"""
+        elif alignment >= 0.3:
+            return """
+The proposals address the issue differently. You should:
+
+1. **IDENTIFY COMMON GROUND**: What elements do multiple proposals share?
+2. **SYNTHESIZE**: Combine the best aspects into a unified approach
+3. **PRIORITIZE**: Focus on the core fix, defer nice-to-haves
+
+Produce a single, coherent design that addresses the original issue.
+"""
+        else:
+            return """
+CRITICAL: Proposals are highly divergent. You MUST take decisive action:
+
+1. **SELECT ONE**: Choose the proposal that most directly addresses the root cause
+2. **JUSTIFY**: Briefly explain why this approach wins
+3. **DISCARD**: Explicitly reject approaches that add unnecessary complexity
+
+DO NOT try to merge incompatible approaches. Pick a clear winner.
+"""
 
     async def _store_debate_consensus(self, result, topic: str) -> None:
         """Store debate consensus for future reference (P1: ConsensusMemory).
@@ -6044,7 +6237,7 @@ Synthesize these suggestions into a coherent, working implementation.
             self._save_state({"phase": phase_name, "stage": "arena_error", "error": str(e)})
             raise
 
-    async def _arbitrate_design(self, proposals: dict, improvement: str) -> Optional[str]:
+    async def _arbitrate_design(self, proposals: dict, improvement: str, alignment: float = None) -> Optional[str]:
         """Use a judge agent to pick between competing design proposals.
 
         When design voting is tied or close, this method uses Claude as an impartial
@@ -6057,6 +6250,7 @@ Synthesize these suggestions into a coherent, working implementation.
         Args:
             proposals: Dict mapping agent name to their design proposal
             improvement: The improvement being designed (for context)
+            alignment: Optional proposal alignment score (0-1) to guide judging
 
         Returns:
             The selected design text, or None if arbitration fails
@@ -6074,6 +6268,11 @@ Synthesize these suggestions into a coherent, working implementation.
                 for agent, proposal in proposals.items()
             )
 
+            # Get alignment-aware judge guidance
+            if alignment is None:
+                alignment = self._calculate_proposal_alignment(proposals)
+            judge_guidance = self._get_judge_guidance(alignment, len(proposals))
+
             arbitration_prompt = f"""You are a senior software architect arbitrating between competing design proposals.
 
 ## The Improvement Being Designed:
@@ -6082,16 +6281,18 @@ Synthesize these suggestions into a coherent, working implementation.
 ## Competing Designs:
 {proposals_text}
 
+## Proposal Alignment
+The proposals have an alignment score of {alignment:.2f} (0=completely different, 1=identical).
+
+## Your Decision Strategy
+{judge_guidance}
+
 ## Evaluation Criteria:
 1. FEASIBILITY: Can this be implemented without major refactoring?
 2. COMPLETENESS: Does it specify all file changes, APIs, and integration points?
 3. SAFETY: Does it preserve existing functionality and avoid protected files?
 4. CLARITY: Is it specific enough that an engineer could implement it?
 5. TESTABILITY: Does it include a viable test plan?
-
-## Your Task:
-Select the BEST design. If one is clearly superior, choose it.
-If they're comparable, synthesize the best elements of each.
 
 Respond with ONLY the complete design specification (no preamble).
 Start directly with "## 1. FILE CHANGES" or similar."""
@@ -6567,7 +6768,29 @@ Claude and Codex have read the actual codebase. DO NOT propose features that alr
         if pulse_context:
             learning_context += f"\n{pulse_context}\n"
 
-        task = f"""{SAFETY_PREAMBLE}
+        # Try structured topic generation first (specific issue from backlog)
+        # This significantly improves consensus rate by focusing debate on HOW to fix
+        # a specific issue rather than WHAT to improve.
+        structured_task, current_issue = self._get_structured_topic()
+        self._current_issue = current_issue  # Store for outcome tracking
+
+        if structured_task:
+            self._log(f"  [topics] Using structured topic: {current_issue.title if current_issue else 'unknown'}")
+            # Append learning context and codebase info to structured task
+            task = f"""{structured_task}
+
+## Additional Context
+{learning_context}
+
+## Codebase State
+{initial_proposal_section}
+
+Recent changes:
+{recent_changes}"""
+        else:
+            # Fallback to original vague topic (lower consensus rate expected)
+            self._log("  [topics] Falling back to open-ended topic generation")
+            task = f"""{SAFETY_PREAMBLE}
 
 What single improvement would most benefit aragora RIGHT NOW?
 
@@ -7537,6 +7760,14 @@ Designs missing any of these will be automatically rejected as non-viable.
             if msg.role == "proposer" and msg.content:
                 individual_proposals[msg.agent] = msg.content
 
+        # Calculate proposal alignment to detect divergent approaches
+        proposal_alignment = self._calculate_proposal_alignment(individual_proposals)
+
+        # Store alignment for potential re-debate with more rounds
+        if proposal_alignment < 0.3 and not result.consensus_reached:
+            self._log(f"  [alignment] Very low alignment ({proposal_alignment:.2f}) - proposals may be incompatible")
+            # Consider requesting clarification or using stronger judge guidance
+
         # Extract vote counts for fallback selection
         vote_counts = {}
         for vote in result.votes:
@@ -7570,6 +7801,7 @@ Designs missing any of these will be automatically rejected as non-viable.
             "confidence": result.confidence,
             "votes": [(v.agent, v.choice, v.confidence) for v in result.votes],
             "conditional_design": conditional_design is not None,  # Flag for conditional resolution
+            "proposal_alignment": proposal_alignment,  # Track for debugging convergence issues
         }
 
     def _git_stash_create(self) -> Optional[str]:
