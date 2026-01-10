@@ -5,6 +5,8 @@ Endpoints:
 - GET /api/metrics - Get operational metrics for monitoring
 - GET /api/metrics/health - Detailed health check
 - GET /api/metrics/cache - Cache statistics
+- GET /api/metrics/verification - Z3 formal verification statistics
+- GET /api/metrics/system - System information
 - GET /metrics - Prometheus-format metrics (OpenMetrics)
 """
 
