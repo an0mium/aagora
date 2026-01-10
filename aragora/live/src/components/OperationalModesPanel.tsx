@@ -143,8 +143,8 @@ export function OperationalModesPanel({
           onClick={() => setSelectedCategory(null)}
           className={`px-3 py-1 rounded text-sm ${
             selectedCategory === null
-              ? 'bg-zinc-700 text-white'
-              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-300'
+              ? 'bg-zinc-300 dark:bg-zinc-700 text-zinc-900 dark:text-white'
+              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
           }`}
         >
           All ({modes.length})
@@ -155,8 +155,8 @@ export function OperationalModesPanel({
             onClick={() => setSelectedCategory(cat)}
             className={`px-3 py-1 rounded text-sm flex items-center gap-1 ${
               selectedCategory === cat
-                ? 'bg-zinc-700 text-white'
-                : 'bg-zinc-800 text-zinc-400 hover:text-zinc-300'
+                ? 'bg-zinc-300 dark:bg-zinc-700 text-zinc-900 dark:text-white'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
             }`}
           >
             <span>{CATEGORY_ICONS[cat] || '📌'}</span>
@@ -173,11 +173,11 @@ export function OperationalModesPanel({
           filteredModes.map((mode) => (
             <div
               key={mode.name}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden"
+              className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden"
             >
               {/* Mode Header */}
               <div
-                className="p-3 flex items-center justify-between cursor-pointer hover:bg-zinc-700/50"
+                className="p-3 flex items-center justify-between cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/50"
                 onClick={() =>
                   setExpandedMode(expandedMode === mode.name ? null : mode.name)
                 }
@@ -212,17 +212,17 @@ export function OperationalModesPanel({
 
               {/* Mode Details (Expanded) */}
               {expandedMode === mode.name && (
-                <div className="px-3 pb-3 border-t border-zinc-700">
-                  <p className="text-zinc-400 text-sm mt-2">{mode.description}</p>
+                <div className="px-3 pb-3 border-t border-zinc-200 dark:border-zinc-700">
+                  <p className="text-zinc-500 dark:text-zinc-400 text-sm mt-2">{mode.description}</p>
 
                   {mode.tool_groups && mode.tool_groups.length > 0 && (
                     <div className="mt-3">
-                      <span className="text-xs text-zinc-500 uppercase">Tool Groups:</span>
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500 uppercase">Tool Groups:</span>
                       <div className="flex gap-2 mt-1 flex-wrap">
                         {mode.tool_groups.map((group) => (
                           <span
                             key={group}
-                            className="px-2 py-0.5 bg-zinc-700 text-zinc-300 text-xs rounded"
+                            className="px-2 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs rounded"
                           >
                             {group}
                           </span>

@@ -34,11 +34,11 @@ const ATTACK_TYPES = [
 ];
 
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: 'bg-red-900/30 border-red-700 text-red-400',
-  high: 'bg-orange-900/30 border-orange-700 text-orange-400',
-  medium: 'bg-yellow-900/30 border-yellow-700 text-yellow-400',
-  low: 'bg-blue-900/30 border-blue-700 text-blue-400',
-  info: 'bg-zinc-800 border-zinc-700 text-zinc-400',
+  critical: 'bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700 text-red-700 dark:text-red-400',
+  high: 'bg-orange-100 dark:bg-orange-900/30 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400',
+  medium: 'bg-yellow-100 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400',
+  low: 'bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-400',
+  info: 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400',
 };
 
 export function RedTeamAnalysisPanel({
@@ -143,8 +143,8 @@ export function RedTeamAnalysisPanel({
       </div>
 
       {/* Configuration */}
-      <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 mb-4">
-        <h4 className="text-sm font-medium text-zinc-400 mb-3">Attack Types</h4>
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4 mb-4">
+        <h4 className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-3">Attack Types</h4>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-4">
           {ATTACK_TYPES.map((attack) => (
             <button
@@ -152,8 +152,8 @@ export function RedTeamAnalysisPanel({
               onClick={() => toggleAttackType(attack.value)}
               className={`p-2 rounded border text-left text-sm ${
                 selectedAttacks.includes(attack.value)
-                  ? 'border-red-500 bg-red-500/10 text-red-400'
-                  : 'border-zinc-700 hover:border-zinc-600 text-zinc-400'
+                  ? 'border-red-500 bg-red-500/10 text-red-600 dark:text-red-400'
+                  : 'border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 text-zinc-600 dark:text-zinc-400'
               }`}
             >
               <div className="font-medium">{attack.label}</div>
@@ -164,24 +164,24 @@ export function RedTeamAnalysisPanel({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm text-zinc-400 mb-1">Max Rounds</label>
+            <label className="block text-sm text-zinc-500 dark:text-zinc-400 mb-1">Max Rounds</label>
             <input
               type="number"
               min={1}
               max={5}
               value={maxRounds}
               onChange={(e) => setMaxRounds(Math.min(5, Math.max(1, parseInt(e.target.value) || 1)))}
-              className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-zinc-300"
+              className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-3 py-2 text-zinc-700 dark:text-zinc-300"
             />
           </div>
           <div>
-            <label className="block text-sm text-zinc-400 mb-1">Focus Proposal (optional)</label>
+            <label className="block text-sm text-zinc-500 dark:text-zinc-400 mb-1">Focus Proposal (optional)</label>
             <input
               type="text"
               value={focusProposal}
               onChange={(e) => setFocusProposal(e.target.value)}
               placeholder="Specific proposal to analyze"
-              className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-zinc-300"
+              className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-3 py-2 text-zinc-700 dark:text-zinc-300"
             />
           </div>
         </div>
@@ -207,14 +207,14 @@ export function RedTeamAnalysisPanel({
       {result && (
         <div className="space-y-4">
           {/* Robustness Score */}
-          <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
             <div className="flex items-center justify-between">
-              <span className="text-zinc-400">Robustness Score</span>
+              <span className="text-zinc-500 dark:text-zinc-400">Robustness Score</span>
               <span className={`text-2xl font-bold ${getRobustnessColor(result.robustness_score)}`}>
                 {(result.robustness_score * 100).toFixed(0)}%
               </span>
             </div>
-            <div className="mt-2 bg-zinc-900 rounded-full h-2 overflow-hidden">
+            <div className="mt-2 bg-zinc-200 dark:bg-zinc-900 rounded-full h-2 overflow-hidden">
               <div
                 className={`h-full ${
                   result.robustness_score >= 0.8
@@ -229,8 +229,8 @@ export function RedTeamAnalysisPanel({
           </div>
 
           {/* Findings */}
-          <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
-            <h4 className="text-sm font-medium text-zinc-400 mb-3">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-3">
               Findings ({result.findings?.length || 0})
             </h4>
             {result.findings && result.findings.length > 0 ? (

@@ -154,7 +154,7 @@ function NetworkGraph({
   }, [nodes]);
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-64 bg-zinc-900/50 rounded-lg">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-64 bg-zinc-100/50 dark:bg-zinc-900/50 rounded-lg">
       {/* Edges */}
       {edges.map((edge, idx) => {
         const source = nodeById[edge.source];
@@ -303,7 +303,7 @@ export function AgentNetworkPanel({
 
     return (
       <div>
-        <h4 className="text-sm font-medium text-zinc-400 mb-2 flex items-center gap-2">
+        <h4 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 dark:text-zinc-400 mb-2 flex items-center gap-2">
           <span>{icon}</span> {title}
         </h4>
         <div className="space-y-1">
@@ -380,7 +380,7 @@ export function AgentNetworkPanel({
         <select
           value={agentInput}
           onChange={(e) => setAgentInput(e.target.value)}
-          className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-zinc-300"
+          className="flex-1 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded px-3 py-2 text-zinc-700 dark:text-zinc-300"
         >
           <option value="">Select an agent...</option>
           {availableAgents.map((agent) => (
@@ -409,7 +409,7 @@ export function AgentNetworkPanel({
       {network && (
         <div className="space-y-4">
           {/* Agent Header with View Toggle */}
-          <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+          <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-lg font-medium text-white">
                 {network.agent}&apos;s Relationship Network
@@ -420,7 +420,7 @@ export function AgentNetworkPanel({
                   className={`px-2 py-1 text-xs rounded ${
                     viewMode === 'graph'
                       ? 'bg-blue-600 text-white'
-                      : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'
+                      : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-500 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600'
                   }`}
                 >
                   Graph
@@ -430,7 +430,7 @@ export function AgentNetworkPanel({
                   className={`px-2 py-1 text-xs rounded ${
                     viewMode === 'list'
                       ? 'bg-blue-600 text-white'
-                      : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600'
+                      : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-500 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-600'
                   }`}
                 >
                   List
@@ -438,16 +438,16 @@ export function AgentNetworkPanel({
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="text-zinc-400">
+              <div className="text-zinc-500 dark:text-zinc-400">
                 <span className="text-white font-medium">{network.rivals?.length || 0}</span> rivals
               </div>
-              <div className="text-zinc-400">
+              <div className="text-zinc-500 dark:text-zinc-400">
                 <span className="text-white font-medium">{network.allies?.length || 0}</span> allies
               </div>
-              <div className="text-zinc-400">
+              <div className="text-zinc-500 dark:text-zinc-400">
                 <span className="text-white font-medium">{network.influences?.length || 0}</span> influenced
               </div>
-              <div className="text-zinc-400">
+              <div className="text-zinc-500 dark:text-zinc-400">
                 <span className="text-white font-medium">{network.influenced_by?.length || 0}</span> influencers
               </div>
             </div>
@@ -455,7 +455,7 @@ export function AgentNetworkPanel({
 
           {/* Graph View */}
           {viewMode === 'graph' && (
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
               <NetworkGraph
                 network={network}
                 onNodeClick={(agent) => {
@@ -476,7 +476,7 @@ export function AgentNetworkPanel({
           {viewMode === 'list' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Rivals */}
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
               {renderRelationshipList(
                 'Rivals',
                 network.rivals,
@@ -486,7 +486,7 @@ export function AgentNetworkPanel({
             </div>
 
             {/* Allies */}
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
               {renderRelationshipList(
                 'Allies',
                 network.allies,
@@ -496,7 +496,7 @@ export function AgentNetworkPanel({
             </div>
 
             {/* Influences */}
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
               {renderRelationshipList(
                 'Influences',
                 network.influences,
@@ -506,7 +506,7 @@ export function AgentNetworkPanel({
             </div>
 
             {/* Influenced By */}
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
               {renderRelationshipList(
                 'Influenced By',
                 network.influenced_by,
@@ -519,8 +519,8 @@ export function AgentNetworkPanel({
 
           {/* Significant Moments */}
           {moments.length > 0 && (
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-3 flex items-center gap-2">
                 <span>⭐</span> Significant Moments
               </h4>
               <div className="space-y-2">
@@ -537,7 +537,7 @@ export function AgentNetworkPanel({
                         {(moment.significance * 100).toFixed(0)}% significance
                       </span>
                     </div>
-                    <p className="text-sm text-zinc-300">{moment.description}</p>
+                    <p className="text-sm text-zinc-700 dark:text-zinc-300">{moment.description}</p>
                     {moment.debate_id && (
                       <span className="text-xs text-zinc-500 mt-1 block">
                         Debate: {moment.debate_id.slice(0, 8)}...

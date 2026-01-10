@@ -186,14 +186,14 @@ export function CapabilityProbePanel({
       </div>
 
       {/* Configuration */}
-      <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 mb-4">
+      <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4 mb-4">
         {/* Agent Selection */}
         <div className="mb-4">
-          <label className="block text-sm text-zinc-400 mb-1">Target Agent</label>
+          <label className="block text-sm text-zinc-500 dark:text-zinc-400 mb-1">Target Agent</label>
           <select
             value={selectedAgent}
             onChange={(e) => setSelectedAgent(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-zinc-300"
+            className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-3 py-2 text-zinc-700 dark:text-zinc-300"
           >
             <option value="">Select an agent...</option>
             {availableAgents.map((agent) => (
@@ -205,7 +205,7 @@ export function CapabilityProbePanel({
         </div>
 
         {/* Probe Types */}
-        <h4 className="text-sm font-medium text-zinc-400 mb-2">Probe Types</h4>
+        <h4 className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-2">Probe Types</h4>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-4">
           {PROBE_TYPES.map((probe) => (
             <button
@@ -213,8 +213,8 @@ export function CapabilityProbePanel({
               onClick={() => toggleProbeType(probe.value)}
               className={`p-2 rounded border text-left text-sm ${
                 selectedProbes.includes(probe.value)
-                  ? 'border-purple-500 bg-purple-500/10 text-purple-400'
-                  : 'border-zinc-700 hover:border-zinc-600 text-zinc-400'
+                  ? 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400'
+                  : 'border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 text-zinc-600 dark:text-zinc-400'
               }`}
             >
               <div className="font-medium flex items-center gap-1">
@@ -227,7 +227,7 @@ export function CapabilityProbePanel({
 
         {/* Probes Per Type */}
         <div>
-          <label className="block text-sm text-zinc-400 mb-1">
+          <label className="block text-sm text-zinc-500 dark:text-zinc-400 mb-1">
             Probes per Type (max 10)
           </label>
           <input
@@ -238,7 +238,7 @@ export function CapabilityProbePanel({
             onChange={(e) =>
               setProbesPerType(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))
             }
-            className="w-32 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-zinc-300"
+            className="w-32 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded px-3 py-2 text-zinc-700 dark:text-zinc-300"
           />
         </div>
       </div>
@@ -264,7 +264,7 @@ export function CapabilityProbePanel({
         <div className="space-y-4">
           {/* Summary */}
           {report.summary && (
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
+            <div className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
               <div className="grid grid-cols-4 gap-4 text-center">
                 <div>
                   <div className="text-2xl font-bold text-white">
@@ -309,7 +309,7 @@ export function CapabilityProbePanel({
                 return (
                   <div
                     key={type}
-                    className="bg-zinc-800 border border-zinc-700 rounded-lg p-4"
+                    className="bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg p-4"
                   >
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="font-medium text-white flex items-center gap-2">
