@@ -159,13 +159,13 @@ aragora/
 │   └── public/            # Static assets
 │
 ├── server/                 # WebSocket/HTTP server
-│   ├── unified_server.py  # Unified server (54+ endpoints)
+│   ├── unified_server.py  # Unified server (106+ endpoints)
 │   ├── handlers/          # Request handlers by domain
 │   │   ├── base.py        # BaseHandler, ttl_cache decorator
 │   │   ├── debates.py     # Debate CRUD and exports
 │   │   ├── agents.py      # Agent profiles and rankings
 │   │   ├── analytics.py   # System analytics
-│   │   └── ...            # 20+ handler modules
+│   │   └── ...            # 41 handler modules
 │   └── stream/            # Streaming infrastructure (refactored)
 │       ├── servers.py     # WebSocket server classes
 │       ├── broadcaster.py # Event broadcasting

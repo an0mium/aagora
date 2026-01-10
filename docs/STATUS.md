@@ -253,7 +253,7 @@
 - **NEW**: Wired AUDIENCE_SUMMARY and INSIGHT_EXTRACTED events to WebSocket stream
 
 ### Recent Changes (2026-01-05 Session 5)
-- **NEW**: Modular handlers expanded to 20 total (agents, analytics, auditing, belief, consensus, critique, debates, documents, genesis, leaderboard, memory, metrics, moments, pulse, relationship, replays, system, tournaments, verification)
+- **NEW**: Modular handlers expanded to 41 total (agents, analytics, audio, auditing, auth, belief, billing, breakpoints, broadcast, cache, calibration, consensus, critique, dashboard, debates, documents, evolution, gallery, genesis, graph_debates, insights, introspection, laboratory, leaderboard, learning, matrix_debates, memory, metrics, moments, persona, plugins, probes, pulse, relationship, replays, routing, social, system, tournaments, verification)
 - **NEW**: Migrated opponent briefing API to AgentsHandler (removed from unified_server.py legacy routes)
 - **NEW**: Fork debate initial messages support (Arena accepts initial_messages parameter)
 - **NEW**: Fork tests added (TestForkInitialMessages - 6 tests)
@@ -359,7 +359,7 @@
 | Database Query Indexes | Active | `aragora/ranking/elo.py` (8 indexes for common queries) |
 | N+1 Query Optimization | Active | `aragora/ranking/elo.py` (get_rivals/get_allies batch) |
 | Fork Initial Messages | Active | `aragora/debate/orchestrator.py` (initial_messages parameter) |
-| Modular HTTP Handlers | Active | `aragora/server/handlers/` (20 handler modules) |
+| Modular HTTP Handlers | Active | `aragora/server/handlers/` (41 handler modules) |
 | Resource Availability Logging | Active | `aragora/server/unified_server.py` (_log_resource_availability) |
 | Demo Consensus Fixtures | Active | `aragora/fixtures/__init__.py` (auto-seed on server startup) |
 | Seed Demo API | Active | `aragora/server/handlers/consensus.py` (/api/consensus/seed-demo) |
