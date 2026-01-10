@@ -46,18 +46,18 @@ export function DebateBrowser() {
   };
 
   return (
-    <div className="bg-surface border border-acid-green/30 font-mono">
+    <div className="panel font-mono" style={{ padding: 0 }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-acid-green/20 bg-bg/50">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <span className="text-acid-green">[</span>
-          <span className="text-xs text-acid-green uppercase tracking-wider">DEBATE_ARCHIVE</span>
+          <span className="panel-title-sm text-acid-green">DEBATE_ARCHIVE</span>
           <span className="text-acid-green">]</span>
           <span className="text-text-muted text-xs">// {debates.length} recent</span>
         </div>
       </div>
 
-      <div className="p-3 space-y-2 max-h-[400px] overflow-y-auto">
+      <div className="p-4 space-y-2 max-h-80 overflow-y-auto">
         {loading && (
           <div className="text-center text-text-muted py-4 text-xs">
             <span className="animate-pulse">{'>'}</span> Loading debates...
@@ -73,7 +73,7 @@ export function DebateBrowser() {
         {debates.map((debate) => (
           <div
             key={debate.id}
-            className="bg-bg/50 border border-acid-green/20 p-3 hover:border-acid-green/40 transition-colors"
+            className="panel-item"
           >
             <div className="flex items-start justify-between gap-2 mb-2">
               <Link
@@ -131,7 +131,7 @@ export function DebateBrowser() {
       </div>
 
       {/* Footer */}
-      <div className="px-3 py-2 border-t border-acid-green/20 bg-bg/30">
+      <div className="px-4 py-3 border-t border-border">
         <Link
           href="/debates"
           className="text-xs text-text-muted hover:text-acid-green transition-colors"
