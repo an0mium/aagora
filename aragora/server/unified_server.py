@@ -917,8 +917,11 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
             return
 
         # Tier-aware rate limiting based on subscription
-        if not self._check_tier_rate_limit():
-            return
+        try:
+            if not self._check_tier_rate_limit():
+                return
+        except Exception as e:
+            logger.warning(f"Tier rate limit check failed, proceeding: {e}")
 
         # Quota enforcement - check org usage limits
         if UnifiedHandler.user_store:
@@ -978,8 +981,13 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
             return
 
         # Get or create debate controller and start debate
-        controller = self._get_debate_controller()
-        response = controller.start_debate(request)
+        try:
+            controller = self._get_debate_controller()
+            response = controller.start_debate(request)
+        except Exception as e:
+            logger.exception(f"Failed to start debate: {e}")
+            self._send_json({"error": f"Failed to start debate: {str(e)}"}, status=500)
+            return
 
         # Increment usage on successful debate creation
         if response.status_code < 400 and UnifiedHandler.user_store:
