@@ -1040,6 +1040,9 @@ class BaseHandler:
 
     def get_elo_system(self) -> Optional[Any]:
         """Get ELO system instance."""
+        # Check class attribute first (set by unified_server), then ctx
+        if hasattr(self.__class__, 'elo_system') and self.__class__.elo_system is not None:
+            return self.__class__.elo_system
         return self.ctx.get("elo_system")
 
     def get_debate_embeddings(self) -> Optional[Any]:
