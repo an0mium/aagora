@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional, Set
 
 from . import ImplementResult
+from .scope_limiter import ScopeLimiter, ScopeEvaluation
 
 # Default protected files
 DEFAULT_PROTECTED_FILES = [
@@ -104,6 +105,36 @@ class ImplementPhase:
         self._record_replay("phase", "system", "implement")
 
         use_hybrid = os.environ.get("ARAGORA_HYBRID_IMPLEMENT", "1") == "1"
+        scope_check = os.environ.get("ARAGORA_SCOPE_CHECK", "1") == "1"
+
+        # Check design scope before proceeding
+        if scope_check:
+            limiter = ScopeLimiter(protected_files=self.protected_files)
+            scope_eval = limiter.evaluate(design)
+
+            if not scope_eval.is_implementable:
+                self._log(f"  [scope] Design rejected: {scope_eval.reason}")
+                for factor in scope_eval.risk_factors[:3]:
+                    self._log(f"  [scope]   - {factor}")
+                for suggestion in scope_eval.suggested_simplifications[:2]:
+                    self._log(f"  [scope] Suggestion: {suggestion}")
+
+                self._stream_emit(
+                    "on_phase_end", "implement", self.cycle_count, False,
+                    (datetime.now() - phase_start).total_seconds(),
+                    {"error": "scope_exceeded", "evaluation": scope_eval.to_dict()}
+                )
+
+                return ImplementResult(
+                    success=False,
+                    error=f"Design too complex: {scope_eval.reason}",
+                    data={"scope_evaluation": scope_eval.to_dict()},
+                    duration_seconds=(datetime.now() - phase_start).total_seconds(),
+                    files_modified=[],
+                    diff_summary="",
+                )
+            else:
+                self._log(f"  [scope] Design approved (complexity: {scope_eval.complexity_score:.2f})")
 
         if not use_hybrid:
             return await self._legacy_implement(design)

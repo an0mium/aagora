@@ -72,6 +72,7 @@ from .context import ContextPhase, set_metrics_recorder
 from .implement import ImplementPhase
 from .debate import DebatePhase, DebateConfig, LearningContext, PostDebateHooks
 from .design import DesignPhase, DesignConfig, BeliefContext
+from .scope_limiter import ScopeLimiter, ScopeEvaluation, check_design_scope
 
 __all__ = [
     # Result types
@@ -95,6 +96,10 @@ __all__ = [
     "LearningContext",
     "BeliefContext",
     "PostDebateHooks",
+    # Scope limiting
+    "ScopeLimiter",
+    "ScopeEvaluation",
+    "check_design_scope",
     # Metrics integration
     "set_metrics_recorder",
 ]
