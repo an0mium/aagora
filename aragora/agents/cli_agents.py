@@ -88,14 +88,16 @@ class CLIAgent(CritiqueMixin, Agent):
         name: str,
         model: str,
         role: str = "proposer",
-        timeout: int = 120,
+        timeout: int = 300,  # Increased default for complex operations
         enable_fallback: bool = True,
         circuit_breaker: CircuitBreaker | None = None,
         enable_circuit_breaker: bool = True,
+        prefer_api: bool = False,  # Skip CLI, use OpenRouter directly
     ):
         super().__init__(name, model, role)
         self.timeout = timeout
         self.enable_fallback = enable_fallback
+        self.prefer_api = prefer_api
         self._fallback_agent: OpenRouterAgent | None = None
         self._fallback_used = False  # Track if fallback was triggered this session
         self.enable_circuit_breaker = enable_circuit_breaker
@@ -106,8 +108,8 @@ class CLIAgent(CritiqueMixin, Agent):
             self._circuit_breaker = circuit_breaker
         elif enable_circuit_breaker:
             self._circuit_breaker = CircuitBreaker(
-                failure_threshold=5,  # Increased from 3 for nomic loop stability
-                cooldown_seconds=60.0,
+                failure_threshold=10,  # Increased for nomic loop stability (CLI is flaky)
+                cooldown_seconds=120.0,  # Longer cooldown for active debates
             )
         else:
             self._circuit_breaker = None
@@ -223,7 +225,18 @@ class CLIAgent(CritiqueMixin, Agent):
                 # Record failure to circuit breaker
                 if self._circuit_breaker is not None:
                     self._circuit_breaker.record_failure()
-                raise RuntimeError(f"CLI command failed: {stderr.decode('utf-8', errors='replace')}")
+                # Build informative error message with return code
+                stderr_text = stderr.decode('utf-8', errors='replace').strip()
+                error_msg = f"CLI command failed with return code {proc.returncode}"
+                if stderr_text:
+                    # For verbose CLIs (like Codex), extract last meaningful line
+                    lines = [l.strip() for l in stderr_text.split('\n') if l.strip()]
+                    if lines:
+                        last_line = lines[-1][:200]
+                        error_msg += f": {last_line}"
+                else:
+                    error_msg += " (stderr empty)"
+                raise RuntimeError(error_msg)
 
             # Record success to circuit breaker
             if self._circuit_breaker is not None:
@@ -306,6 +319,17 @@ class CLIAgent(CritiqueMixin, Agent):
         Returns:
             Generated response string
         """
+        # If prefer_api is set, skip CLI entirely and use OpenRouter directly
+        if self.prefer_api:
+            fallback = self._get_fallback_agent()
+            if fallback:
+                logger.debug(
+                    f"[{self.name}] prefer_api=True, using OpenRouter directly"
+                )
+                self._fallback_used = True
+                return await fallback.generate(prompt, context)
+            # If no fallback available, fall through to CLI
+
         try:
             result = await self._run_cli(cli_command, input_text=input_text)
             if response_extractor:
@@ -321,7 +345,17 @@ class CLIAgent(CritiqueMixin, Agent):
                         f"falling back to OpenRouter"
                     )
                     self._fallback_used = True
-                    return await fallback.generate(prompt, context)
+                    try:
+                        result = await fallback.generate(prompt, context)
+                        # Record success when fallback works - prevents circuit from opening
+                        if self._circuit_breaker is not None:
+                            self._circuit_breaker.record_success()
+                        return result
+                    except Exception as fallback_error:
+                        # Fallback also failed - record as failure
+                        if self._circuit_breaker is not None:
+                            self._circuit_breaker.record_failure()
+                        raise fallback_error
             raise
 
     def _build_critique_prompt(self, proposal: str, task: str) -> str:
@@ -381,8 +415,20 @@ class CodexAgent(CLIAgent):
         return '\n'.join(response_lines).strip() if response_lines else result
 
     async def generate(self, prompt: str, context: list[Message] | None = None) -> str:
-        """Generate a response using codex exec."""
+        """Generate a response using codex exec.
+
+        For large prompts (>10KB), uses stdin to avoid OS E2BIG error
+        (argument list too long).
+        """
         full_prompt = self._build_full_prompt(prompt, context)
+        # Use stdin for large prompts to avoid E2BIG (arg list too long)
+        if len(full_prompt) > 10000:
+            return await self._generate_with_fallback(
+                ["codex", "exec", "--skip-git-repo-check", "-"],
+                prompt, context,
+                input_text=full_prompt,
+                response_extractor=self._extract_codex_response,
+            )
         return await self._generate_with_fallback(
             ["codex", "exec", "--skip-git-repo-check", full_prompt],
             prompt, context,
