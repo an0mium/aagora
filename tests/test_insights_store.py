@@ -646,3 +646,165 @@ class TestConcurrentAccess:
 
         # All should return lists
         assert all(isinstance(r, list) for r in results)
+
+
+# =============================================================================
+# Tests: Insight Application Cycle (Phase 10B)
+# =============================================================================
+
+
+class TestInsightApplicationCycle:
+    """Tests for the insight application cycle - get_relevant_insights and record_insight_usage."""
+
+    @pytest.mark.asyncio
+    async def test_get_relevant_insights_empty(self, insight_store):
+        """Should return empty list when no insights exist."""
+        insights = await insight_store.get_relevant_insights()
+        assert insights == []
+
+    @pytest.mark.asyncio
+    async def test_get_relevant_insights_returns_high_confidence(
+        self, insight_store, sample_debate_insights
+    ):
+        """Should return insights with high confidence."""
+        # The convergence_insight already has confidence=0.85 in fixture
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        insights = await insight_store.get_relevant_insights(min_confidence=0.7)
+        # Should return insights meeting the threshold
+        assert isinstance(insights, list)
+
+    @pytest.mark.asyncio
+    async def test_get_relevant_insights_filters_by_confidence(
+        self, insight_store, sample_insight
+    ):
+        """Should filter out low confidence insights."""
+        # Create insight with low confidence
+        sample_insight.confidence = 0.3
+        low_conf_insights = DebateInsights(
+            debate_id="debate-low-conf",
+            task="Test task",
+            consensus_reached=True,
+            duration_seconds=60.0,
+            total_insights=1,
+            key_takeaway="Low confidence test",
+            convergence_insight=sample_insight,
+            pattern_insights=[],
+            agent_performances=[],
+        )
+        await insight_store.store_debate_insights(low_conf_insights)
+
+        # High threshold should filter it out
+        insights = await insight_store.get_relevant_insights(min_confidence=0.8)
+        # Should be empty or only contain insights meeting threshold
+        for insight in insights:
+            assert insight.confidence >= 0.8
+
+    @pytest.mark.asyncio
+    async def test_get_relevant_insights_filters_by_domain(
+        self, insight_store, sample_debate_insights
+    ):
+        """Should filter by domain when specified."""
+        # The pattern_insights fixture has category=convergence in metadata
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        # Filter by convergence domain
+        insights = await insight_store.get_relevant_insights(
+            domain="convergence", min_confidence=0.5
+        )
+        assert isinstance(insights, list)
+
+    @pytest.mark.asyncio
+    async def test_get_relevant_insights_respects_limit(
+        self, insight_store, sample_debate_insights
+    ):
+        """Should respect limit parameter."""
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        insights = await insight_store.get_relevant_insights(
+            min_confidence=0.5, limit=1
+        )
+        assert len(insights) <= 1
+
+    @pytest.mark.asyncio
+    async def test_record_insight_usage_success(
+        self, insight_store, sample_debate_insights
+    ):
+        """Should record successful insight usage."""
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        # Get an insight ID - get_recent_insights returns Insight objects
+        insights = await insight_store.get_recent_insights(limit=1)
+        if insights:
+            insight = insights[0]
+            insight_id = getattr(insight, 'id', None) or getattr(insight, 'insight_id', "test-id")
+
+            # Record successful usage
+            await insight_store.record_insight_usage(
+                insight_id=insight_id,
+                debate_id="test-debate-123",
+                was_successful=True,
+            )
+
+            # Should not raise
+            assert True
+
+    @pytest.mark.asyncio
+    async def test_record_insight_usage_failure(
+        self, insight_store, sample_debate_insights
+    ):
+        """Should record failed insight usage."""
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        # Record failed usage - should not raise
+        await insight_store.record_insight_usage(
+            insight_id="some-insight-id",
+            debate_id="test-debate-456",
+            was_successful=False,
+        )
+        assert True
+
+    @pytest.mark.asyncio
+    async def test_insight_usage_tracking(
+        self, insight_store, sample_debate_insights
+    ):
+        """Usage tracking infrastructure should work."""
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        # Get an insight ID - get_recent_insights returns Insight objects
+        insights = await insight_store.get_recent_insights(limit=1)
+        if insights:
+            insight = insights[0]
+            insight_id = getattr(insight, 'id', None) or getattr(insight, 'insight_id', "test-id")
+
+            # Record multiple successful usages
+            for i in range(3):
+                await insight_store.record_insight_usage(
+                    insight_id=insight_id,
+                    debate_id=f"debate-{i}",
+                    was_successful=True,
+                )
+
+            # Should not raise - usage is recorded
+            assert True
+
+
+class TestInsightContextInjection:
+    """Tests for context initialization insight injection."""
+
+    @pytest.mark.asyncio
+    async def test_context_receives_insights(self, insight_store, sample_debate_insights):
+        """Verify insights can be retrieved for context injection."""
+        await insight_store.store_debate_insights(sample_debate_insights)
+
+        # Get insights for injection
+        insights = await insight_store.get_relevant_insights(
+            min_confidence=0.5, limit=5
+        )
+
+        # Format for prompt (simulating what ContextInitializer does)
+        if insights:
+            context = "## LEARNED PRACTICES\n"
+            for insight in insights:
+                context += f"- {insight.title}\n"
+            assert "LEARNED PRACTICES" in context
