@@ -216,7 +216,7 @@ AGENT_TIMEOUT_SECONDS = _env_int("ARAGORA_AGENT_TIMEOUT", 240)  # 4 minutes per 
 # === Agents ===
 DEFAULT_AGENTS = _env_str(
     "ARAGORA_DEFAULT_AGENTS",
-    "grok,anthropic-api,openai-api,deepseek,mistral-api,gemini,qwen,kimi"
+    "grok,anthropic-api,openai-api,deepseek,mistral-api,gemini,qwen-max,kimi"
 )
 STREAMING_CAPABLE_AGENTS = _env_str(
     "ARAGORA_STREAMING_AGENTS",
