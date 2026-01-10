@@ -13,6 +13,7 @@ from aragora.memory.continuum import (
     TierConfig,
     TIER_CONFIGS,
 )
+from aragora.learning.meta import MetaLearner
 
 __all__ = [
     "ContinuumMemory",
@@ -20,4 +21,5 @@ __all__ = [
     "MemoryTier",
     "TierConfig",
     "TIER_CONFIGS",
+    "MetaLearner",
 ]

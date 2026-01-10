@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from aragora.reasoning.flip import FlipDetector
     from aragora.connectors.evidence import EvidenceCollector
     from aragora.replay.recorder import ReplayRecorder
-    from aragora.pulse.topics import TrendingTopic
+    from aragora.pulse.ingestor import TrendingTopic
     from aragora.debate.orchestrator import Arena
     from aragora.templates import DebateTemplate
 
