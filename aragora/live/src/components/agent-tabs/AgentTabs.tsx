@@ -5,7 +5,7 @@ import { isAgentMessage } from '@/types/events';
 import { getAgentColors } from '@/utils/agentColors';
 import { AllAgentsTab } from './AllAgentsTab';
 import { IndividualAgentTab } from './IndividualAgentTab';
-import type { AgentTabsProps, AgentData, TimelineMessage, PositionEntry } from './types';
+import type { AgentTabsProps, AgentData, TimelineMessage, PositionEntry, MatchHistoryEntry } from './types';
 import { ALL_AGENTS_TAB } from './types';
 import { logger } from '@/utils/logger';
 
@@ -15,8 +15,11 @@ export function AgentTabs({ events, apiBase = DEFAULT_API_BASE }: AgentTabsProps
   const [selectedAgent, setSelectedAgent] = useState<string>(ALL_AGENTS_TAB);
   const [showHistory, setShowHistory] = useState(false);
   const [showPositions, setShowPositions] = useState(false);
+  const [showMatchHistory, setShowMatchHistory] = useState(false);
   const [positions, setPositions] = useState<PositionEntry[]>([]);
   const [positionsLoading, setPositionsLoading] = useState(false);
+  const [matchHistory, setMatchHistory] = useState<MatchHistoryEntry[]>([]);
+  const [matchHistoryLoading, setMatchHistoryLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -37,15 +40,35 @@ export function AgentTabs({ events, apiBase = DEFAULT_API_BASE }: AgentTabsProps
     }
   }, [apiBase]);
 
-  // Fetch positions when agent selection changes
+  // Fetch match history when viewing individual agent
+  const fetchMatchHistory = useCallback(async (agentName: string) => {
+    setMatchHistoryLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/api/agent/${encodeURIComponent(agentName)}/history?limit=50`);
+      if (response.ok) {
+        const data = await response.json();
+        setMatchHistory(data.history || []);
+      }
+    } catch (err) {
+      logger.error('Failed to fetch match history:', err);
+      setMatchHistory([]);
+    } finally {
+      setMatchHistoryLoading(false);
+    }
+  }, [apiBase]);
+
+  // Fetch positions and match history when agent selection changes
   useEffect(() => {
     if (selectedAgent !== ALL_AGENTS_TAB) {
       fetchPositions(selectedAgent);
+      fetchMatchHistory(selectedAgent);
     } else {
       setPositions([]);
+      setMatchHistory([]);
       setShowPositions(false);
+      setShowMatchHistory(false);
     }
-  }, [selectedAgent, fetchPositions]);
+  }, [selectedAgent, fetchPositions, fetchMatchHistory]);
 
   // Extract agent data from events
   const agentData = useMemo<AgentData[]>(() => {
@@ -139,11 +162,19 @@ export function AgentTabs({ events, apiBase = DEFAULT_API_BASE }: AgentTabsProps
   const handleToggleHistory = useCallback(() => {
     setShowHistory((prev) => !prev);
     setShowPositions(false);
+    setShowMatchHistory(false);
   }, []);
 
   const handleTogglePositions = useCallback(() => {
     setShowPositions((prev) => !prev);
     setShowHistory(false);
+    setShowMatchHistory(false);
+  }, []);
+
+  const handleToggleMatchHistory = useCallback(() => {
+    setShowMatchHistory((prev) => !prev);
+    setShowHistory(false);
+    setShowPositions(false);
   }, []);
 
   const currentAgent = selectedAgent !== ALL_AGENTS_TAB
@@ -229,10 +260,15 @@ export function AgentTabs({ events, apiBase = DEFAULT_API_BASE }: AgentTabsProps
           currentAgent={currentAgent}
           positions={positions}
           positionsLoading={positionsLoading}
+          matchHistory={matchHistory}
+          matchHistoryLoading={matchHistoryLoading}
           showHistory={showHistory}
           showPositions={showPositions}
+          showMatchHistory={showMatchHistory}
           onToggleHistory={handleToggleHistory}
           onTogglePositions={handleTogglePositions}
+          onToggleMatchHistory={handleToggleMatchHistory}
+          apiBase={apiBase}
         />
       )}
     </div>

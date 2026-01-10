@@ -4,8 +4,9 @@ User Authentication Handlers.
 Endpoints:
 - POST /api/auth/register - Create a new user account
 - POST /api/auth/login - Authenticate and get tokens
-- POST /api/auth/logout - Invalidate current token
-- POST /api/auth/refresh - Refresh access token
+- POST /api/auth/logout - Invalidate current token (adds to blacklist)
+- POST /api/auth/refresh - Refresh access token (revokes old refresh token)
+- POST /api/auth/revoke - Explicitly revoke a specific token
 - GET /api/auth/me - Get current user information
 - PUT /api/auth/me - Update current user information
 - POST /api/auth/password - Change password
@@ -71,6 +72,7 @@ class AuthHandler(BaseHandler):
         "/api/auth/login",
         "/api/auth/logout",
         "/api/auth/refresh",
+        "/api/auth/revoke",
         "/api/auth/me",
         "/api/auth/password",
         "/api/auth/api-key",
@@ -108,6 +110,9 @@ class AuthHandler(BaseHandler):
 
         if path == "/api/auth/password" and method == "POST":
             return self._handle_change_password(handler)
+
+        if path == "/api/auth/revoke" and method == "POST":
+            return self._handle_revoke_token(handler)
 
         if path == "/api/auth/api-key":
             if method == "POST":
@@ -262,6 +267,7 @@ class AuthHandler(BaseHandler):
         from aragora.billing.jwt_auth import (
             validate_refresh_token,
             create_token_pair,
+            get_token_blacklist,
         )
 
         # Parse request body
@@ -291,6 +297,10 @@ class AuthHandler(BaseHandler):
         if not user.is_active:
             return error_response("Account is disabled", 403)
 
+        # Revoke the old refresh token to prevent reuse
+        blacklist = get_token_blacklist()
+        blacklist.revoke_token(refresh_token)
+
         # Create new token pair
         tokens = create_token_pair(
             user_id=user.id,
@@ -304,7 +314,11 @@ class AuthHandler(BaseHandler):
     @handle_errors("logout")
     def _handle_logout(self, handler) -> HandlerResult:
         """Handle user logout (token invalidation)."""
-        from aragora.billing.jwt_auth import extract_user_from_request
+        from aragora.billing.jwt_auth import (
+            extract_user_from_request,
+            get_token_blacklist,
+        )
+        from aragora.server.middleware.auth import extract_token
 
         # Get current user
         user_store = self._get_user_store()
@@ -312,9 +326,16 @@ class AuthHandler(BaseHandler):
         if not auth_ctx.is_authenticated:
             return error_response("Not authenticated", 401)
 
-        # In a production system, we would add the token to a blacklist
-        # For now, just acknowledge the logout
-        logger.info(f"User logged out: {auth_ctx.user_id}")
+        # Revoke the current token by adding to blacklist
+        token = extract_token(handler)
+        if token:
+            blacklist = get_token_blacklist()
+            if blacklist.revoke_token(token):
+                logger.info(f"User logged out and token revoked: {auth_ctx.user_id}")
+            else:
+                logger.warning(f"User logged out but token revocation failed: {auth_ctx.user_id}")
+        else:
+            logger.info(f"User logged out (no token to revoke): {auth_ctx.user_id}")
 
         return json_response({"message": "Logged out successfully"})
 
@@ -441,6 +462,45 @@ class AuthHandler(BaseHandler):
         logger.info(f"Password changed for user: {user.email}")
 
         return json_response({"message": "Password changed successfully"})
+
+    @handle_errors("revoke token")
+    def _handle_revoke_token(self, handler) -> HandlerResult:
+        """Explicitly revoke a specific token."""
+        from aragora.billing.jwt_auth import (
+            extract_user_from_request,
+            get_token_blacklist,
+        )
+        from aragora.server.middleware.auth import extract_token
+
+        # Get current user (required for authorization)
+        user_store = self._get_user_store()
+        auth_ctx = extract_user_from_request(handler, user_store)
+        if not auth_ctx.is_authenticated:
+            return error_response("Not authenticated", 401)
+
+        # Parse request body
+        body = self.read_json_body(handler)
+
+        # Get token to revoke from body, or use current token
+        token_to_revoke = None
+        if body and "token" in body:
+            token_to_revoke = body["token"]
+        else:
+            token_to_revoke = extract_token(handler)
+
+        if not token_to_revoke:
+            return error_response("No token provided to revoke", 400)
+
+        # Revoke the token
+        blacklist = get_token_blacklist()
+        if blacklist.revoke_token(token_to_revoke):
+            logger.info(f"Token revoked by user: {auth_ctx.user_id}")
+            return json_response({
+                "message": "Token revoked successfully",
+                "blacklist_size": blacklist.size(),
+            })
+        else:
+            return error_response("Invalid token - could not revoke", 400)
 
     @handle_errors("generate API key")
     def _handle_generate_api_key(self, handler) -> HandlerResult:

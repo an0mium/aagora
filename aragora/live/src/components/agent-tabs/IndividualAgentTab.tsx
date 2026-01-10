@@ -1,28 +1,48 @@
 'use client';
 
+import { useState } from 'react';
 import { RoleBadge } from '../RoleBadge';
+import { AgentRelationships } from '../AgentRelationships';
 import { getConfidenceColor } from '@/utils/colors';
-import type { AgentData, PositionEntry } from './types';
+import type { AgentData, PositionEntry, MatchHistoryEntry } from './types';
 
 interface IndividualAgentTabProps {
   currentAgent: AgentData;
   positions: PositionEntry[];
   positionsLoading: boolean;
+  matchHistory: MatchHistoryEntry[];
+  matchHistoryLoading: boolean;
   showHistory: boolean;
   showPositions: boolean;
+  showMatchHistory: boolean;
   onToggleHistory: () => void;
   onTogglePositions: () => void;
+  onToggleMatchHistory: () => void;
+  apiBase?: string;
 }
+
+const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
 
 export function IndividualAgentTab({
   currentAgent,
   positions,
   positionsLoading,
+  matchHistory,
+  matchHistoryLoading,
   showHistory,
   showPositions,
+  showMatchHistory,
   onToggleHistory,
   onTogglePositions,
+  onToggleMatchHistory,
+  apiBase = DEFAULT_API_BASE,
 }: IndividualAgentTabProps) {
+  const [showRelationships, setShowRelationships] = useState(false);
+
+  const handleToggleRelationships = () => {
+    setShowRelationships((prev) => !prev);
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Agent Header */}
@@ -58,6 +78,26 @@ export function IndividualAgentTab({
             Positions {positions.length > 0 && `(${positions.length})`}
           </button>
           <button
+            onClick={onToggleMatchHistory}
+            className={`px-2 py-1 text-xs rounded border transition-colors ${
+              showMatchHistory
+                ? 'bg-acid-cyan text-black border-acid-cyan'
+                : 'bg-surface text-text-muted border-border hover:text-text'
+            }`}
+          >
+            Matches {matchHistory.length > 0 && `(${matchHistory.length})`}
+          </button>
+          <button
+            onClick={handleToggleRelationships}
+            className={`px-2 py-1 text-xs rounded border transition-colors ${
+              showRelationships
+                ? 'bg-amber-500 text-black border-amber-500'
+                : 'bg-surface text-text-muted border-border hover:text-text'
+            }`}
+          >
+            Relations
+          </button>
+          <button
             onClick={onToggleHistory}
             className={`px-2 py-1 text-xs rounded border transition-colors ${
               showHistory
@@ -74,6 +114,10 @@ export function IndividualAgentTab({
       <div className="flex-1 overflow-y-auto p-4">
         {showPositions ? (
           <PositionsView positions={positions} loading={positionsLoading} />
+        ) : showMatchHistory ? (
+          <MatchHistoryView history={matchHistory} loading={matchHistoryLoading} agentName={currentAgent.name} />
+        ) : showRelationships ? (
+          <AgentRelationships agentName={currentAgent.name} apiBase={apiBase} />
         ) : showHistory ? (
           <HistoryView messages={currentAgent.allMessages} />
         ) : (
@@ -144,6 +188,68 @@ function HistoryView({ messages }: { messages: AgentData['allMessages'] }) {
             <div className="agent-output whitespace-pre-wrap break-words">{msg.content}</div>
           </div>
         ))}
+    </div>
+  );
+}
+
+function MatchHistoryView({
+  history,
+  loading,
+  agentName,
+}: {
+  history: MatchHistoryEntry[];
+  loading: boolean;
+  agentName: string;
+}) {
+  if (loading) {
+    return <div className="text-center text-text-muted py-4">Loading match history...</div>;
+  }
+
+  if (history.length === 0) {
+    return (
+      <div className="text-center text-text-muted py-4">
+        No match history for this agent yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-text-muted mb-4">
+        Showing {history.length} recent prediction{history.length !== 1 ? 's' : ''} made by {agentName}
+      </div>
+      {history.map((match, idx) => (
+        <div
+          key={idx}
+          className="p-3 bg-surface border border-border rounded-lg hover:border-acid-cyan/30 transition-colors"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-xs text-text-muted">
+              {match.tournament_id.slice(0, 8)}...
+            </span>
+            <span
+              className={`px-2 py-0.5 text-xs rounded ${
+                match.confidence >= 0.8
+                  ? 'bg-green-500/20 text-green-400'
+                  : match.confidence >= 0.5
+                    ? 'bg-yellow-500/20 text-yellow-400'
+                    : 'bg-red-500/20 text-red-400'
+              }`}
+            >
+              {Math.round(match.confidence * 100)}% confident
+            </span>
+          </div>
+          <div className="text-sm">
+            <span className="text-text-muted">Predicted winner: </span>
+            <span className="text-acid-cyan font-medium">{match.predicted_winner}</span>
+          </div>
+          {match.created_at && (
+            <div className="text-xs text-text-muted mt-2">
+              {new Date(match.created_at).toLocaleString()}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

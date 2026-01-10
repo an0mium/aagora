@@ -24,7 +24,7 @@ from aragora.utils.json_helpers import safe_json_loads
 logger = logging.getLogger(__name__)
 
 # Schema version for InsightStore migrations
-INSIGHT_STORE_SCHEMA_VERSION = 1
+INSIGHT_STORE_SCHEMA_VERSION = 2
 
 
 def _escape_like_pattern(value: str) -> str:
@@ -133,6 +133,38 @@ class InsightStore:
                 CREATE INDEX IF NOT EXISTS idx_agent_perf_name ON agent_performance_history(agent_name);
                 CREATE INDEX IF NOT EXISTS idx_pattern_category ON pattern_clusters(category);
             """
+
+            # Register v2 migration: Add performance indexes
+            manager.register_migration(
+                from_version=1,
+                to_version=2,
+                sql="""
+                    -- Index for confidence-based queries (filtering high-confidence insights)
+                    CREATE INDEX IF NOT EXISTS idx_insights_confidence
+                    ON insights(confidence DESC);
+
+                    -- Composite index for type + confidence filtering
+                    CREATE INDEX IF NOT EXISTS idx_insights_type_confidence
+                    ON insights(type, confidence DESC);
+
+                    -- Index for agent performance by debate (join optimization)
+                    CREATE INDEX IF NOT EXISTS idx_agent_perf_debate
+                    ON agent_performance_history(debate_id);
+
+                    -- Composite index for agent performance lookups
+                    CREATE INDEX IF NOT EXISTS idx_agent_perf_name_debate
+                    ON agent_performance_history(agent_name, debate_id);
+
+                    -- Index for time-based queries on debate summaries
+                    CREATE INDEX IF NOT EXISTS idx_debate_summaries_created
+                    ON debate_summaries(created_at DESC);
+
+                    -- Index for pattern recency queries
+                    CREATE INDEX IF NOT EXISTS idx_pattern_last_seen
+                    ON pattern_clusters(last_seen DESC);
+                """,
+                description="Add performance indexes for common query patterns",
+            )
 
             manager.ensure_schema(initial_schema=initial_schema)
 

@@ -13,6 +13,14 @@ export interface PositionEntry {
   last_updated: string;
 }
 
+export interface MatchHistoryEntry {
+  tournament_id: string;
+  predictor_agent: string;
+  predicted_winner: string;
+  confidence: number;
+  created_at?: string;
+}
+
 export interface AgentData {
   name: string;
   latestContent: string;

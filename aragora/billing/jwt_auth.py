@@ -13,12 +13,150 @@ import hmac
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Token Blacklist (for revocation)
+# =============================================================================
+
+
+class TokenBlacklist:
+    """
+    Thread-safe in-memory token blacklist with TTL cleanup.
+
+    Tokens are stored with their expiry time and automatically cleaned up
+    when they would have expired anyway. This ensures the blacklist doesn't
+    grow unbounded.
+
+    For production deployments with multiple instances, consider using Redis
+    or a shared database for the blacklist.
+    """
+
+    _instance: Optional["TokenBlacklist"] = None
+    _lock = threading.Lock()
+
+    def __new__(cls) -> "TokenBlacklist":
+        """Singleton pattern for global blacklist."""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self, cleanup_interval: int = 300):
+        """
+        Initialize the blacklist.
+
+        Args:
+            cleanup_interval: Seconds between automatic cleanups (default 5 min)
+        """
+        if self._initialized:
+            return
+        self._blacklist: dict[str, float] = {}  # token_jti -> expiry_timestamp
+        self._data_lock = threading.Lock()
+        self._cleanup_interval = cleanup_interval
+        self._last_cleanup = time.time()
+        self._initialized = True
+        logger.info("token_blacklist_initialized")
+
+    def revoke(self, token_jti: str, expires_at: float) -> None:
+        """
+        Add a token to the blacklist.
+
+        Args:
+            token_jti: Token's unique identifier (jti claim or hash of token)
+            expires_at: When the token would naturally expire (Unix timestamp)
+        """
+        with self._data_lock:
+            self._blacklist[token_jti] = expires_at
+            logger.info(f"token_revoked jti={token_jti[:16]}...")
+            self._maybe_cleanup()
+
+    def revoke_token(self, token: str) -> bool:
+        """
+        Revoke a token by decoding and blacklisting it.
+
+        Args:
+            token: The JWT token string
+
+        Returns:
+            True if token was valid and revoked, False otherwise
+        """
+        payload = decode_jwt(token)
+        if payload is None:
+            return False
+        # Use a hash of the token as the JTI if no jti claim
+        token_jti = hashlib.sha256(token.encode()).hexdigest()[:32]
+        self.revoke(token_jti, payload.exp)
+        return True
+
+    def is_revoked(self, token: str) -> bool:
+        """
+        Check if a token has been revoked.
+
+        Args:
+            token: The JWT token string
+
+        Returns:
+            True if token is in blacklist, False otherwise
+        """
+        token_jti = hashlib.sha256(token.encode()).hexdigest()[:32]
+        with self._data_lock:
+            return token_jti in self._blacklist
+
+    def cleanup_expired(self) -> int:
+        """
+        Remove expired tokens from the blacklist.
+
+        Returns:
+            Number of tokens removed
+        """
+        now = time.time()
+        with self._data_lock:
+            expired = [k for k, v in self._blacklist.items() if v < now]
+            for k in expired:
+                del self._blacklist[k]
+            if expired:
+                logger.debug(f"token_blacklist_cleanup removed={len(expired)}")
+            self._last_cleanup = now
+            return len(expired)
+
+    def _maybe_cleanup(self) -> None:
+        """Run cleanup if enough time has passed."""
+        now = time.time()
+        if now - self._last_cleanup > self._cleanup_interval:
+            self.cleanup_expired()
+
+    def size(self) -> int:
+        """Get current blacklist size."""
+        with self._data_lock:
+            return len(self._blacklist)
+
+    def clear(self) -> None:
+        """Clear all revoked tokens (for testing)."""
+        with self._data_lock:
+            self._blacklist.clear()
+            logger.info("token_blacklist_cleared")
+
+
+# Global blacklist instance
+_token_blacklist: Optional[TokenBlacklist] = None
+
+
+def get_token_blacklist() -> TokenBlacklist:
+    """Get the global token blacklist instance."""
+    global _token_blacklist
+    if _token_blacklist is None:
+        _token_blacklist = TokenBlacklist()
+    return _token_blacklist
 
 # Configuration
 JWT_SECRET = os.environ.get("ARAGORA_JWT_SECRET", "")
@@ -260,6 +398,12 @@ def validate_access_token(token: str) -> Optional[JWTPayload]:
     """
     Validate an access token.
 
+    Checks:
+    1. Token structure and signature
+    2. Token expiration
+    3. Token type is "access"
+    4. Token is not blacklisted (revoked)
+
     Args:
         token: JWT token string
 
@@ -272,12 +416,25 @@ def validate_access_token(token: str) -> Optional[JWTPayload]:
     if payload.type != "access":
         logger.debug("jwt_validate_failed: not an access token")
         return None
+
+    # Check if token has been revoked
+    blacklist = get_token_blacklist()
+    if blacklist.is_revoked(token):
+        logger.debug("jwt_validate_failed: token revoked")
+        return None
+
     return payload
 
 
 def validate_refresh_token(token: str) -> Optional[JWTPayload]:
     """
     Validate a refresh token.
+
+    Checks:
+    1. Token structure and signature
+    2. Token expiration
+    3. Token type is "refresh"
+    4. Token is not blacklisted (revoked)
 
     Args:
         token: JWT refresh token string
@@ -291,6 +448,13 @@ def validate_refresh_token(token: str) -> Optional[JWTPayload]:
     if payload.type != "refresh":
         logger.debug("jwt_validate_failed: not a refresh token")
         return None
+
+    # Check if token has been revoked
+    blacklist = get_token_blacklist()
+    if blacklist.is_revoked(token):
+        logger.debug("jwt_validate_failed: refresh token revoked")
+        return None
+
     return payload
 
 
@@ -492,6 +656,8 @@ __all__ = [
     "JWTPayload",
     "UserAuthContext",
     "TokenPair",
+    "TokenBlacklist",
+    "get_token_blacklist",
     "create_access_token",
     "create_refresh_token",
     "decode_jwt",
