@@ -106,6 +106,19 @@ class CalibrationSummary:
         avg_error = sum(b.accuracy - b.expected_accuracy for b in active) / len(active)
         return avg_error > 0.1
 
+    @property
+    def bias_direction(self) -> str:
+        """Human-readable description of calibration bias.
+
+        Returns:
+            'overconfident', 'underconfident', or 'well-calibrated'
+        """
+        if self.is_overconfident:
+            return "overconfident"
+        elif self.is_underconfident:
+            return "underconfident"
+        return "well-calibrated"
+
 
 class CalibrationTracker:
     """

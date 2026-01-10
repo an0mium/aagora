@@ -675,10 +675,20 @@ class EloSystem:
         scores: dict[str, float],
         ratings: dict[str, "AgentRating"],
         confidence_weight: float,
+        k_multipliers: dict[str, float] | None = None,
     ) -> dict[str, float]:
-        """Calculate pairwise ELO changes for all participant combinations."""
+        """Calculate pairwise ELO changes for all participant combinations.
+
+        Args:
+            participants: List of agent names
+            scores: Dict of agent -> score
+            ratings: Dict of agent -> AgentRating
+            confidence_weight: Base confidence weight
+            k_multipliers: Optional per-agent K-factor multipliers (from calibration)
+        """
+        k_multipliers = k_multipliers or {}
         return calculate_pairwise_elo_changes(
-            participants, scores, ratings, confidence_weight, K_FACTOR
+            participants, scores, ratings, confidence_weight, K_FACTOR, k_multipliers
         )
 
     def _apply_elo_changes(
@@ -694,6 +704,57 @@ class EloSystem:
             elo_changes, ratings, winner, domain, debate_id, DEFAULT_ELO
         )
 
+    def _compute_calibration_k_multipliers(
+        self,
+        participants: list[str],
+        calibration_tracker: Optional[object] = None,
+    ) -> dict[str, float]:
+        """Compute per-agent K-factor multipliers based on calibration quality.
+
+        Agents with poor calibration (overconfident or underconfident) get
+        higher K-factor multipliers so their ELO changes more dramatically,
+        creating stronger incentives to improve calibration.
+
+        Rules:
+        - Well-calibrated agents (ECE < 0.1): multiplier = 1.0 (no adjustment)
+        - Slightly miscalibrated (ECE 0.1-0.2): multiplier = 1.1
+        - Moderately miscalibrated (ECE 0.2-0.3): multiplier = 1.25
+        - Poorly calibrated (ECE > 0.3): multiplier = 1.4
+
+        Args:
+            participants: List of agent names
+            calibration_tracker: Optional CalibrationTracker instance
+
+        Returns:
+            Dict of agent_name -> K-factor multiplier
+        """
+        if calibration_tracker is None:
+            return {}
+
+        multipliers = {}
+        for agent in participants:
+            try:
+                # CalibrationTracker.get_expected_calibration_error returns 0-1
+                ece = calibration_tracker.get_expected_calibration_error(agent)
+
+                if ece < 0.1:
+                    # Well-calibrated: no adjustment
+                    multipliers[agent] = 1.0
+                elif ece < 0.2:
+                    # Slightly miscalibrated: mild penalty
+                    multipliers[agent] = 1.1
+                elif ece < 0.3:
+                    # Moderately miscalibrated: moderate penalty
+                    multipliers[agent] = 1.25
+                else:
+                    # Poorly calibrated: significant penalty
+                    multipliers[agent] = 1.4
+            except Exception:
+                # If calibration lookup fails, use default multiplier
+                multipliers[agent] = 1.0
+
+        return multipliers
+
     def record_match(
         self,
         debate_id: str,
@@ -701,6 +762,7 @@ class EloSystem:
         scores: dict[str, float],
         domain: str | None = None,
         confidence_weight: float = 1.0,
+        calibration_tracker: Optional[object] = None,
     ) -> dict[str, float]:
         """
         Record a match result and update ELO ratings.
@@ -712,6 +774,10 @@ class EloSystem:
             domain: Optional domain for domain-specific ELO
             confidence_weight: Weight for ELO change (0-1). Lower values reduce
                                ELO impact for low-confidence debates. Default 1.0.
+            calibration_tracker: Optional CalibrationTracker instance. When provided,
+                               agents with poor calibration (overconfident/underconfident)
+                               receive higher K-factor multipliers, making their ELO
+                               more volatile as an incentive to improve calibration.
 
         Returns:
             Dict of agent -> ELO change
@@ -731,9 +797,12 @@ class EloSystem:
         # Get current ratings (batch query to avoid N+1)
         ratings = self.get_ratings_batch(participants)
 
-        # Calculate pairwise ELO changes
+        # Compute calibration-based K-factor multipliers
+        k_multipliers = self._compute_calibration_k_multipliers(participants, calibration_tracker)
+
+        # Calculate pairwise ELO changes (with calibration adjustments if provided)
         elo_changes = self._calculate_pairwise_elo_changes(
-            participants, scores, ratings, confidence_weight
+            participants, scores, ratings, confidence_weight, k_multipliers
         )
 
         # Apply changes and collect for batch save

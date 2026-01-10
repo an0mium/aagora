@@ -69,6 +69,7 @@ def calculate_pairwise_elo_changes(
     ratings: dict[str, "AgentRating"],
     confidence_weight: float = 1.0,
     k_factor: float = K_FACTOR,
+    k_multipliers: dict[str, float] | None = None,
 ) -> dict[str, float]:
     """
     Calculate pairwise ELO changes for all participant combinations.
@@ -83,12 +84,17 @@ def calculate_pairwise_elo_changes(
         ratings: Dict of agent -> current AgentRating
         confidence_weight: Weight for ELO change (0-1), lower for uncertain outcomes
         k_factor: K-factor for rating volatility
+        k_multipliers: Optional per-agent K-factor multipliers from calibration.
+            Overconfident agents get higher multipliers (1.2-1.5x) to lose more on losses.
+            Underconfident agents get lower multipliers (0.7-0.9x) to gain more on wins.
+            Well-calibrated agents get 1.0x (no adjustment).
 
     Returns:
         Dict of agent -> total ELO change
     """
     elo_changes: dict[str, float] = {}
-    effective_k = k_factor * confidence_weight
+    k_multipliers = k_multipliers or {}
+    base_effective_k = k_factor * confidence_weight
 
     for i, agent_a in enumerate(participants):
         for agent_b in participants[i + 1:]:
@@ -107,9 +113,18 @@ def calculate_pairwise_elo_changes(
             else:
                 actual_a = 0.5  # Draw if no scores
 
-            # Calculate ELO changes (zero-sum)
-            change_a = effective_k * (actual_a - expected_a)
-            change_b = -change_a
+            # Apply per-agent K-factor multipliers from calibration
+            # Each agent's change is scaled by their own calibration multiplier
+            k_mult_a = k_multipliers.get(agent_a, 1.0)
+            k_mult_b = k_multipliers.get(agent_b, 1.0)
+
+            # Calculate base ELO change
+            base_change = base_effective_k * (actual_a - expected_a)
+
+            # Apply calibration-based multipliers per agent
+            # This breaks zero-sum slightly but rewards well-calibrated agents
+            change_a = base_change * k_mult_a
+            change_b = -base_change * k_mult_b
 
             elo_changes[agent_a] = elo_changes.get(agent_a, 0) + change_a
             elo_changes[agent_b] = elo_changes.get(agent_b, 0) + change_b

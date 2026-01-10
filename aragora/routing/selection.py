@@ -327,14 +327,18 @@ class AgentSelector:
         persona_manager: Optional[Any] = None,
         probe_filter: Optional["ProbeFilter"] = None,
         calibration_tracker: Optional[Any] = None,
+        performance_monitor: Optional[Any] = None,
     ):
         self.elo_system = elo_system
         self.persona_manager = persona_manager
         self.probe_filter = probe_filter
         self.calibration_tracker = calibration_tracker
+        self.performance_monitor = performance_monitor
         self.agent_pool: dict[str, AgentProfile] = {}
         self.bench: list[str] = []  # Agents on the bench (probation/testing)
         self._selection_history: list[dict] = []
+        # Cached performance insights (refreshed before selection)
+        self._performance_insights: dict = {}
 
     def register_agent(self, profile: AgentProfile):
         """Register an agent in the pool."""
@@ -525,6 +529,78 @@ class AgentSelector:
 
         return base_score * adjustment
 
+    def set_performance_monitor(self, performance_monitor: Any):
+        """Set or update the performance monitor for reliability scoring."""
+        self.performance_monitor = performance_monitor
+        self.refresh_performance_insights()
+
+    def refresh_performance_insights(self):
+        """
+        Refresh performance insights from the PerformanceMonitor.
+
+        Call this before team selection to get current performance data.
+        Updates internal cache with latest success rates, timeouts, etc.
+        """
+        if not self.performance_monitor:
+            self._performance_insights = {}
+            return
+
+        try:
+            self._performance_insights = self.performance_monitor.get_performance_insights()
+            logger.debug(f"Refreshed performance insights for {len(self._performance_insights.get('agent_stats', {}))} agents")
+        except Exception as e:
+            logger.warning(f"Failed to refresh performance insights: {e}")
+            self._performance_insights = {}
+
+    def get_performance_adjusted_score(self, agent_name: str, base_score: float) -> float:
+        """
+        Adjust a score based on agent's performance metrics.
+
+        Penalizes agents with:
+        - Low success rate (<70%): 20% penalty
+        - High timeout rate (>20%): 30% penalty
+        - High failure rate (>30%): 25% penalty
+
+        Args:
+            agent_name: Name of the agent
+            base_score: The base score to adjust
+
+        Returns:
+            Adjusted score (may be reduced for unreliable agents)
+        """
+        if not self._performance_insights:
+            return base_score
+
+        agent_stats = self._performance_insights.get("agent_stats", {}).get(agent_name, {})
+        if not agent_stats:
+            return base_score
+
+        adjustment = 1.0
+
+        # Penalize low success rate
+        success_rate = agent_stats.get("success_rate", 100)
+        if success_rate < 70:
+            adjustment *= 0.8  # 20% penalty
+            logger.debug(f"Agent {agent_name} penalized for low success rate: {success_rate:.1f}%")
+        elif success_rate < 85:
+            adjustment *= 0.9  # 10% penalty for moderate issues
+
+        # Penalize timeout-prone agents
+        timeout_rate = agent_stats.get("timeout_rate", 0)
+        if timeout_rate > 20:
+            adjustment *= 0.7  # 30% penalty
+            logger.debug(f"Agent {agent_name} penalized for high timeout rate: {timeout_rate:.1f}%")
+        elif timeout_rate > 10:
+            adjustment *= 0.85  # 15% penalty
+
+        # Penalize high failure rate
+        failure_rate = agent_stats.get("failure_rate", 0)
+        if failure_rate > 30:
+            adjustment *= 0.75  # 25% penalty
+            logger.debug(f"Agent {agent_name} penalized for high failure rate: {failure_rate:.1f}%")
+
+        return base_score * adjustment
+
     def select_team(
         self,
         requirements: TaskRequirements,
@@ -541,6 +617,10 @@ class AgentSelector:
             TeamComposition with selected agents
         """
         exclude = exclude or []
+
+        # Refresh performance insights before scoring
+        self.refresh_performance_insights()
+
         candidates = [
             a for a in self.agent_pool.values()
             if a.name not in exclude and a.name not in self.bench
@@ -666,6 +746,10 @@ class AgentSelector:
         # Apply calibration adjustment
         # Agents with poor calibration (overconfident) get penalized
         score = self.get_calibration_adjusted_score(agent.name, score)
+
+        # Apply performance-based adjustment
+        # Agents with low success rates, high timeouts, or failures get penalized
+        score = self.get_performance_adjusted_score(agent.name, score)
 
         return max(0, min(1, score))
 

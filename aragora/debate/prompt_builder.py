@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from aragora.memory.consensus import DissentRetriever
     from aragora.agents.flip_detector import FlipDetector
     from aragora.agents.personas import PersonaManager
+    from aragora.agents.calibration import CalibrationTracker
     from aragora.debate.roles import RoleRotator, RoleAssignment
     from aragora.core import Critique
     from aragora.evidence.collector import EvidencePack
@@ -42,6 +43,7 @@ class PromptBuilder:
         persona_manager: Optional["PersonaManager"] = None,
         flip_detector: Optional["FlipDetector"] = None,
         evidence_pack: Optional["EvidencePack"] = None,
+        calibration_tracker: Optional["CalibrationTracker"] = None,
     ) -> None:
         """Initialize prompt builder with debate context.
 
@@ -55,6 +57,7 @@ class PromptBuilder:
             persona_manager: Optional agent persona management
             flip_detector: Optional position consistency tracking
             evidence_pack: Optional evidence pack with research snippets
+            calibration_tracker: Optional calibration tracker for confidence feedback
         """
         self.protocol = protocol
         self.env = env
@@ -65,6 +68,7 @@ class PromptBuilder:
         self.persona_manager = persona_manager
         self.flip_detector = flip_detector
         self.evidence_pack = evidence_pack
+        self.calibration_tracker = calibration_tracker
 
         # Current state (set externally by Arena)
         self.current_role_assignments: dict[str, "RoleAssignment"] = {}
@@ -333,6 +337,54 @@ and building on others' ideas."""
             logger.debug(f"Belief context injection error: {e}")
             return ""
 
+    def _inject_calibration_context(self, agent: "Agent") -> str:
+        """Inject calibration feedback into agent prompts.
+
+        Retrieves the agent's historical calibration performance and provides
+        feedback to help them improve confidence estimates. This creates
+        a feedback loop where poorly calibrated agents receive guidance.
+
+        Args:
+            agent: The agent to get calibration feedback for
+
+        Returns:
+            Formatted calibration context string, or empty string if no data
+        """
+        if not self.calibration_tracker:
+            return ""
+
+        try:
+            summary = self.calibration_tracker.get_calibration_summary(agent.name)
+
+            # Need at least 5 predictions for meaningful feedback
+            if summary.total_predictions < 5:
+                return ""
+
+            brier = summary.brier_score
+
+            # Only provide feedback for poorly calibrated agents (Brier > 0.25)
+            # 0.25 is roughly random guessing at 50% confidence
+            if brier <= 0.25:
+                return ""
+
+            lines = ["## Calibration Feedback"]
+            lines.append(f"Your historical prediction accuracy needs improvement (Brier score: {brier:.2f}).")
+
+            if summary.is_overconfident:
+                lines.append("You tend to be OVERCONFIDENT - your certainty often exceeds your accuracy.")
+                lines.append("Consider expressing more uncertainty in your claims.")
+            elif summary.is_underconfident:
+                lines.append("You tend to be UNDERCONFIDENT - your accuracy is better than your expressed certainty.")
+                lines.append("You can express more confidence in well-supported claims.")
+
+            lines.append("\nAdjust your certainty levels in this debate accordingly.")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.debug(f"Calibration context injection error: {e}")
+            return ""
+
     def format_evidence_for_prompt(self, max_snippets: int = 5) -> str:
         """Format evidence pack as citable references for agent prompts.
 
@@ -451,6 +503,12 @@ and building on others' ideas."""
         if patterns:
             patterns_section = f"\n\n{patterns}"
 
+        # Include calibration feedback for poorly calibrated agents
+        calibration_section = ""
+        calibration_context = self._inject_calibration_context(agent)
+        if calibration_context:
+            calibration_section = f"\n\n{calibration_context}"
+
         # Include evidence citations if available
         evidence_section = ""
         evidence_context = self.format_evidence_for_prompt(max_snippets=5)
@@ -462,7 +520,7 @@ and building on others' ideas."""
             audience_section = f"\n\n{audience_section}"
 
         return f"""You are acting as a {agent.role} in a multi-agent debate.{stance_section}{role_section}{persona_section}{flip_section}
-{historical_section}{continuum_section}{belief_section}{dissent_section}{patterns_section}{evidence_section}{audience_section}
+{historical_section}{continuum_section}{belief_section}{dissent_section}{patterns_section}{calibration_section}{evidence_section}{audience_section}
 Task: {self.env.task}{context_str}{research_status}
 
 IMPORTANT: If this task mentions a specific website, company, product, or current topic, you MUST:
@@ -522,6 +580,12 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
         if belief_context:
             belief_section = f"\n\n{belief_context}"
 
+        # Include calibration feedback for poorly calibrated agents
+        calibration_section = ""
+        calibration_context = self._inject_calibration_context(agent)
+        if calibration_context:
+            calibration_section = f"\n\n{calibration_context}"
+
         # Include evidence for strengthening revised claims
         evidence_section = ""
         evidence_context = self.format_evidence_for_prompt(max_snippets=3)
@@ -534,7 +598,7 @@ Your proposal will be critiqued by other agents, so anticipate potential objecti
 
         return f"""You are revising your proposal based on critiques from other agents.{role_section}{persona_section}{flip_section}
 
-{intensity_guidance}{stance_section}{patterns_section}{belief_section}{evidence_section}{audience_section}
+{intensity_guidance}{stance_section}{patterns_section}{belief_section}{calibration_section}{evidence_section}{audience_section}
 
 Original Task: {self.env.task}
 
