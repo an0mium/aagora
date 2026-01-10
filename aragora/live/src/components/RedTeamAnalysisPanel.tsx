@@ -107,12 +107,13 @@ export function RedTeamAnalysisPanel({
   if (!isExpanded) {
     return (
       <div
-        className="border border-red-500/30 bg-surface/50 p-3 cursor-pointer hover:border-red-500/50 transition-colors"
+        className="panel panel-compact cursor-pointer"
         onClick={() => setIsExpanded(true)}
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-mono text-red-400">
-            {'>'} RED_TEAM_ANALYSIS {result ? `[${Math.round(result.robustness_score * 100)}% robust]` : ''}
+          <h3 className="panel-title-sm flex items-center gap-2">
+            <span className="text-accent">{'>'}</span>
+            RED_TEAM_ANALYSIS {result ? `[${Math.round(result.robustness_score * 100)}% robust]` : ''}
           </h3>
           <div className="flex items-center gap-2">
             {result && (
@@ -120,7 +121,7 @@ export function RedTeamAnalysisPanel({
                 {result.findings?.length || 0} findings
               </span>
             )}
-            <span className="text-xs text-text-muted">[EXPAND]</span>
+            <span className="panel-toggle">[EXPAND]</span>
           </div>
         </div>
       </div>
@@ -128,14 +129,14 @@ export function RedTeamAnalysisPanel({
   }
 
   return (
-    <div className="border border-red-500/30 bg-surface/50 p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-mono text-red-400 flex items-center gap-2">
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title-sm flex items-center gap-2">
           <span>🛡️</span> RED_TEAM_ANALYSIS
         </h3>
         <button
           onClick={() => setIsExpanded(false)}
-          className="text-xs text-text-muted hover:text-red-400"
+          className="panel-toggle hover:text-accent"
         >
           [COLLAPSE]
         </button>

@@ -339,12 +339,13 @@ export function AgentNetworkPanel({
   if (!isExpanded) {
     return (
       <div
-        className="border border-blue-500/30 bg-surface/50 p-3 cursor-pointer hover:border-blue-500/50 transition-colors"
+        className="panel panel-compact cursor-pointer"
         onClick={() => setIsExpanded(true)}
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-mono text-blue-400">
-            {'>'} AGENT_NETWORK {network ? `[${network.agent}]` : ''}
+          <h3 className="panel-title-sm flex items-center gap-2">
+            <span className="text-accent">{'>'}</span>
+            AGENT_NETWORK {network ? `[${network.agent}]` : ''}
           </h3>
           <div className="flex items-center gap-2">
             {network && (
@@ -352,7 +353,7 @@ export function AgentNetworkPanel({
                 {network.rivals?.length || 0} rivals, {network.allies?.length || 0} allies
               </span>
             )}
-            <span className="text-xs text-text-muted">[EXPAND]</span>
+            <span className="panel-toggle">[EXPAND]</span>
           </div>
         </div>
       </div>
@@ -360,14 +361,15 @@ export function AgentNetworkPanel({
   }
 
   return (
-    <div className="border border-blue-500/30 bg-surface/50 p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-mono text-blue-400">
-          {'>'} AGENT_NETWORK
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title-sm flex items-center gap-2">
+          <span className="text-accent">{'>'}</span>
+          AGENT_NETWORK
         </h3>
         <button
           onClick={() => setIsExpanded(false)}
-          className="text-xs text-text-muted hover:text-blue-400"
+          className="panel-toggle hover:text-accent"
         >
           [COLLAPSE]
         </button>

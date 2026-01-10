@@ -171,12 +171,12 @@ export function MemoryInspector({ apiBase = DEFAULT_API_BASE }: MemoryInspectorP
   };
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text font-mono">Continuum Memory</h3>
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title font-mono">Continuum Memory</h3>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="text-xs font-mono text-text-muted hover:text-text"
+          className="panel-toggle hover:text-text"
         >
           [{expanded ? '-' : '+'}]
         </button>

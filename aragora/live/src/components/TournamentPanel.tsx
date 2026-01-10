@@ -101,9 +101,9 @@ export function TournamentPanel({ apiBase = DEFAULT_API_BASE }: TournamentPanelP
   };
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text flex items-center gap-2">
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title flex items-center gap-2">
           <span className="text-accent">&#9733;</span>
           Tournaments
         </h3>

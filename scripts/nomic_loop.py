@@ -4212,13 +4212,51 @@ DO NOT try to merge incompatible approaches. Pick a clear winner.
         try:
             # Extract participants from result
             participants = []
-            scores = {}
+            agent_message_counts = {}
             for msg in result.messages:
                 agent = getattr(msg, 'agent', None) or (msg.get('agent') if isinstance(msg, dict) else None)
-                if agent and agent not in participants:
-                    participants.append(agent)
-                    # Score based on whether agent's view prevailed
-                    scores[agent] = result.confidence if result.consensus_reached else 0.5
+                if agent:
+                    if agent not in participants:
+                        participants.append(agent)
+                        agent_message_counts[agent] = 0
+                    agent_message_counts[agent] += 1
+
+            # Calculate differentiated scores based on contribution and outcome
+            scores = {}
+            final_answer = getattr(result, 'final_answer', '') or ''
+
+            for agent in participants:
+                base_score = result.confidence if result.consensus_reached else 0.5
+
+                # Check if agent's content appears in final answer (indicates influence)
+                agent_msgs = [msg for msg in result.messages
+                             if (getattr(msg, 'agent', None) or (msg.get('agent') if isinstance(msg, dict) else None)) == agent]
+                influence_bonus = 0.0
+                for msg in agent_msgs:
+                    content = getattr(msg, 'content', '') or (msg.get('content', '') if isinstance(msg, dict) else '')
+                    # Check for content overlap with final answer (simple heuristic)
+                    if content and final_answer:
+                        # Find key phrases that match
+                        words = set(content.lower().split())
+                        final_words = set(final_answer.lower().split())
+                        overlap = len(words & final_words)
+                        if overlap > 5:  # More than 5 common words
+                            influence_bonus = min(0.2, overlap * 0.01)
+                            break
+
+                # Activity bonus (more engaged agents)
+                activity_bonus = min(0.1, agent_message_counts.get(agent, 0) * 0.02)
+
+                # Combine scores with variance
+                scores[agent] = min(1.0, max(0.1, base_score + influence_bonus + activity_bonus))
+
+            # Ensure score variance (critical for ELO changes)
+            if len(set(scores.values())) == 1 and len(scores) > 1:
+                # Add small random variance if all scores equal
+                import random
+                for agent in scores:
+                    scores[agent] += random.uniform(-0.05, 0.05)
+                    scores[agent] = min(1.0, max(0.1, scores[agent]))
 
             if len(participants) >= 2:
                 domain = self._detect_domain(task)
@@ -4238,9 +4276,13 @@ DO NOT try to merge incompatible approaches. Pick a clear winner.
                     confidence_weight=confidence_weight,
                 )
                 self._log(f"  [elo] Updated ratings for {len(participants)} agents in {domain}")
+                self._log(f"  [elo] Scores: {scores}")
+                self._log(f"  [elo] Changes: {changes}")
 
-                # Emit match_recorded event for real-time leaderboard updates (debate consensus feature)
-                winner = max(changes, key=changes.get) if changes else None
+                # Determine winner based on scores (highest score wins)
+                winner = max(scores, key=scores.get) if scores else None
+                if winner:
+                    self._log(f"  [elo] Winner: {winner} (score={scores.get(winner, 0):.2f})")
                 self._stream_emit(
                     "on_match_recorded",
                     debate_id=f"cycle-{self.cycle_count}",

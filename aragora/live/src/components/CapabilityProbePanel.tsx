@@ -157,28 +157,29 @@ export function CapabilityProbePanel({
   if (!isExpanded) {
     return (
       <div
-        className="border border-purple-500/30 bg-surface/50 p-3 cursor-pointer hover:border-purple-500/50 transition-colors"
+        className="panel panel-compact cursor-pointer"
         onClick={() => setIsExpanded(true)}
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-mono text-purple-400">
-            {'>'} CAPABILITY_PROBES {report ? `[${report.summary?.pass_rate ? Math.round(report.summary.pass_rate * 100) : 0}% pass]` : ''}
+          <h3 className="panel-title-sm flex items-center gap-2">
+            <span className="text-accent">{'>'}</span>
+            CAPABILITY_PROBES {report ? `[${report.summary?.pass_rate ? Math.round(report.summary.pass_rate * 100) : 0}% pass]` : ''}
           </h3>
-          <span className="text-xs text-text-muted">[EXPAND]</span>
+          <span className="panel-toggle">[EXPAND]</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="border border-purple-500/30 bg-surface/50 p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-mono text-purple-400 flex items-center gap-2">
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title-sm flex items-center gap-2">
           <span>🔬</span> CAPABILITY_PROBES
         </h3>
         <button
           onClick={() => setIsExpanded(false)}
-          className="text-xs text-text-muted hover:text-purple-400"
+          className="panel-toggle hover:text-accent"
         >
           [COLLAPSE]
         </button>

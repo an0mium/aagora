@@ -123,15 +123,15 @@ export function ImpasseDetectionPanel({
     : 0;
 
   return (
-    <div className={`border rounded-lg transition-all ${
+    <div className={`panel transition-all ${
       isImpasse
         ? 'bg-gradient-to-br from-red-500/10 to-orange-500/10 border-red-500/40'
-        : 'bg-surface border-border'
-    }`}>
+        : ''
+    }`} style={{ padding: 0 }}>
       {/* Header */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="w-full p-3 flex items-center justify-between text-left"
+        className="panel-collapsible-header w-full text-left"
       >
         <div className="flex items-center gap-3">
           <div className={`w-3 h-3 rounded-full ${
@@ -159,8 +159,8 @@ export function ImpasseDetectionPanel({
               {lastChecked.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
-          <span className="text-text-muted text-xs">
-            {isCollapsed ? '▶' : '▼'}
+          <span className="panel-toggle">
+            {isCollapsed ? '[+]' : '[-]'}
           </span>
         </div>
       </button>

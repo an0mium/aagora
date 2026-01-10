@@ -76,12 +76,14 @@ export function OperationalModesPanel({
   if (!isExpanded) {
     return (
       <div
-        className="border border-green-500/30 bg-surface/50 p-3 cursor-pointer hover:border-green-500/50 transition-colors"
+        className="panel panel-compact cursor-pointer"
         onClick={() => setIsExpanded(true)}
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-mono text-green-400">
-            {'>'} OPERATIONAL_MODES [{modes.length}]
+          <h3 className="panel-title-sm flex items-center gap-2">
+            <span className="text-accent">{'>'}</span>
+            OPERATIONAL_MODES
+            <span className="panel-badge">{modes.length}</span>
           </h3>
           <div className="flex items-center gap-2">
             {categories.length > 0 && (
@@ -89,7 +91,7 @@ export function OperationalModesPanel({
                 {categories.length} categories
               </span>
             )}
-            <span className="text-xs text-text-muted">[EXPAND]</span>
+            <span className="panel-toggle">[EXPAND]</span>
           </div>
         </div>
       </div>
@@ -98,21 +100,21 @@ export function OperationalModesPanel({
 
   if (loading) {
     return (
-      <div className="border border-green-500/30 bg-surface/50 p-4">
-        <div className="text-zinc-500 text-center animate-pulse">Loading modes...</div>
+      <div className="panel">
+        <div className="panel-empty animate-pulse">Loading modes...</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="border border-green-500/30 bg-surface/50 p-4">
+      <div className="panel">
         <div className="bg-red-900/20 border border-red-800 rounded p-3 text-red-400 text-sm">
           {error}
         </div>
         <button
           onClick={fetchModes}
-          className="mt-2 text-sm text-blue-400 hover:underline"
+          className="mt-2 text-sm text-accent hover:underline"
         >
           Retry
         </button>
@@ -121,14 +123,15 @@ export function OperationalModesPanel({
   }
 
   return (
-    <div className="border border-green-500/30 bg-surface/50 p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-mono text-green-400">
-          {'>'} OPERATIONAL_MODES
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title-sm flex items-center gap-2">
+          <span className="text-accent">{'>'}</span>
+          OPERATIONAL_MODES
         </h3>
         <button
           onClick={() => setIsExpanded(false)}
-          className="text-xs text-text-muted hover:text-green-400"
+          className="panel-toggle hover:text-accent"
         >
           [COLLAPSE]
         </button>

@@ -107,17 +107,17 @@ export function AnalyticsPanel({ apiBase, loopId }: AnalyticsPanelProps) {
   };
 
   return (
-    <div className="border border-acid-green/30 bg-surface/50">
+    <div className="panel" style={{ padding: 0 }}>
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface/80 transition-colors"
+        className="panel-collapsible-header w-full"
       >
         <div className="flex items-center gap-2">
           <span className="text-acid-green font-mono text-sm">[ANALYTICS]</span>
           <span className="text-text-muted text-xs">Debate patterns & insights</span>
         </div>
-        <span className="text-acid-green">{expanded ? '[-]' : '[+]'}</span>
+        <span className="panel-toggle">{expanded ? '[-]' : '[+]'}</span>
       </button>
 
       {expanded && (
