@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Optional
 
 from aragora.debate.roles import RoleRotationConfig
+from aragora.debate.role_matcher import RoleMatchingConfig
 from aragora.resilience import CircuitBreaker  # Re-export for backwards compatibility
 
 if TYPE_CHECKING:
@@ -102,6 +103,12 @@ class DebateProtocol:
     # to each agent per round, ensuring diverse perspectives
     role_rotation: bool = True  # Enable role rotation (cognitive diversity)
     role_rotation_config: Optional[RoleRotationConfig] = None  # Custom role config
+
+    # Dynamic role matching (calibration-based)
+    # Uses agent calibration scores and expertise to assign optimal roles
+    # Overrides simple rotation when enabled
+    role_matching: bool = False  # Enable calibration-based role matching
+    role_matching_config: Optional[RoleMatchingConfig] = None  # Custom matching config
 
     # Debate timeout (seconds) - prevents runaway debates
     # 0 = no timeout (default for backward compatibility)

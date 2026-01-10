@@ -37,8 +37,8 @@ aragora/
 │   ├── continuum.py     # Multi-tier memory (~1,200 LOC)
 │   └── consensus.py     # Historical debate outcomes
 ├── server/           # HTTP/WebSocket API
-│   ├── unified_server.py  # Main server (~1,200 LOC, 72+ endpoints)
-│   ├── handlers/          # HTTP endpoint handlers (31+ handlers)
+│   ├── unified_server.py  # Main server (~1,200 LOC, 106+ endpoints)
+│   ├── handlers/          # HTTP endpoint handlers (41 handler modules)
 │   └── stream/            # WebSocket streaming (refactored package)
 │       ├── servers.py        # AiohttpUnifiedServer (~2,500 LOC)
 │       ├── emitter.py        # SyncEventEmitter, TokenBucket

@@ -267,6 +267,12 @@ OPENAI_API_KEY=sk-xxx
 # Optional: Additional providers
 GEMINI_API_KEY=AIzaSy...
 XAI_API_KEY=xai-xxx
+OPENROUTER_API_KEY=sk-or-xxx
+DEEPSEEK_API_KEY=sk-xxx
+
+# Optional: Local models
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=llama2
 
 # Optional: Persistence
 SUPABASE_URL=https://xxx.supabase.co
@@ -275,6 +281,17 @@ SUPABASE_KEY=eyJ...
 # Optional: Server config
 API_PORT=8080
 ARAGORA_API_TOKEN=my-secret-token
+
+# Optional: JWT Authentication
+ARAGORA_JWT_SECRET=your-secure-secret-key
+ARAGORA_JWT_EXPIRY_HOURS=24
+
+# Optional: Stripe Billing
+STRIPE_SECRET_KEY=sk_test_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_STARTER=price_xxx
+STRIPE_PRICE_PROFESSIONAL=price_xxx
+STRIPE_PRICE_ENTERPRISE=price_xxx
 
 # Optional: Webhooks
 WEBHOOK_URL=https://myserver.com/aragora-events
