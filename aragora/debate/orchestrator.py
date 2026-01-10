@@ -38,6 +38,7 @@ from aragora.debate.roles import (
 from aragora.debate.role_matcher import RoleMatcher, RoleMatchingConfig
 from aragora.debate.topology import TopologySelector
 from aragora.debate.judge_selector import JudgeSelector, JudgeScoringMixin
+from aragora.debate.team_selector import TeamSelector
 from aragora.debate.sanitization import OutputSanitizer
 from aragora.spectate.stream import SpectatorStream
 
@@ -923,10 +924,8 @@ class Arena:
     def _select_debate_team(self, requested_agents: list[Agent]) -> list[Agent]:
         """Select debate team using performance metrics if enabled.
 
-        When use_performance_selection is True and an agent_selector is configured,
-        agents are scored based on ELO ratings, calibration scores, and domain
-        expertise, then sorted by performance. This allows high-performing agents
-        to be prioritized for the debate.
+        Delegates to TeamSelector for scoring based on ELO, calibration,
+        and circuit breaker filtering.
 
         Args:
             requested_agents: Original list of agents requested for the debate
@@ -942,66 +941,14 @@ class Arena:
             logger.debug("performance_selection enabled but no agent_selector configured")
             return requested_agents
 
-        # Get domain for task-specific scoring
-        domain = self._extract_debate_domain()
-
-        # Filter out unavailable agents via circuit breaker
-        available_names = {a.name for a in requested_agents}
-        if self.circuit_breaker:
-            try:
-                available_names = set(
-                    self.circuit_breaker.filter_available_agents(
-                        [a.name for a in requested_agents]
-                    )
-                )
-            except Exception as e:
-                logger.debug(f"circuit_breaker filter error: {e}")
-
-        # Score agents using ELO and calibration
-        scored: list[tuple[Agent, float]] = []
-        for agent in requested_agents:
-            if agent.name not in available_names:
-                logger.info(f"agent_filtered_by_circuit_breaker agent={agent.name}")
-                continue
-
-            score = 1.0  # Base score
-
-            # ELO contribution (if available)
-            if self.elo_system:
-                try:
-                    elo = self.elo_system.get_rating(agent.name)
-                    # Normalize: 1000 is average, each 100 points = 0.1 bonus
-                    score += (elo - 1000) / 1000 * 0.3
-                except (KeyError, AttributeError):
-                    pass
-
-            # Calibration contribution (well-calibrated agents get a bonus)
-            if self.calibration_tracker:
-                try:
-                    brier = self.calibration_tracker.get_brier_score(agent.name)
-                    # Lower Brier = better calibration = higher score
-                    # Brier ranges 0-1, so (1 - brier) gives 0-1 bonus
-                    score += (1 - brier) * 0.2
-                except (KeyError, AttributeError):
-                    pass
-
-            scored.append((agent, score))
-
-        if not scored:
-            logger.warning("No agents available after performance filtering")
-            return requested_agents
-
-        # Sort by score descending
-        scored.sort(key=lambda x: x[1], reverse=True)
-
-        selected = [agent for agent, _ in scored]
-        logger.info(
-            f"performance_selection domain={domain} "
-            f"selected={[a.name for a in selected]} "
-            f"scores={[f'{s:.2f}' for _, s in scored]}"
+        selector = TeamSelector(
+            elo_system=self.elo_system,
+            calibration_tracker=self.calibration_tracker,
+            circuit_breaker=self.circuit_breaker,
         )
 
-        return selected
+        domain = self._extract_debate_domain()
+        return selector.select(requested_agents, domain=domain)
 
     def _get_calibration_weight(self, agent_name: str) -> float:
         """Get agent weight based on calibration score (0.5-1.5 range).
