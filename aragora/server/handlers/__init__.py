@@ -59,10 +59,16 @@ from .insights import InsightsHandler
 from .gallery import GalleryHandler
 from .breakpoints import BreakpointsHandler
 from .learning import LearningHandler
+from .auth import AuthHandler
+from .billing import BillingHandler
+from .graph_debates import GraphDebatesHandler
+from .matrix_debates import MatrixDebatesHandler
 
 # List of all handler classes for automatic dispatch registration
 # Order matters: more specific handlers should come first
 ALL_HANDLERS = [
+    GraphDebatesHandler,  # More specific path: /api/debates/graph
+    MatrixDebatesHandler,  # More specific path: /api/debates/matrix
     DebatesHandler,
     AgentsHandler,
     SystemHandler,
@@ -98,6 +104,8 @@ ALL_HANDLERS = [
     GalleryHandler,
     BreakpointsHandler,
     LearningHandler,
+    AuthHandler,
+    BillingHandler,
 ]
 
 __all__ = [
@@ -144,4 +152,8 @@ __all__ = [
     "GalleryHandler",
     "BreakpointsHandler",
     "LearningHandler",
+    "AuthHandler",
+    "BillingHandler",
+    "GraphDebatesHandler",
+    "MatrixDebatesHandler",
 ]
