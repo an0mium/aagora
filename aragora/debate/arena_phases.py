@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from aragora.debate.context_gatherer import ContextGatherer
 from aragora.debate.memory_manager import MemoryManager
 from aragora.debate.optional_imports import OptionalImports
+from aragora.reasoning.claims import fast_extract_claims
 from aragora.debate.phases import (
     AnalyticsPhase,
     ConsensusPhase,
@@ -30,6 +31,57 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aragora.debate.orchestrator import Arena
+
+
+def _create_verify_claims_callback(arena: "Arena"):
+    """
+    Create a verification callback for the consensus phase.
+
+    The callback extracts claims from proposal text and counts verified ones.
+    Uses fast_extract_claims for pattern matching and checks confidence levels.
+
+    Args:
+        arena: The Arena instance (for future access to formal verification)
+
+    Returns:
+        Async callback: (proposal_text: str, limit: int) -> int (verified count)
+    """
+    async def verify_claims(proposal_text: str, limit: int = 2) -> int:
+        """
+        Verify claims in proposal text and return count of verified claims.
+
+        Args:
+            proposal_text: The proposal text to extract and verify claims from
+            limit: Maximum number of claims to verify (for performance)
+
+        Returns:
+            Number of claims that passed verification
+        """
+        if not proposal_text:
+            return 0
+
+        # Extract claims using fast pattern matching
+        claims = fast_extract_claims(proposal_text, author="proposal")
+
+        if not claims:
+            return 0
+
+        # Count high-confidence claims as "verified"
+        # Threshold: 0.5+ confidence from pattern matching
+        # TODO: Integrate formal Z3 verification for arithmetic/logic claims
+        verified_count = 0
+        for claim in claims[:limit]:
+            confidence = claim.get("confidence", 0.0)
+            if confidence >= 0.5:
+                verified_count += 1
+                logger.debug(
+                    f"claim_verified type={claim.get('type')} "
+                    f"confidence={confidence:.2f}"
+                )
+
+        return verified_count
+
+    return verify_claims
 
 
 def init_phases(arena: "Arena") -> None:
@@ -205,9 +257,8 @@ def init_phases(arena: "Arena") -> None:
         user_vote_multiplier=user_vote_multiplier,
         # Verification callback for claim verification during consensus
         # When protocol.verify_claims_during_consensus is True, this callback
-        # is used to verify claims in proposals and boost verified ones.
-        # Future: wire to verification_manager.verify_claims_in_text()
-        verify_claims=None,
+        # extracts claims from proposals and counts verified ones for vote bonuses.
+        verify_claims=_create_verify_claims_callback(arena),
     )
 
     # Phases 4-6: Analytics
