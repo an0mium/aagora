@@ -27,6 +27,14 @@ from aragora.debate.protocol import user_vote_multiplier
 from aragora.debate.prompt_builder import PromptBuilder
 from aragora.reasoning.evidence_grounding import EvidenceGrounder
 
+# Optional genesis import for evolution
+try:
+    from aragora.genesis.breeding import PopulationManager
+    GENESIS_AVAILABLE = True
+except ImportError:
+    PopulationManager = None
+    GENESIS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -133,6 +141,15 @@ def init_phases(arena: "Arena") -> None:
         evidence_store_callback=arena._store_evidence_in_memory,
         prompt_builder=arena.prompt_builder,
     )
+
+    # Auto-initialize PopulationManager for genome evolution when auto_evolve is enabled
+    if arena.auto_evolve and arena.population_manager is None and GENESIS_AVAILABLE:
+        try:
+            arena.population_manager = PopulationManager()
+            logger.info("population_manager auto-initialized for genome evolution")
+        except Exception as e:
+            logger.warning(f"Failed to initialize PopulationManager: {e}")
+            arena.population_manager = None
 
     # Phase 0: Context Initialization
     arena.context_initializer = ContextInitializer(
