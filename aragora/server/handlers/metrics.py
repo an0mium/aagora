@@ -107,6 +107,7 @@ class MetricsHandler(BaseHandler):
         "/api/metrics/cache",
         "/api/metrics/verification",
         "/api/metrics/system",
+        "/api/metrics/background",
         "/metrics",  # Prometheus-format endpoint
     ]
 
@@ -130,6 +131,9 @@ class MetricsHandler(BaseHandler):
 
         if path == "/api/metrics/system":
             return self._get_system_info()
+
+        if path == "/api/metrics/background":
+            return self._get_background_stats()
 
         if path == "/metrics":
             return self._get_prometheus_metrics()
@@ -350,6 +354,24 @@ class MetricsHandler(BaseHandler):
         except Exception as e:
             logger.error("Failed to get system info: %s", e, exc_info=True)
             return error_response(f"Failed to get system info: {e}", 500)
+
+    def _get_background_stats(self) -> HandlerResult:
+        """Get background task statistics."""
+        try:
+            from aragora.server.background import get_background_manager
+            manager = get_background_manager()
+            stats = manager.get_stats()
+            return json_response(stats)
+        except ImportError:
+            return json_response({
+                "running": False,
+                "task_count": 0,
+                "tasks": {},
+                "message": "Background task manager not available",
+            })
+        except Exception as e:
+            logger.error("Failed to get background stats: %s", e, exc_info=True)
+            return error_response(f"Failed to get background stats: {e}", 500)
 
     def _get_database_sizes(self) -> dict[str, Any]:
         """Get database file sizes."""

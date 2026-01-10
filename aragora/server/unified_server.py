@@ -1304,6 +1304,17 @@ class UnifiedServer:
         except ImportError:
             pass  # sentry-sdk not installed
 
+        # Initialize background tasks for maintenance
+        try:
+            from aragora.server.background import get_background_manager, setup_default_tasks
+            nomic_path = str(self.nomic_dir) if self.nomic_dir else None
+            setup_default_tasks(nomic_dir=nomic_path)
+            background_mgr = get_background_manager()
+            background_mgr.start()
+            logger.info("Background task manager started")
+        except Exception as e:
+            logger.warning("Failed to start background tasks: %s", e)
+
         logger.info("Starting unified server...")
         protocol = "https" if self.ssl_enabled else "http"
         logger.info(f"  HTTP API:   {protocol}://localhost:{self.http_port}")
