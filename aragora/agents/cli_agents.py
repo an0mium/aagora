@@ -108,7 +108,7 @@ class CLIAgent(CritiqueMixin, Agent):
             self._circuit_breaker = circuit_breaker
         elif enable_circuit_breaker:
             self._circuit_breaker = CircuitBreaker(
-                failure_threshold=10,  # Increased for nomic loop stability (CLI is flaky)
+                failure_threshold=15,  # High threshold for CLI flakiness
                 cooldown_seconds=120.0,  # Longer cooldown for active debates
             )
         else:
