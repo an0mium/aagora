@@ -12,7 +12,7 @@ from aragora.agents.registry import AgentRegistry
 
 @AgentRegistry.register(
     "mistral-api",
-    default_model="mistral-large-latest",
+    default_model="mistral-large-2512",
     default_name="mistral-api",
     agent_type="API",
     env_vars="MISTRAL_API_KEY",
@@ -36,6 +36,7 @@ class MistralAPIAgent(OpenAICompatibleMixin, APIAgent):
 
     # OpenRouter fallback mapping (in case direct API fails)
     OPENROUTER_MODEL_MAP = {
+        "mistral-large-2512": "mistralai/mistral-large-2411",  # Mistral Large 3
         "mistral-large-latest": "mistralai/mistral-large-2411",
         "mistral-large-2411": "mistralai/mistral-large-2411",
         "mistral-medium-latest": "mistralai/mistral-medium",
@@ -49,7 +50,7 @@ class MistralAPIAgent(OpenAICompatibleMixin, APIAgent):
     def __init__(
         self,
         name: str = "mistral-api",
-        model: str = "mistral-large-latest",
+        model: str = "mistral-large-2512",
         role: str = "proposer",
         timeout: int = 120,
         api_key: str | None = None,

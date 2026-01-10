@@ -10,7 +10,7 @@ from aragora.agents.registry import AgentRegistry
 
 @AgentRegistry.register(
     "openai-api",
-    default_model="gpt-4o",
+    default_model="gpt-5.2",
     default_name="openai-api",
     agent_type="API",
     env_vars="OPENAI_API_KEY",

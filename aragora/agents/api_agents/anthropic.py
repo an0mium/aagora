@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 @AgentRegistry.register(
     "anthropic-api",
-    default_model="claude-sonnet-4-20250514",
+    default_model="claude-opus-4-5-20251101",
     default_name="claude-api",
     agent_type="API",
     env_vars="ANTHROPIC_API_KEY",
