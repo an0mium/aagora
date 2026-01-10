@@ -139,11 +139,11 @@ export function CitationsPanel({ events }: CitationsPanelProps) {
 
   if (citations.length === 0) {
     return (
-      <div className="bg-surface border border-border rounded-lg p-4">
-        <h3 className="text-sm font-medium text-text-muted uppercase tracking-wider mb-3">
-          📚 Citations
+      <div className="panel">
+        <h3 className="panel-title-sm flex items-center gap-2 mb-3">
+          <span>📚</span> Citations
         </h3>
-        <div className="text-center text-text-muted py-4 text-sm">
+        <div className="panel-empty">
           No citations yet. References will appear as agents cite sources.
         </div>
       </div>
@@ -151,10 +151,11 @@ export function CitationsPanel({ events }: CitationsPanelProps) {
   }
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-text-muted uppercase tracking-wider">
-          📚 Citations ({citations.length})
+    <div className="panel">
+      <div className="panel-header">
+        <h3 className="panel-title-sm flex items-center gap-2">
+          <span>📚</span> Citations
+          <span className="panel-badge">{citations.length}</span>
         </h3>
       </div>
 
@@ -191,7 +192,7 @@ export function CitationsPanel({ events }: CitationsPanelProps) {
       )}
 
       {/* Citations List */}
-      <div className="space-y-2 max-h-80 overflow-y-auto">
+      <div className="space-y-2 panel-content">
         {filteredCitations.map((citation, index) => {
           const typeConfig = TYPE_CONFIG[citation.type];
           const qualityConfig = QUALITY_CONFIG[citation.quality];
@@ -200,7 +201,7 @@ export function CitationsPanel({ events }: CitationsPanelProps) {
           return (
             <div
               key={citation.id}
-              className="p-2 bg-bg border border-border rounded-lg hover:border-accent/30 transition-colors"
+              className="panel-item"
             >
               <button
                 onClick={() => setExpandedId(isExpanded ? null : citation.id)}
