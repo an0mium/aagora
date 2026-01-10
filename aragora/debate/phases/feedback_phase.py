@@ -72,7 +72,7 @@ class FeedbackPhase:
         calibration_tracker: Any = None,
         # Genesis evolution
         population_manager: Any = None,  # PopulationManager for genome evolution
-        auto_evolve: bool = False,  # Trigger evolution after high-quality debates
+        auto_evolve: bool = True,  # Trigger evolution after high-quality debates
         breeding_threshold: float = 0.8,  # Min confidence to trigger evolution
         # Pulse manager for trending topic analytics
         pulse_manager: Any = None,

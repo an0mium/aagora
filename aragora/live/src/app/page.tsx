@@ -46,6 +46,8 @@ import { Scanlines, CRTVignette } from '@/components/MatrixRain';
 import { BackendSelector, useBackend, BACKENDS } from '@/components/BackendSelector';
 import { PanelErrorBoundary } from '@/components/PanelErrorBoundary';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { FeaturesProvider } from '@/context/FeaturesContext';
+import { FeatureGuard } from '@/components/FeatureGuard';
 import type { NomicState } from '@/types/events';
 
 // Dynamic imports for heavy/conditionally-shown components
@@ -89,6 +91,11 @@ const InsightsPanel = dynamic(() => import('@/components/InsightsPanel').then(m 
 });
 
 const LaboratoryPanel = dynamic(() => import('@/components/LaboratoryPanel').then(m => ({ default: m.LaboratoryPanel })), {
+  ssr: false,
+  loading: () => <div className="card p-4 animate-pulse"><div className="h-40 bg-surface rounded" /></div>,
+});
+
+const BreakpointsPanel = dynamic(() => import('@/components/BreakpointsPanel').then(m => ({ default: m.BreakpointsPanel })), {
   ssr: false,
   loading: () => <div className="card p-4 animate-pulse"><div className="h-40 bg-surface rounded" /></div>,
 });
@@ -301,7 +308,7 @@ export default function Home() {
 
   // Dashboard for live.aragora.ai and localhost
   return (
-    <>
+    <FeaturesProvider apiBase={apiBase}>
       {/* Boot Sequence */}
       {showBoot && <BootSequence onComplete={handleBootComplete} skip={skipBoot} />}
 
@@ -519,7 +526,7 @@ export default function Home() {
                 <LeaderboardPanel wsMessages={events} loopId={effectiveLoopId} apiBase={apiBase} />
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Calibration">
-                <CalibrationPanel apiBase={apiBase} />
+                <CalibrationPanel apiBase={apiBase} events={events} />
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Tournament">
                 <TournamentPanel apiBase={apiBase} />
@@ -541,7 +548,7 @@ export default function Home() {
                 <ContraryViewsPanel apiBase={apiBase} />
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Risk Warnings">
-                <RiskWarningsPanel apiBase={apiBase} />
+                <RiskWarningsPanel apiBase={apiBase} events={events} />
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Learning Evolution">
                 <LearningEvolution />
@@ -560,7 +567,10 @@ export default function Home() {
                 <RedTeamAnalysisPanel apiBase={apiBase} />
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Laboratory">
-                <LaboratoryPanel apiBase={apiBase} />
+                <LaboratoryPanel apiBase={apiBase} events={events} />
+              </PanelErrorBoundary>
+              <PanelErrorBoundary panelName="Breakpoints">
+                <BreakpointsPanel apiBase={apiBase} />
               </PanelErrorBoundary>
             </CollapsibleSection>
 
@@ -613,6 +623,6 @@ export default function Home() {
         phase={currentPhase}
       />
     </main>
-    </>
+    </FeaturesProvider>
   );
 }

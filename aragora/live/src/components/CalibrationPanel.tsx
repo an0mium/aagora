@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { logger } from '@/utils/logger';
+import type { StreamEvent } from '@/types/events';
 
 interface CalibrationAgent {
   name: string;
@@ -28,15 +29,23 @@ interface AgentCalibration {
 
 interface CalibrationPanelProps {
   apiBase: string;
+  events?: StreamEvent[];
 }
 
-export function CalibrationPanel({ apiBase }: CalibrationPanelProps) {
+export function CalibrationPanel({ apiBase, events = [] }: CalibrationPanelProps) {
   const [expanded, setExpanded] = useState(true); // Show by default
   const [agents, setAgents] = useState<CalibrationAgent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [agentDetail, setAgentDetail] = useState<AgentCalibration | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Extract calibration_update events from stream
+  const calibrationEvents = useMemo(() =>
+    events.filter(e => e.type === 'calibration_update'),
+    [events]
+  );
+  const latestCalibrationEvent = calibrationEvents[calibrationEvents.length - 1];
 
   const fetchLeaderboard = useCallback(async () => {
     setLoading(true);
@@ -64,11 +73,20 @@ export function CalibrationPanel({ apiBase }: CalibrationPanelProps) {
     }
   }, [apiBase]);
 
+  // Initial fetch on expand
   useEffect(() => {
     if (expanded) {
       fetchLeaderboard();
     }
   }, [expanded, fetchLeaderboard]);
+
+  // Refresh when calibration_update event arrives
+  useEffect(() => {
+    if (latestCalibrationEvent && expanded) {
+      // Refetch to get updated leaderboard
+      fetchLeaderboard();
+    }
+  }, [latestCalibrationEvent, expanded, fetchLeaderboard]);
 
   useEffect(() => {
     if (selectedAgent) {

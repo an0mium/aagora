@@ -36,7 +36,7 @@ async def broadcast_debate(
 
     This is the main entry point for converting debates to audio. It:
     1. Generates a podcast script from the debate events
-    2. Synthesizes audio for each speaker turn using edge-tts
+    2. Synthesizes audio for each speaker turn using the configured TTS backend
     3. Mixes all segments into a single audio file
 
     Args:

@@ -101,12 +101,13 @@ export function useBroadcast(debateId: string) {
       }
 
       const result: BroadcastResult = await response.json();
-      setStatus({
+      setStatus((prev) => ({
+        ...prev,
         hasAudio: true,
         audioUrl: result.audio_url || `${API_BASE}/audio/${debateId}.mp3`,
         isGenerating: false,
         error: null,
-      });
+      }));
       return result;
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to generate broadcast';

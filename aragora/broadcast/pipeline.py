@@ -2,7 +2,7 @@
 Broadcast pipeline orchestrator.
 
 Orchestrates the full debate-to-publication flow:
-1. Audio generation (TTS via edge-tts)
+1. Audio generation (TTS via configured backend)
 2. Video generation (FFmpeg)
 3. RSS feed creation (iTunes-compatible)
 4. Metadata persistence

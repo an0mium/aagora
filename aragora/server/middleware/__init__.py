@@ -58,6 +58,29 @@ from .request_logging import (
     get_current_request_id,
     set_current_request_id,
 )
+from .auth_v2 import (
+    User,
+    Workspace,
+    APIKey,
+    require_user,
+    require_admin,
+    require_plan,
+    get_current_user,
+    authenticate_request,
+    SupabaseAuthValidator,
+    get_jwt_validator,
+)
+from .tenancy import (
+    PLAN_LIMITS,
+    get_plan_limits,
+    WorkspaceManager,
+    get_workspace_manager,
+    require_workspace,
+    check_limit,
+    tenant_scoped,
+    scope_query,
+    ensure_workspace_access,
+)
 
 __all__ = [
     # Auth
@@ -93,4 +116,25 @@ __all__ = [
     "request_logging",
     "get_current_request_id",
     "set_current_request_id",
+    # User Auth (Supabase)
+    "User",
+    "Workspace",
+    "APIKey",
+    "require_user",
+    "require_admin",
+    "require_plan",
+    "get_current_user",
+    "authenticate_request",
+    "SupabaseAuthValidator",
+    "get_jwt_validator",
+    # Multi-tenancy
+    "PLAN_LIMITS",
+    "get_plan_limits",
+    "WorkspaceManager",
+    "get_workspace_manager",
+    "require_workspace",
+    "check_limit",
+    "tenant_scoped",
+    "scope_query",
+    "ensure_workspace_access",
 ]

@@ -1,34 +1,47 @@
 """
 Audio generation engine for Aragora Broadcast.
 
-Uses edge-tts for high-quality text-to-speech generation.
+Supports multiple TTS backends with automatic fallback:
+1. ElevenLabs - Highest quality (cloud, paid)
+2. Coqui XTTS v2 - High quality local (GPU recommended)
+3. Edge-TTS - Good quality (cloud, free)
+4. pyttsx3 - Offline fallback (low quality)
+
+Configure via environment:
+    ARAGORA_TTS_ORDER - Comma-separated backend priority (elevenlabs, xtts, edge-tts, pyttsx3)
+    ARAGORA_TTS_BACKEND - Force a specific backend
+    ARAGORA_ELEVENLABS_API_KEY - Enable ElevenLabs (best quality)
+    ARAGORA_XTTS_MODEL_PATH - Optional Coqui XTTS model override
 """
 
 import asyncio
 import hashlib
 import importlib.util
 import logging
-import tempfile
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
+from typing import Dict, Optional
+
+from aragora.broadcast.script_gen import ScriptSegment
+from aragora.broadcast.tts_backends import (
+    TTSBackend,
+    get_tts_backend,
+    get_fallback_backend,
+    EDGE_TTS_VOICES,
+)
 
 logger = logging.getLogger(__name__)
-from typing import Dict, Optional
-import subprocess
-from aragora.broadcast.script_gen import ScriptSegment
 
-# Voice mapping for agents
-VOICE_MAP: Dict[str, str] = {
-    "claude-visionary": "en-GB-SoniaNeural",
-    "codex-engineer": "en-US-GuyNeural",
-    "gemini-visionary": "en-AU-NatashaNeural",
-    "grok-lateral-thinker": "en-US-ChristopherNeural",
-    "narrator": "en-US-AriaNeural",  # Narrator voice
-}
+# Legacy voice mapping (for backward compatibility)
+VOICE_MAP: Dict[str, str] = EDGE_TTS_VOICES
 
-# Fallback TTS if edge-tts fails
+# Global TTS backend instance (lazy initialized)
+_tts_backend: Optional[TTSBackend] = None
+
+# Legacy fallback availability (pyttsx3)
 try:
     import pyttsx3
     FALLBACK_AVAILABLE = True
@@ -36,9 +49,29 @@ except ImportError:
     FALLBACK_AVAILABLE = False
 
 
+def get_audio_backend() -> TTSBackend:
+    """Get the TTS backend, initializing if needed."""
+    global _tts_backend
+
+    if _tts_backend is None:
+        # Check for forced backend
+        forced = os.getenv("ARAGORA_TTS_BACKEND") or os.getenv("TTS_BACKEND")
+        if forced:
+            try:
+                _tts_backend = get_tts_backend(forced)
+                logger.info(f"Using forced TTS backend: {forced}")
+            except Exception as e:
+                logger.warning(f"Failed to use forced backend '{forced}': {e}")
+                _tts_backend = get_fallback_backend()
+        else:
+            _tts_backend = get_fallback_backend()
+
+    return _tts_backend
+
+
 def _get_voice_for_speaker(speaker: str) -> str:
-    """Get voice ID for a speaker."""
-    return VOICE_MAP.get(speaker, VOICE_MAP["narrator"])
+    """Get voice ID for a speaker (legacy compatibility)."""
+    return VOICE_MAP.get(speaker, VOICE_MAP.get("narrator", "en-US-AriaNeural"))
 
 
 def _edge_tts_command() -> Optional[list[str]]:
@@ -155,6 +188,8 @@ async def generate_audio_segment(segment: ScriptSegment, output_dir: Path) -> Op
     """
     Generate audio for a single script segment.
 
+    Uses the best available TTS backend with automatic fallback.
+
     Args:
         segment: The script segment to convert
         output_dir: Directory to save audio file
@@ -162,14 +197,27 @@ async def generate_audio_segment(segment: ScriptSegment, output_dir: Path) -> Op
     Returns:
         Path to generated audio file, or None if failed
     """
-    voice = _get_voice_for_speaker(segment.speaker)
-
     # Create safe filename using stable hash (sha256 is deterministic across sessions)
     text_hash = hashlib.sha256(segment.text.encode('utf-8')).hexdigest()[:12]
-    safe_name = f"{segment.speaker}_{text_hash}.mp3"
+    backend = get_audio_backend()
+    backend_ext = ".wav" if backend.name == "xtts" else ".mp3"
+    safe_name = f"{segment.speaker}_{text_hash}{backend_ext}"
     output_path = output_dir / safe_name
 
-    # Try edge-tts first
+    # Use the TTS backend abstraction
+    result = await backend.synthesize(
+        text=segment.text,
+        voice=segment.voice_id or segment.speaker,
+        output_path=output_path,
+    )
+
+    if result:
+        return result
+
+    # Legacy fallback path (if new backend fails completely)
+    voice = _get_voice_for_speaker(segment.speaker)
+
+    # Try edge-tts directly
     if await _generate_edge_tts(segment.text, voice, output_path):
         return output_path
 

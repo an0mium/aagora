@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ErrorWithRetry } from './RetryButton';
 import { fetchWithRetry } from '@/utils/retry';
+import type { StreamEvent } from '@/types/events';
 
 interface EmergentTrait {
   agent: string;
@@ -41,16 +42,43 @@ interface CritiquePattern {
 
 interface LaboratoryPanelProps {
   apiBase?: string;
+  events?: StreamEvent[];
 }
 
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://api.aragora.ai';
 
-export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE }: LaboratoryPanelProps) {
-  const [traits, setTraits] = useState<EmergentTrait[]>([]);
+export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE, events = [] }: LaboratoryPanelProps) {
+  const [apiTraits, setApiTraits] = useState<EmergentTrait[]>([]);
   const [pollinations, setPollinations] = useState<CrossPollination[]>([]);
   const [genesisStats, setGenesisStats] = useState<GenesisStats | null>(null);
   const [patterns, setPatterns] = useState<CritiquePattern[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Extract trait_emerged events from stream
+  const eventTraits = useMemo(() =>
+    events
+      .filter(e => e.type === 'trait_emerged')
+      .map(e => ({
+        agent: (e.data as { agent?: string }).agent || 'unknown',
+        trait: (e.data as { trait?: string }).trait || '',
+        domain: (e.data as { domain?: string }).domain || 'general',
+        confidence: (e.data as { confidence?: number }).confidence || 0.5,
+        evidence: (e.data as { evidence?: string[] }).evidence || [],
+        detected_at: new Date(e.timestamp * 1000).toISOString(),
+      })),
+    [events]
+  );
+
+  // Merge API traits with event traits (events are more recent)
+  const traits = useMemo(() => {
+    // Create a Set of event trait identifiers to deduplicate
+    const eventKeys = new Set(eventTraits.map(t => `${t.agent}:${t.trait}`));
+    // Keep API traits not superseded by events, then add event traits
+    return [
+      ...eventTraits,
+      ...apiTraits.filter(t => !eventKeys.has(`${t.agent}:${t.trait}`)),
+    ];
+  }, [apiTraits, eventTraits]);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'traits' | 'pollinations' | 'evolution' | 'patterns'>('traits');
   const [expanded, setExpanded] = useState(true); // Show by default
@@ -72,7 +100,7 @@ export function LaboratoryPanel({ apiBase = DEFAULT_API_BASE }: LaboratoryPanelP
 
     if (traitsResult.status === 'fulfilled' && traitsResult.value.ok) {
       const data = await traitsResult.value.json();
-      setTraits(data.emergent_traits || []);
+      setApiTraits(data.emergent_traits || []);
     } else {
       hasError = true;
     }

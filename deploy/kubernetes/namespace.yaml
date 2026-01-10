@@ -1,0 +1,10 @@
+---
+# Aragora Namespace
+# Creates an isolated namespace for all aragora resources
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aragora
+  labels:
+    app.kubernetes.io/name: aragora
+    app.kubernetes.io/component: namespace

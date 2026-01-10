@@ -1,0 +1,46 @@
+---
+# Aragora ServiceAccount
+# Dedicated service account for aragora pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aragora
+  namespace: aragora
+  labels:
+    app.kubernetes.io/name: aragora
+    app.kubernetes.io/component: rbac
+automountServiceAccountToken: false  # Minimize attack surface
+---
+# Aragora Role
+# Minimal permissions for reading config
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aragora
+  namespace: aragora
+  labels:
+    app.kubernetes.io/name: aragora
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["aragora-config"]
+    verbs: ["get", "watch"]
+---
+# Aragora RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aragora
+  namespace: aragora
+  labels:
+    app.kubernetes.io/name: aragora
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aragora
+subjects:
+  - kind: ServiceAccount
+    name: aragora
+    namespace: aragora

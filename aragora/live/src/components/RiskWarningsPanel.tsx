@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import type { StreamEvent } from '@/types/events';
 
 interface RiskWarning {
   domain: string;
@@ -13,6 +14,7 @@ interface RiskWarning {
 
 interface RiskWarningsPanelProps {
   apiBase?: string;
+  events?: StreamEvent[];
 }
 
 const severityColors: Record<string, string> = {
@@ -22,11 +24,36 @@ const severityColors: Record<string, string> = {
   critical: 'text-red-400 border-red-400/30 bg-red-400/5',
 };
 
-export function RiskWarningsPanel({ apiBase = '' }: RiskWarningsPanelProps) {
-  const [warnings, setWarnings] = useState<RiskWarning[]>([]);
+export function RiskWarningsPanel({ apiBase = '', events = [] }: RiskWarningsPanelProps) {
+  const [apiWarnings, setApiWarnings] = useState<RiskWarning[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Extract risk_warning events from stream
+  const eventWarnings = useMemo(() =>
+    events
+      .filter(e => e.type === 'risk_warning')
+      .map(e => ({
+        domain: (e.data as { domain?: string }).domain || 'unknown',
+        risk_type: (e.data as { risk_type?: string }).risk_type || 'risk',
+        severity: ((e.data as { level?: string }).level || 'medium') as RiskWarning['severity'],
+        description: (e.data as { description?: string }).description || '',
+        mitigation: (e.data as { mitigations?: string[] }).mitigations?.join('; '),
+        detected_at: new Date(e.timestamp * 1000).toISOString(),
+      })),
+    [events]
+  );
+
+  // Merge API warnings with event warnings (event warnings take precedence for freshness)
+  const warnings = useMemo(() => {
+    const eventDomains = new Set(eventWarnings.map(w => w.domain));
+    // Keep API warnings not superseded by events, then add event warnings
+    return [
+      ...apiWarnings.filter(w => !eventDomains.has(w.domain)),
+      ...eventWarnings,
+    ];
+  }, [apiWarnings, eventWarnings]);
 
   useEffect(() => {
     const fetchWarnings = async () => {
@@ -34,7 +61,7 @@ export function RiskWarningsPanel({ apiBase = '' }: RiskWarningsPanelProps) {
         const response = await fetch(`${apiBase}/api/consensus/risk-warnings`);
         if (response.ok) {
           const data = await response.json();
-          setWarnings(data.warnings || data || []);
+          setApiWarnings(data.warnings || data || []);
         } else {
           setError('Failed to fetch risk warnings');
         }
@@ -46,7 +73,7 @@ export function RiskWarningsPanel({ apiBase = '' }: RiskWarningsPanelProps) {
     };
 
     fetchWarnings();
-    // Refresh every 60 seconds
+    // Refresh every 60 seconds (reduced need with event subscription)
     const interval = setInterval(fetchWarnings, 60000);
     return () => clearInterval(interval);
   }, [apiBase]);

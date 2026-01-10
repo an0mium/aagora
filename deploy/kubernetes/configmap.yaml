@@ -1,0 +1,41 @@
+---
+# Aragora ConfigMap
+# Non-sensitive configuration for the aragora application
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aragora-config
+  namespace: aragora
+  labels:
+    app.kubernetes.io/name: aragora
+    app.kubernetes.io/component: config
+data:
+  # Server configuration
+  ARAGORA_HOST: "0.0.0.0"
+  ARAGORA_PORT: "8080"
+  ARAGORA_ENV: "production"
+
+  # CORS configuration (comma-separated origins)
+  ARAGORA_ALLOWED_ORIGINS: "https://aragora.ai,https://www.aragora.ai"
+
+  # Database paths (for SQLite - will migrate to PostgreSQL)
+  NOMIC_DB_PATH: "/data/.nomic"
+  ARAGORA_DATA_DIR: "/data"
+
+  # Logging
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+
+  # Feature flags
+  ARAGORA_ENABLE_METRICS: "true"
+  ARAGORA_ENABLE_TRACING: "false"
+  ARAGORA_HYBRID_IMPLEMENT: "1"
+  ARAGORA_SCOPE_CHECK: "1"
+
+  # Rate limiting
+  ARAGORA_RATE_LIMIT_REQUESTS: "100"
+  ARAGORA_RATE_LIMIT_WINDOW: "60"
+
+  # WebSocket configuration
+  ARAGORA_WS_PING_INTERVAL: "30"
+  ARAGORA_WS_TIMEOUT: "300"

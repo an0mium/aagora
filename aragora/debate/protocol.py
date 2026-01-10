@@ -108,7 +108,7 @@ class DebateProtocol:
     # Dynamic role matching (calibration-based)
     # Uses agent calibration scores and expertise to assign optimal roles
     # Overrides simple rotation when enabled
-    role_matching: bool = False  # Enable calibration-based role matching
+    role_matching: bool = True  # Enable calibration-based role matching
     role_matching_config: Optional[RoleMatchingConfig] = None  # Custom matching config
 
     # Debate timeout (seconds) - prevents runaway debates
@@ -123,7 +123,7 @@ class DebateProtocol:
 
     # Breakpoints: Human-in-the-loop intervention points
     # When enabled, debates can pause at critical moments for human guidance
-    enable_breakpoints: bool = False  # Enable breakpoint detection
+    enable_breakpoints: bool = True  # Enable breakpoint detection
     breakpoint_config: Optional["BreakpointConfig"] = None  # Custom breakpoint thresholds
 
     # Calibration tracking: Record prediction accuracy for calibration curves
@@ -132,7 +132,7 @@ class DebateProtocol:
 
     # Rhetorical observer: Passive commentary on debate dynamics
     # Detects patterns like concession, rebuttal, synthesis for audience engagement
-    enable_rhetorical_observer: bool = False  # Enable rhetorical pattern detection
+    enable_rhetorical_observer: bool = True  # Enable rhetorical pattern detection
 
     # Trickster for hollow consensus detection
     # Challenges convergence that lacks evidence quality
@@ -141,7 +141,7 @@ class DebateProtocol:
 
     # Prompt evolution: Learn from debate outcomes to improve agent prompts
     # When enabled, PromptEvolver extracts winning patterns and updates prompts
-    enable_evolution: bool = False  # Enable prompt evolution from debate outcomes
+    enable_evolution: bool = True  # Enable prompt evolution from debate outcomes
 
     # Formal verification during consensus: Claim verification for quality
     # When enabled, claims in proposals are verified using pattern matching

@@ -161,6 +161,28 @@ For semantic search and memory retrieval.
 
 Currently uses OpenAI or Gemini embeddings based on available API keys.
 
+## Broadcast / TTS
+
+Configure audio generation backends for broadcasts.
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `ARAGORA_TTS_ORDER` | Optional | Comma-separated backend priority | `elevenlabs,xtts,edge-tts,pyttsx3` |
+| `ARAGORA_TTS_BACKEND` | Optional | Force a specific backend | - |
+| `ARAGORA_ELEVENLABS_API_KEY` | Optional | ElevenLabs API key | - |
+| `ARAGORA_ELEVENLABS_MODEL_ID` | Optional | ElevenLabs model ID | `eleven_multilingual_v2` |
+| `ARAGORA_ELEVENLABS_VOICE_ID` | Optional | Default ElevenLabs voice ID | - |
+| `ARAGORA_ELEVENLABS_VOICE_MAP` | Optional | JSON map of speaker→voice ID | - |
+| `ARAGORA_XTTS_MODEL_PATH` | Optional | Coqui XTTS model name/path | `tts_models/multilingual/multi-dataset/xtts_v2` |
+| `ARAGORA_XTTS_DEVICE` | Optional | XTTS device (`auto`, `cuda`, `cpu`) | `auto` |
+| `ARAGORA_XTTS_LANGUAGE` | Optional | XTTS language code | `en` |
+| `ARAGORA_XTTS_SPEAKER_WAV` | Optional | Default XTTS speaker WAV path | - |
+| `ARAGORA_XTTS_SPEAKER_WAV_MAP` | Optional | JSON map of speaker→WAV path | - |
+
+Notes:
+- `ELEVENLABS_API_KEY` is also accepted as an alias for `ARAGORA_ELEVENLABS_API_KEY`.
+- Use `ARAGORA_TTS_ORDER` to prioritize ElevenLabs or XTTS ahead of edge-tts.
+
 ## Social Media APIs (Pulse Module)
 
 For trending topics and real-time context in debates. These power the Pulse ingestors.

@@ -93,7 +93,7 @@ segments = generate_script(trace)
 
 ### Audio Engine (`audio_engine.py`)
 
-Text-to-speech synthesis using edge-tts with fallback to pyttsx3.
+Text-to-speech synthesis using configurable backends (ElevenLabs, Coqui XTTS v2, edge-tts) with fallbacks.
 
 ```python
 from aragora.broadcast.audio_engine import AudioEngine
@@ -103,21 +103,55 @@ audio_path = await engine.generate_audio("Hello world", "narrator")
 ```
 
 **Features:**
-- Primary: `edge-tts` (Microsoft neural voices)
-- Fallback: `pyttsx3` (offline, lower quality)
-- Voice mapping per agent (e.g., `claude-visionary` → `en-GB-SoniaNeural`)
-- Retry with exponential backoff (max 3 attempts)
+- Primary: `elevenlabs` (highest quality, diverse voices)
+- Secondary: `xtts` (Coqui XTTS v2, local, GPU recommended)
+- Fallback: `edge-tts` (Microsoft neural voices)
+- Final fallback: `pyttsx3` (offline, lower quality)
+- Voice mapping per agent (edge-tts) with per-backend overrides via env
+- Retry with exponential backoff (edge-tts)
 - 60-second timeout per segment
-- VTT subtitle generation
+- VTT subtitle generation (edge-tts)
 
 **Voice Mapping:**
 | Agent | Voice |
 |-------|-------|
-| narrator | en-US-ZiraNeural |
+| narrator | en-US-AriaNeural |
 | claude-visionary | en-GB-SoniaNeural |
 | codex-engineer | en-US-GuyNeural |
 | gemini-visionary | en-AU-NatashaNeural |
 | grok-lateral-thinker | en-US-ChristopherNeural |
+
+### TTS Provider Configuration
+
+Install optional providers:
+```bash
+pip install "aragora[broadcast-elevenlabs]"  # ElevenLabs (cloud)
+pip install "aragora[broadcast-xtts]"        # Coqui XTTS v2 (local)
+```
+
+Backend selection and ordering:
+```bash
+export ARAGORA_TTS_ORDER=elevenlabs,xtts,edge-tts,pyttsx3
+export ARAGORA_TTS_BACKEND=elevenlabs  # force a backend
+```
+
+ElevenLabs (cloud, best quality):
+```bash
+export ARAGORA_ELEVENLABS_API_KEY=...
+export ARAGORA_ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+export ARAGORA_ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+# Optional per-agent map (JSON)
+export ARAGORA_ELEVENLABS_VOICE_MAP='{"narrator":"21m00Tcm4TlvDq8ikWAM","claude-visionary":"pNInz6obpgDQGcFmaJgB"}'
+```
+
+Coqui XTTS v2 (local, GPU recommended):
+```bash
+export ARAGORA_XTTS_DEVICE=auto   # auto, cuda, cpu
+export ARAGORA_XTTS_LANGUAGE=en
+export ARAGORA_XTTS_MODEL_PATH=tts_models/multilingual/multi-dataset/xtts_v2
+# Optional per-agent speaker WAVs (JSON)
+export ARAGORA_XTTS_SPEAKER_WAV_MAP='{"narrator":"/path/to/narrator.wav"}'
+```
 
 ### Audio Mixer (`mixer.py`)
 
