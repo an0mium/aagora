@@ -68,7 +68,7 @@ python scripts/nomic_loop.py --cycles 10 --auto-commit
 The streaming version provides real-time visibility:
 
 - **HTTP Dashboard**: `http://localhost:8080`
-- **WebSocket Stream**: `ws://localhost:8765`
+- **WebSocket Stream**: `ws://localhost:8080/ws/debates`
 - **Public View**: `https://live.aragora.ai`
 
 ## Cycle Phases

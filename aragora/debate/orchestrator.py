@@ -630,8 +630,19 @@ class Arena:
         """Initialize cognitive role rotation and agent stances."""
         # Cognitive role rotation (Heavy3-inspired)
         self.role_rotator: Optional[RoleRotator] = None
+        self.role_matcher: Optional[RoleMatcher] = None
         self.current_role_assignments: dict[str, RoleAssignment] = {}
-        if self.protocol.role_rotation:
+
+        # Role matching takes priority over simple rotation
+        if self.protocol.role_matching:
+            config = self.protocol.role_matching_config or RoleMatchingConfig()
+            self.role_matcher = RoleMatcher(
+                calibration_tracker=self.calibration_tracker if hasattr(self, 'calibration_tracker') else None,
+                persona_manager=self.persona_manager if hasattr(self, 'persona_manager') else None,
+                config=config,
+            )
+            logger.info("role_matcher_enabled strategy=%s", config.strategy)
+        elif self.protocol.role_rotation:
             config = self.protocol.role_rotation_config or RoleRotationConfig()
             self.role_rotator = RoleRotator(config)
 
@@ -1659,10 +1670,37 @@ and building on others' ideas."""
 
     def _update_role_assignments(self, round_num: int) -> None:
         """Update cognitive role assignments for the current round."""
+        agent_names = [a.name for a in self.agents]
+
+        # Use role matcher if available (calibration-based)
+        if self.role_matcher:
+            debate_domain = getattr(self, 'current_domain', None)
+            result = self.role_matcher.match_roles(
+                agent_names=agent_names,
+                round_num=round_num,
+                debate_domain=debate_domain,
+            )
+            self.current_role_assignments = result.assignments
+
+            if result.assignments:
+                roles_str = ", ".join(
+                    f"{name}: {assign.role.value}"
+                    for name, assign in result.assignments.items()
+                )
+                logger.debug(
+                    f"role_assignments round={round_num} strategy={result.strategy_used} "
+                    f"roles={roles_str}"
+                )
+                if result.developmental_assignments:
+                    logger.debug(
+                        f"developmental_assignments agents={result.developmental_assignments}"
+                    )
+            return
+
+        # Fallback to simple rotation
         if not self.role_rotator:
             return
 
-        agent_names = [a.name for a in self.agents]
         self.current_role_assignments = self.role_rotator.get_assignments(
             agent_names, round_num, self.protocol.rounds
         )

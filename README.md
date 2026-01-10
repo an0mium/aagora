@@ -385,7 +385,7 @@ The aragora API server runs on AWS Lightsail with Cloudflare Tunnel:
 
 Configuration:
 - **Instance**: Ubuntu 22.04, nano_3_0 ($5/month)
-- **API Server**: Port 8080 (HTTP) + 8765 (WebSocket)
+- **API Server**: Port 8080 (HTTP + WebSocket on /ws/debates)
 - **Tunnel**: Cloudflare Tunnel proxies api.aragora.ai
 
 ### API Endpoints

@@ -251,7 +251,8 @@ See [BROADCAST.md](./BROADCAST.md) for the complete audio pipeline documentation
 
 ### Ports
 - Must be integers 1-65535
-- Common ports: 8080 (HTTP), 8765 (legacy WebSocket)
+- Unified server: 8080 (HTTP + WebSocket on /ws/debates)
+- Legacy WebSocket: 8765 (deprecated, use unified server)
 
 ### URLs
 - Must be valid HTTPS URLs (for production)
