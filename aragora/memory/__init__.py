@@ -33,6 +33,12 @@ from aragora.memory.tier_manager import (
     MemoryTier,
     get_tier_manager,
 )
+from aragora.memory.tier_analytics import (
+    TierAnalyticsTracker,
+    TierStats,
+    MemoryUsageEvent,
+    MemoryAnalytics,
+)
 
 __all__ = [
     "CritiqueStore",
@@ -55,4 +61,9 @@ __all__ = [
     "TierTransitionMetrics",
     "MemoryTier",
     "get_tier_manager",
+    # Tier Analytics
+    "TierAnalyticsTracker",
+    "TierStats",
+    "MemoryUsageEvent",
+    "MemoryAnalytics",
 ]
