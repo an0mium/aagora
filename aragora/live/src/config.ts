@@ -10,7 +10,7 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost
 export const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
 
 // === Debate Defaults ===
-export const DEFAULT_AGENTS = process.env.NEXT_PUBLIC_DEFAULT_AGENTS || 'grok,anthropic-api,openai-api,deepseek,gemini';
+export const DEFAULT_AGENTS = process.env.NEXT_PUBLIC_DEFAULT_AGENTS || 'grok,anthropic-api,openai-api,deepseek,mistral-api,gemini';
 export const DEFAULT_ROUNDS = parseInt(process.env.NEXT_PUBLIC_DEFAULT_ROUNDS || '3', 10);
 export const MAX_ROUNDS = parseInt(process.env.NEXT_PUBLIC_MAX_ROUNDS || '10', 10);
 
@@ -20,11 +20,13 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   'anthropic-api': 'Opus 4.5',
   'openai-api': 'GPT 5.2',
   'deepseek': 'DeepSeek V3.2',
+  'mistral-api': 'Mistral Large',
+  'codestral': 'Codestral',
   'gemini': 'Gemini 2.5',
 };
 
 // === Streaming Configuration ===
-export const STREAMING_CAPABLE_AGENTS = (process.env.NEXT_PUBLIC_STREAMING_AGENTS || 'grok,anthropic-api,openai-api').split(',');
+export const STREAMING_CAPABLE_AGENTS = (process.env.NEXT_PUBLIC_STREAMING_AGENTS || 'grok,anthropic-api,openai-api,mistral-api').split(',');
 
 // === UI Timeouts ===
 export const API_TIMEOUT_MS = parseInt(process.env.NEXT_PUBLIC_API_TIMEOUT || '30000', 10);

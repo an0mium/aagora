@@ -22,6 +22,7 @@ from aragora.agents.api_agents.openrouter import (
     LlamaAgent,
     MistralAgent,
 )
+from aragora.agents.api_agents.mistral import MistralAPIAgent, CodestralAgent
 from aragora.agents.api_agents.rate_limiter import (
     OpenRouterRateLimiter,
     OpenRouterTier,
@@ -42,6 +43,9 @@ __all__ = [
     "OpenAIAPIAgent",
     "GrokAgent",
     "OllamaAgent",
+    # Mistral direct API
+    "MistralAPIAgent",
+    "CodestralAgent",
     # OpenRouter and subclasses
     "OpenRouterAgent",
     "DeepSeekAgent",
