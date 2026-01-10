@@ -122,8 +122,8 @@ export function UserParticipation({ events, onVote, onSuggest, onAck, onError }:
   };
 
   return (
-    <div className="bg-card rounded-lg p-4 border border-border">
-      <h2 className="text-sm font-medium text-text-muted uppercase tracking-wider mb-3">
+    <div className="panel">
+      <h2 className="panel-title-sm mb-3">
         User Participation
       </h2>
 

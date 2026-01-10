@@ -420,8 +420,8 @@ class DebateRoundsPhase:
             return
 
         # Build revision tasks for all proposers
-        # Use complexity-scaled timeout from governor (base 600s for CLI agents)
-        timeout = get_complexity_governor().get_scaled_timeout(600.0)
+        # Use complexity-scaled timeout from governor
+        timeout = get_complexity_governor().get_scaled_timeout(float(AGENT_TIMEOUT_SECONDS))
         revision_tasks = []
         revision_agents = []
         for agent in ctx.proposers:

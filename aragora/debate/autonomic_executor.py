@@ -24,6 +24,7 @@ import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Awaitable, Optional, TypeVar
 
+from aragora.config import AGENT_TIMEOUT_SECONDS
 from aragora.resilience import CircuitBreaker
 
 T = TypeVar("T")
@@ -124,9 +125,9 @@ class AutonomicExecutor:
     def __init__(
         self,
         circuit_breaker: Optional[CircuitBreaker] = None,
-        default_timeout: float = 600.0,  # Increased for CLI agents
+        default_timeout: float = None,  # Uses AGENT_TIMEOUT_SECONDS if not specified
         timeout_escalation_factor: float = 1.5,
-        max_timeout: float = 900.0,  # Increased max
+        max_timeout: float = 600.0,  # Max timeout cap
         streaming_buffer: Optional[StreamingContentBuffer] = None,
         wisdom_store: Optional["InsightStore"] = None,
         loop_id: Optional[str] = None,
@@ -152,7 +153,8 @@ class AutonomicExecutor:
             enable_telemetry: Enable Prometheus/Blackbox telemetry emission
         """
         self.circuit_breaker = circuit_breaker
-        self.default_timeout = default_timeout
+        # Use AGENT_TIMEOUT_SECONDS from config if not explicitly specified
+        self.default_timeout = default_timeout if default_timeout is not None else float(AGENT_TIMEOUT_SECONDS)
         self.immune_system = immune_system
         self.chaos_director = chaos_director
         self.timeout_escalation_factor = timeout_escalation_factor

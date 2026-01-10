@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional, Callable
 
+from aragora.config import AGENT_TIMEOUT_SECONDS
 from aragora.core import TaskComplexity
 
 logger = logging.getLogger(__name__)

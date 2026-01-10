@@ -939,6 +939,68 @@ class ConsensusPhase:
 
         return vote_counts
 
+    def _normalize_choice_to_agent(
+        self,
+        choice: str,
+        agents: list,
+        proposals: dict[str, str],
+    ) -> str:
+        """Normalize a vote choice to an agent name.
+
+        Handles common mismatches:
+        - Case differences: "Claude" vs "claude"
+        - Partial names: "claude" vs "claude-visionary"
+        - Proposal keys vs agent names
+
+        Args:
+            choice: The raw vote choice string
+            agents: List of Agent objects with .name attribute
+            proposals: Dict of agent_name -> proposal text
+
+        Returns:
+            The matching agent name, or the original choice if no match
+        """
+        if not choice:
+            return choice
+
+        choice_lower = choice.lower().strip()
+
+        # Direct match in proposals keys
+        if choice in proposals:
+            return choice
+
+        # Case-insensitive match in proposals keys
+        for agent_name in proposals:
+            if agent_name.lower() == choice_lower:
+                return agent_name
+
+        # Try to match agent names (handles partial matches)
+        for agent in agents:
+            agent_name = agent.name
+            agent_lower = agent_name.lower()
+
+            # Exact match (case-insensitive)
+            if agent_lower == choice_lower:
+                return agent_name
+
+            # Choice is a prefix of agent name (e.g., "claude" matches "claude-visionary")
+            if agent_lower.startswith(choice_lower):
+                return agent_name
+
+            # Agent name is a prefix of choice (e.g., "claude" matches "claude's proposal")
+            if choice_lower.startswith(agent_lower):
+                return agent_name
+
+            # Contains match for hyphenated names
+            if "-" in agent_name:
+                base_name = agent_name.split("-")[0].lower()
+                if base_name == choice_lower or choice_lower.startswith(base_name):
+                    return agent_name
+
+        # No match found - return original (logging for debugging)
+        logger.debug(f"vote_choice_no_match choice={choice} agents={[a.name for a in agents]}")
+        return choice
+
     def _determine_majority_winner(
         self,
         ctx: "DebateContext",
@@ -957,16 +1019,20 @@ class ConsensusPhase:
             result.confidence = 0.0
             return
 
-        winner, count = most_common[0]
+        winner_choice, count = most_common[0]
         threshold = self.protocol.consensus_threshold if self.protocol else 0.5
 
+        # Normalize vote choice to agent name
+        # Vote choices might be agent names with different casing/format
+        winner_agent = self._normalize_choice_to_agent(winner_choice, ctx.agents, proposals)
+
         result.final_answer = proposals.get(
-            winner, list(proposals.values())[0] if proposals else ""
+            winner_agent, list(proposals.values())[0] if proposals else ""
         )
         result.consensus_reached = count / total_votes >= threshold
         result.confidence = count / total_votes
-        ctx.winner_agent = winner
-        result.winner = winner  # Set winner for ELO tracking
+        ctx.winner_agent = winner_agent
+        result.winner = winner_agent  # Set winner for ELO tracking (agent name)
 
         # Calculate consensus variance and strength
         if len(vote_counts) > 1:
@@ -989,7 +1055,7 @@ class ConsensusPhase:
 
         # Track dissenting views
         for agent, prop in proposals.items():
-            if agent != winner:
+            if agent != winner_agent:
                 result.dissenting_views.append(f"[{agent}]: {prop}")
 
         logger.info(f"consensus_winner winner={winner} votes={count}/{len(ctx.agents)}")
