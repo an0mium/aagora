@@ -627,4 +627,10 @@ input:focus, textarea:focus {
     text-shadow: none;
     opacity: 0.8;
   }
+
+  /* White debate input for better contrast */
+  .debate-input {
+    background: #ffffff;
+    border-color: var(--accent);
+  }
 }

@@ -258,7 +258,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
             disabled={isDisabled}
             rows={3}
             aria-describedby="debate-input-hint"
-            className="w-full bg-bg border-2 border-acid-green/50 focus:border-acid-green
+            className="debate-input w-full bg-bg border-2 border-acid-green/50 focus:border-acid-green
                        px-4 py-3 font-mono text-lg text-text placeholder-text-muted/50
                        resize-none transition-colors focus:outline-none
                        disabled:opacity-50 disabled:cursor-not-allowed"
@@ -315,7 +315,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
           <button
             type="submit"
             disabled={isDisabled}
-            className="px-6 py-2 bg-acid-green text-bg font-mono font-bold
+            className="px-8 py-3 bg-acid-green text-bg font-mono font-bold text-lg
                        hover:bg-acid-green/80 transition-colors
                        disabled:bg-text-muted disabled:cursor-not-allowed
                        flex items-center gap-2"
