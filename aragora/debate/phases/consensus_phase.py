@@ -351,6 +351,10 @@ class ConsensusPhase:
 
         # Cast votes from all agents
         votes = await self._collect_votes(ctx)
+
+        # Apply calibration adjustments to vote confidences (E3)
+        votes = self._apply_calibration_to_votes(votes, ctx)
+
         result.votes.extend(votes)
 
         # Group similar votes
@@ -391,6 +395,10 @@ class ConsensusPhase:
 
         # Cast votes
         votes, voting_errors = await self._collect_votes_with_errors(ctx)
+
+        # Apply calibration adjustments to vote confidences (E3)
+        votes = self._apply_calibration_to_votes(votes, ctx)
+
         result.votes.extend(votes)
 
         # Group similar votes
@@ -838,6 +846,69 @@ class ConsensusPhase:
             vote_weight_cache[agent.name] = agent_weight
 
         return vote_weight_cache
+
+    def _apply_calibration_to_votes(
+        self,
+        votes: list["Vote"],
+        ctx: "DebateContext",
+    ) -> list["Vote"]:
+        """Apply calibration adjustments to vote confidences.
+
+        E3: Calibration-driven agent adaptation.
+
+        Adjusts each vote's confidence based on the agent's historical
+        calibration performance:
+        - Overconfident agents have their confidence scaled down
+        - Underconfident agents have their confidence scaled up
+        - Well-calibrated agents are unchanged
+
+        Args:
+            votes: List of votes to adjust
+            ctx: Debate context
+
+        Returns:
+            List of votes with adjusted confidences
+        """
+        if not self.calibration_tracker:
+            return votes
+
+        # Import here to avoid circular imports
+        from aragora.agents.calibration import adjust_agent_confidence
+
+        adjusted_votes = []
+        for vote in votes:
+            if isinstance(vote, Exception):
+                adjusted_votes.append(vote)
+                continue
+
+            try:
+                summary = self.calibration_tracker.get_calibration_summary(vote.agent)
+                original_conf = vote.confidence
+                adjusted_conf = adjust_agent_confidence(original_conf, summary)
+
+                # Create new vote with adjusted confidence
+                if adjusted_conf != original_conf:
+                    from aragora.core import Vote
+                    adjusted_vote = Vote(
+                        agent=vote.agent,
+                        choice=vote.choice,
+                        reasoning=vote.reasoning,
+                        confidence=adjusted_conf,
+                        continue_debate=vote.continue_debate,
+                    )
+                    adjusted_votes.append(adjusted_vote)
+                    logger.debug(
+                        "calibration_confidence_adjustment agent=%s "
+                        "original=%.2f adjusted=%.2f bias=%s",
+                        vote.agent, original_conf, adjusted_conf, summary.bias_direction
+                    )
+                else:
+                    adjusted_votes.append(vote)
+            except Exception as e:
+                logger.debug(f"Calibration adjustment failed for {vote.agent}: {e}")
+                adjusted_votes.append(vote)
+
+        return adjusted_votes
 
     def _count_weighted_votes(
         self,

@@ -119,6 +119,62 @@ class CalibrationSummary:
             return "underconfident"
         return "well-calibrated"
 
+    def get_confidence_adjustment(self) -> float:
+        """Calculate confidence adjustment factor based on calibration history.
+
+        Returns a multiplier to apply to agent confidence values:
+        - Overconfident: < 1.0 (reduce confidence)
+        - Underconfident: > 1.0 (boost confidence)
+        - Well-calibrated: 1.0 (no change)
+
+        The adjustment is proportional to the Expected Calibration Error (ECE).
+        """
+        if self.total_predictions < 10:
+            return 1.0  # Not enough data
+
+        # Base adjustment on ECE - larger errors mean larger adjustments
+        max_adjustment = 0.3  # Maximum 30% adjustment
+        adjustment_magnitude = min(self.ece, 0.2) / 0.2 * max_adjustment
+
+        if self.is_overconfident:
+            return 1.0 - adjustment_magnitude  # Scale down (e.g., 0.7 * confidence)
+        elif self.is_underconfident:
+            return 1.0 + adjustment_magnitude  # Scale up (e.g., 1.3 * confidence)
+        return 1.0
+
+    def adjust_confidence(self, raw_confidence: float) -> float:
+        """Adjust a confidence value based on calibration history.
+
+        Args:
+            raw_confidence: The agent's stated confidence (0-1)
+
+        Returns:
+            Calibration-adjusted confidence, clamped to [0.05, 0.95]
+        """
+        adjustment = self.get_confidence_adjustment()
+        adjusted = raw_confidence * adjustment
+
+        # Clamp to reasonable bounds
+        return max(0.05, min(0.95, adjusted))
+
+
+def adjust_agent_confidence(
+    confidence: float,
+    calibration_summary: Optional["CalibrationSummary"],
+) -> float:
+    """Utility function to adjust agent confidence based on calibration.
+
+    Args:
+        confidence: Raw confidence value (0-1)
+        calibration_summary: Agent's calibration summary, or None
+
+    Returns:
+        Adjusted confidence value
+    """
+    if calibration_summary is None:
+        return confidence
+    return calibration_summary.adjust_confidence(confidence)
+
 
 class CalibrationTracker:
     """
