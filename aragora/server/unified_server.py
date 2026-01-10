@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from aragora.agents.grounded import PositionLedger  # type: ignore[attr-defined]
     from aragora.memory.consensus import ConsensusMemory, DissentRetriever  # type: ignore[attr-defined]
     from aragora.agents.grounded import MomentDetector  # type: ignore[attr-defined]
+    from aragora.storage import UserStore
+    from aragora.billing.usage import UsageTracker
 from urllib.parse import urlparse, parse_qs
 
 from .stream import DebateStreamServer, SyncEventEmitter, StreamEvent, StreamEventType, create_arena_hooks
@@ -437,6 +439,32 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
             self.send_response(200)
             self.send_header("X-RateLimit-Remaining", str(remaining))
             self.send_header("X-RateLimit-Limit", str(auth_config.rate_limit_per_minute))
+
+        return True
+
+    def _check_tier_rate_limit(self) -> bool:
+        """Check tier-aware rate limit based on user's subscription.
+
+        Returns True if allowed, False if blocked.
+        Sends 429 error response if rate limited.
+        """
+        from aragora.server.middleware.rate_limit import check_tier_rate_limit, rate_limit_headers
+
+        result = check_tier_rate_limit(self, UnifiedHandler.user_store)
+
+        if not result.allowed:
+            headers = rate_limit_headers(result)
+            self._send_json(
+                {
+                    "error": "Rate limit exceeded for your subscription tier",
+                    "code": "tier_rate_limit",
+                    "limit": result.limit,
+                    "retry_after": int(result.retry_after) + 1,
+                    "upgrade_url": "/pricing",
+                },
+                status=429,
+            )
+            return False
 
         return True
 
@@ -888,21 +916,28 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
         if not self._check_rate_limit():
             return
 
+        # Tier-aware rate limiting based on subscription
+        if not self._check_tier_rate_limit():
+            return
+
         # Quota enforcement - check org usage limits
         if UnifiedHandler.user_store:
-            from aragora.billing.jwt_auth import extract_user_from_request
-            auth_ctx = extract_user_from_request(self, UnifiedHandler.user_store)
-            if auth_ctx.is_authenticated and auth_ctx.org_id:
-                org = UnifiedHandler.user_store.get_organization_by_id(auth_ctx.org_id)
-                if org and org.is_at_limit:
-                    self._send_json({
-                        "error": "Monthly debate quota exceeded",
-                        "code": "quota_exceeded",
-                        "limit": org.limits.debates_per_month,
-                        "used": org.debates_used_this_month,
-                        "upgrade_url": "/pricing",
-                    }, status=429)
-                    return
+            try:
+                from aragora.billing.jwt_auth import extract_user_from_request
+                auth_ctx = extract_user_from_request(self, UnifiedHandler.user_store)
+                if auth_ctx.is_authenticated and auth_ctx.org_id:
+                    org = UnifiedHandler.user_store.get_organization_by_id(auth_ctx.org_id)
+                    if org and org.is_at_limit:
+                        self._send_json({
+                            "error": "Monthly debate quota exceeded",
+                            "code": "quota_exceeded",
+                            "limit": org.limits.debates_per_month,
+                            "used": org.debates_used_this_month,
+                            "upgrade_url": "/pricing",
+                        }, status=429)
+                        return
+            except Exception as e:
+                logger.warning(f"Quota check failed, proceeding without enforcement: {e}")
 
         if not DEBATE_AVAILABLE:
             self._send_json({"error": "Debate orchestrator not available"}, status=500)
@@ -948,11 +983,14 @@ class UnifiedHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):  # type: ign
 
         # Increment usage on successful debate creation
         if response.status_code < 400 and UnifiedHandler.user_store:
-            from aragora.billing.jwt_auth import extract_user_from_request
-            auth_ctx = extract_user_from_request(self, UnifiedHandler.user_store)
-            if auth_ctx.is_authenticated and auth_ctx.org_id:
-                UnifiedHandler.user_store.increment_usage(auth_ctx.org_id)
-                logger.info(f"Incremented debate usage for org {auth_ctx.org_id}")
+            try:
+                from aragora.billing.jwt_auth import extract_user_from_request
+                auth_ctx = extract_user_from_request(self, UnifiedHandler.user_store)
+                if auth_ctx.is_authenticated and auth_ctx.org_id:
+                    UnifiedHandler.user_store.increment_usage(auth_ctx.org_id)
+                    logger.info(f"Incremented debate usage for org {auth_ctx.org_id}")
+            except Exception as e:
+                logger.warning(f"Usage increment failed: {e}")
 
         # Send response
         self._send_json(response.to_dict(), status=response.status_code)
