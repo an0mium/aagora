@@ -140,9 +140,9 @@ export function MetricsPanel({ apiBase = DEFAULT_API_BASE }: MetricsPanelProps) 
   };
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text font-mono">Server Metrics</h3>
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title font-mono">Server Metrics</h3>
         <div className="flex items-center gap-2">
           <button
             onClick={fetchData}
@@ -190,7 +190,7 @@ export function MetricsPanel({ apiBase = DEFAULT_API_BASE }: MetricsPanelProps) 
       {expanded && (
         <>
           {/* Tab Navigation */}
-          <div className="flex space-x-1 bg-bg border border-border rounded p-1 mb-4">
+          <div className="panel-tabs mb-4">
             <button
               onClick={() => setActiveTab('overview')}
               className={`px-3 py-1 rounded text-sm font-mono transition-colors flex-1 ${

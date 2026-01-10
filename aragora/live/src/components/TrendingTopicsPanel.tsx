@@ -91,11 +91,11 @@ export function TrendingTopicsPanel({
   };
 
   return (
-    <div className="border border-acid-green/30 bg-surface/50">
+    <div className="panel" style={{ padding: 0 }}>
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center justify-between hover:bg-surface/80 transition-colors"
+        className="panel-collapsible-header w-full"
       >
         <div className="flex items-center gap-2">
           <span className="text-lg">🔥</span>
@@ -112,7 +112,7 @@ export function TrendingTopicsPanel({
               {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
-          <span className="text-acid-green">{expanded ? '[-]' : '[+]'}</span>
+          <span className="panel-toggle">{expanded ? '[-]' : '[+]'}</span>
         </div>
       </button>
 
@@ -139,7 +139,7 @@ export function TrendingTopicsPanel({
               {topics.map((topic, idx) => (
                 <div
                   key={idx}
-                  className="p-2 bg-bg border border-acid-green/20 hover:border-acid-green/40 transition-colors"
+                  className="panel-item"
                 >
                   <div className="flex items-start gap-2">
                     <span className="text-sm" title={topic.source}>

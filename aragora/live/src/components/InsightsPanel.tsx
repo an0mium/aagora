@@ -216,9 +216,9 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
   };
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text">Debate Insights</h3>
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title">Debate Insights</h3>
         <button
           onClick={fetchInsights}
           className="px-2 py-1 bg-surface border border-border rounded text-sm text-text hover:bg-surface-hover"
@@ -228,7 +228,7 @@ export function InsightsPanel({ wsMessages = [], apiBase = DEFAULT_API_BASE }: I
       </div>
 
       {/* Tab Navigation */}
-      <div role="tablist" aria-label="Insights categories" className="flex space-x-1 bg-bg border border-border rounded p-1 mb-4">
+      <div role="tablist" aria-label="Insights categories" className="panel-tabs mb-4">
         <button
           role="tab"
           aria-selected={activeTab === 'insights'}

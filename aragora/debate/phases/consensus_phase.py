@@ -1058,20 +1058,20 @@ class ConsensusPhase:
             if agent != winner_agent:
                 result.dissenting_views.append(f"[{agent}]: {prop}")
 
-        logger.info(f"consensus_winner winner={winner} votes={count}/{len(ctx.agents)}")
+        logger.info(f"consensus_winner winner={winner_agent} votes={count}/{len(ctx.agents)}")
 
         # Notify spectator
         if self._notify_spectator:
             self._notify_spectator(
                 "consensus",
-                details=f"Majority vote: {winner}",
+                details=f"Majority vote: {winner_agent}",
                 metric=result.confidence,
             )
 
         # Record consensus
         if self.recorder:
             try:
-                self.recorder.record_phase_change(f"consensus_reached: {winner}")
+                self.recorder.record_phase_change(f"consensus_reached: {winner_agent}")
             except Exception as e:
                 logger.debug(f"Recorder error for consensus: {e}")
 

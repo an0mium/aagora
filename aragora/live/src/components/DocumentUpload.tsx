@@ -153,9 +153,9 @@ export function DocumentUpload({ onDocumentsChange, apiBase = '' }: DocumentUplo
   };
 
   return (
-    <div className="card">
+    <div className="panel" style={{ padding: 0 }}>
       <div className="p-4 border-b border-border">
-        <h3 className="text-sm font-medium text-text-muted uppercase tracking-wider">
+        <h3 className="panel-title-sm">
           Documents
         </h3>
       </div>

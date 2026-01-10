@@ -142,6 +142,19 @@ def init_phases(arena: "Arena") -> None:
         except ImportError as e:
             logger.debug(f"Trickster unavailable: {e}")
 
+    # NoveltyTracker for semantic novelty detection (triggers trickster on staleness)
+    # Enabled when trickster is enabled since they work together
+    novelty_tracker = None
+    if getattr(arena.protocol, 'enable_trickster', False):
+        try:
+            from aragora.debate.novelty import NoveltyTracker
+            novelty_tracker = NoveltyTracker(
+                low_novelty_threshold=getattr(arena.protocol, 'novelty_threshold', 0.15)
+            )
+            logger.info("novelty_tracker enabled for proposal staleness detection")
+        except ImportError as e:
+            logger.debug(f"NoveltyTracker unavailable: {e}")
+
     # Phase 2: Debate Rounds (critique/revision loop)
     arena.debate_rounds_phase = DebateRoundsPhase(
         protocol=arena.protocol,
@@ -152,6 +165,7 @@ def init_phases(arena: "Arena") -> None:
         trickster=trickster,
         rhetorical_observer=rhetorical_observer,
         event_emitter=arena.event_emitter,
+        novelty_tracker=novelty_tracker,
         update_role_assignments=arena._update_role_assignments,
         assign_stances=arena._assign_stances,
         select_critics_for_proposal=arena._select_critics_for_proposal,

@@ -336,9 +336,9 @@ function LeaderboardPanelComponent({ wsMessages = [], loopId, apiBase = DEFAULT_
   }, [matchEvents, lastEventId, fetchData, availableDomains]);
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text">Agent Leaderboard</h3>
+    <div className="panel">
+      <div className="panel-header mb-4">
+        <h3 className="panel-title">Agent Leaderboard</h3>
         <button
           onClick={fetchData}
           className="px-2 py-1 bg-surface border border-border rounded text-sm text-text hover:bg-surface-hover"
@@ -367,7 +367,7 @@ function LeaderboardPanelComponent({ wsMessages = [], loopId, apiBase = DEFAULT_
       )}
 
       {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-bg border border-border rounded p-1 mb-4">
+      <div className="panel-tabs mb-4">
         <button
           onClick={() => setActiveTab('rankings')}
           className={`px-3 py-1 rounded text-sm transition-colors flex-1 ${
