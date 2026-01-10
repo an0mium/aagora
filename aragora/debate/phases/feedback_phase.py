@@ -18,6 +18,8 @@ import asyncio
 import logging
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
+from aragora.agents.errors import _build_error_action
+
 if TYPE_CHECKING:
     from aragora.core import Agent, DebateResult
     from aragora.debate.context import DebateContext
@@ -74,6 +76,8 @@ class FeedbackPhase:
         breeding_threshold: float = 0.8,  # Min confidence to trigger evolution
         # Pulse manager for trending topic analytics
         pulse_manager: Any = None,
+        # Prompt evolution for learning from debates
+        prompt_evolver: Any = None,  # PromptEvolver for extracting winning patterns
     ):
         """
         Initialize the feedback phase.
@@ -99,6 +103,7 @@ class FeedbackPhase:
             auto_evolve: If True, trigger evolution after high-confidence debates
             breeding_threshold: Minimum confidence to trigger evolution (default 0.8)
             pulse_manager: Optional PulseManager for trending topic analytics
+            prompt_evolver: Optional PromptEvolver for extracting winning patterns
         """
         self.elo_system = elo_system
         self.persona_manager = persona_manager
@@ -116,6 +121,7 @@ class FeedbackPhase:
         self.auto_evolve = auto_evolve
         self.breeding_threshold = breeding_threshold
         self.pulse_manager = pulse_manager
+        self.prompt_evolver = prompt_evolver
 
         # Callbacks
         self._emit_moment_event = emit_moment_event
@@ -178,6 +184,12 @@ class FeedbackPhase:
 
         # 15. Record pulse outcome if debate was on a trending topic
         self._record_pulse_outcome(ctx)
+
+        # 16. Run periodic memory cleanup
+        self._run_memory_cleanup(ctx)
+
+        # 17. Record evolution patterns from high-confidence debates
+        self._record_evolution_patterns(ctx)
 
     def _record_calibration(self, ctx: "DebateContext") -> None:
         """Record calibration data from agent votes with confidence."""
@@ -248,6 +260,35 @@ class FeedbackPhase:
         except Exception as e:
             logger.warning(f"[pulse] Failed to record outcome: {e}")
 
+    def _run_memory_cleanup(self, ctx: "DebateContext") -> None:
+        """Run periodic memory cleanup to prevent unbounded growth.
+
+        Cleans up expired memories and enforces tier limits. This activates
+        the previously stranded cleanup functionality in ContinuumMemory.
+
+        Cleanup runs:
+        - cleanup_expired_memories(): Every debate
+        - enforce_tier_limits(): 10% of debates (probabilistic)
+        """
+        if not self.continuum_memory:
+            return
+
+        import random
+
+        try:
+            # Always try to clean expired memories
+            cleaned = self.continuum_memory.cleanup_expired_memories()
+            if cleaned > 0:
+                logger.debug(f"[memory] Cleaned {cleaned} expired memories")
+
+            # Probabilistically enforce tier limits (10% of debates)
+            if random.random() < 0.1:
+                self.continuum_memory.enforce_tier_limits()
+                logger.debug("[memory] Enforced tier limits")
+
+        except Exception as e:
+            logger.debug(f"[memory] Cleanup error (non-fatal): {e}")
+
     def _record_elo_match(self, ctx: "DebateContext") -> None:
         """Record ELO match results."""
         if not self.elo_system:
@@ -277,7 +318,8 @@ class FeedbackPhase:
             self._emit_match_recorded_event(ctx, participants)
 
         except Exception as e:
-            logger.warning("ELO update failed for debate %s: %s", ctx.debate_id, e)
+            _, msg, exc_info = _build_error_action(e, "elo")
+            logger.warning("ELO update failed for debate %s: %s", ctx.debate_id, msg, exc_info=exc_info)
 
     def _emit_match_recorded_event(
         self, ctx: "DebateContext", participants: list[str]
@@ -327,7 +369,8 @@ class FeedbackPhase:
                     success=success,
                 )
         except Exception as e:
-            logger.warning("Persona update failed: %s", e)
+            _, msg, exc_info = _build_error_action(e, "persona")
+            logger.warning("Persona update failed: %s", msg, exc_info=exc_info)
 
     def _resolve_positions(self, ctx: "DebateContext") -> None:
         """Resolve positions in PositionLedger."""
@@ -609,7 +652,8 @@ class FeedbackPhase:
         except ImportError:
             logger.debug("ConsensusMemory storage skipped: module not available")
         except Exception as e:
-            logger.warning("ConsensusMemory storage failed: %s", e)
+            _, msg, exc_info = _build_error_action(e, "consensus_memory")
+            logger.warning("ConsensusMemory storage failed: %s", msg, exc_info=exc_info)
 
     def _confidence_to_strength(self, confidence: float) -> "ConsensusStrength":
         """Convert confidence score to ConsensusStrength enum."""
@@ -880,3 +924,74 @@ class FeedbackPhase:
 
         except Exception as e:
             logger.warning("[genesis] Evolution failed: %s", e)
+
+    def _record_evolution_patterns(self, ctx: "DebateContext") -> None:
+        """Extract winning patterns from high-confidence debates for prompt evolution.
+
+        When enabled via protocol.enable_evolution, this method:
+        1. Extracts patterns from successful debates (high confidence)
+        2. Stores patterns in the PromptEvolver database
+        3. Updates performance metrics for agent prompts
+
+        Only runs for debates with confidence >= 0.7 to ensure quality patterns.
+        """
+        if not self.prompt_evolver:
+            return
+
+        result = ctx.result
+        if not result:
+            return
+
+        # Only extract patterns from high-confidence debates
+        if result.confidence < 0.7:
+            return
+
+        try:
+            # Build a minimal DebateResult-like object for the evolver
+            # The evolver expects objects with specific attributes
+            class DebateResultProxy:
+                def __init__(self, ctx_result, ctx_obj):
+                    self.id = ctx_obj.debate_id
+                    self.consensus_reached = ctx_result.consensus_reached
+                    self.confidence = ctx_result.confidence
+                    self.final_answer = ctx_result.final_answer or ""
+                    self.critiques = []
+
+                    # Extract critiques from messages if available
+                    if ctx_result.messages:
+                        for msg in ctx_result.messages:
+                            if getattr(msg, 'role', '') == 'critic':
+                                # Create a critique-like object
+                                class CritiqueProxy:
+                                    def __init__(self, m):
+                                        self.severity = getattr(m, 'severity', 0.5)
+                                        self.issues = getattr(m, 'issues', [])
+                                        self.suggestions = getattr(m, 'suggestions', [])
+
+                                self.critiques.append(CritiqueProxy(msg))
+
+            proxy = DebateResultProxy(result, ctx)
+
+            # Extract patterns from this debate
+            patterns = self.prompt_evolver.extract_winning_patterns([proxy])
+            if patterns:
+                self.prompt_evolver.store_patterns(patterns)
+                logger.info(
+                    "[evolution] Extracted %d patterns from debate %s (confidence=%.2f)",
+                    len(patterns),
+                    ctx.debate_id,
+                    result.confidence,
+                )
+
+            # Update performance for each agent's current prompt version
+            for agent in ctx.agents:
+                prompt_version = getattr(agent, 'prompt_version', None)
+                if prompt_version is not None:
+                    self.prompt_evolver.update_performance(
+                        agent_name=agent.name,
+                        version=prompt_version,
+                        debate_result=proxy,
+                    )
+
+        except Exception as e:
+            logger.debug("[evolution] Pattern extraction failed: %s", e)
