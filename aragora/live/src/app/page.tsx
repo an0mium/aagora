@@ -30,6 +30,7 @@ import { RiskWarningsPanel } from '@/components/RiskWarningsPanel';
 import { AnalyticsPanel } from '@/components/AnalyticsPanel';
 import { CalibrationPanel } from '@/components/CalibrationPanel';
 import { TricksterAlertPanel } from '@/components/TricksterAlertPanel';
+import { RhetoricalObserverPanel } from '@/components/RhetoricalObserverPanel';
 import { ConsensusKnowledgeBase } from '@/components/ConsensusKnowledgeBase';
 import { DebateListPanel } from '@/components/DebateListPanel';
 import { AgentComparePanel } from '@/components/AgentComparePanel';
@@ -478,6 +479,9 @@ export default function Home() {
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Trickster Alerts">
                 <TricksterAlertPanel events={events} />
+              </PanelErrorBoundary>
+              <PanelErrorBoundary panelName="Rhetorical Observer">
+                <RhetoricalObserverPanel events={events} />
               </PanelErrorBoundary>
               <PanelErrorBoundary panelName="Citations">
                 <CitationsPanel events={events} />

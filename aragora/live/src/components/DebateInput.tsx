@@ -9,6 +9,26 @@ interface DebateInputProps {
   onError?: (error: string) => void;
 }
 
+type DebateMode = 'standard' | 'graph' | 'matrix';
+
+const DEBATE_MODES: Record<DebateMode, { label: string; description: string; endpoint: string }> = {
+  standard: {
+    label: 'Standard',
+    description: 'Linear debate with critique rounds',
+    endpoint: '/api/debate',
+  },
+  graph: {
+    label: 'Graph',
+    description: 'Branching debate exploring multiple paths',
+    endpoint: '/api/debates/graph',
+  },
+  matrix: {
+    label: 'Matrix',
+    description: 'Parallel scenarios for comparison',
+    endpoint: '/api/debates/matrix',
+  },
+};
+
 interface AgentRecommendation {
   agent: string;
   suitability: number;
@@ -44,6 +64,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [agents, setAgents] = useState(DEFAULT_AGENTS);
   const [rounds, setRounds] = useState(DEFAULT_ROUNDS);
+  const [debateMode, setDebateMode] = useState<DebateMode>('standard');
   const [apiStatus, setApiStatus] = useState<ApiStatus>('checking');
   const [recommendations, setRecommendations] = useState<AgentRecommendation[]>([]);
   const [detectedDomain, setDetectedDomain] = useState<string>('general');
@@ -166,7 +187,8 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${apiBase}/api/debate`, {
+      const modeConfig = DEBATE_MODES[debateMode];
+      const response = await fetch(`${apiBase}${modeConfig.endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -175,6 +197,9 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
           question: trimmedQuestion,
           agents,
           rounds,
+          // Graph/Matrix specific options
+          ...(debateMode === 'graph' && { branch_on_disagreement: true }),
+          ...(debateMode === 'matrix' && { scenarios: 3 }),
         }),
       });
 
@@ -199,7 +224,7 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
     } finally {
       setIsSubmitting(false);
     }
-  }, [question, placeholder, agents, rounds, apiBase, isSubmitting, onDebateStarted, onError]);
+  }, [question, placeholder, agents, rounds, debateMode, apiBase, isSubmitting, onDebateStarted, onError]);
 
   const isDisabled = isSubmitting || apiStatus === 'offline' || apiStatus === 'checking';
 
@@ -313,6 +338,33 @@ export function DebateInput({ apiBase, onDebateStarted, onError }: DebateInputPr
         {/* Advanced Options */}
         {showAdvanced && (
           <div className="border border-acid-green/30 p-4 space-y-4 bg-surface/50">
+            {/* Debate Mode Selector */}
+            <div>
+              <label className="block text-xs font-mono text-text-muted mb-2">
+                DEBATE MODE
+              </label>
+              <div className="flex gap-2">
+                {(Object.keys(DEBATE_MODES) as DebateMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setDebateMode(mode)}
+                    className={`flex-1 px-3 py-2 text-xs font-mono border transition-colors ${
+                      debateMode === mode
+                        ? 'bg-acid-green text-bg border-acid-green'
+                        : 'bg-bg text-text-muted border-acid-green/30 hover:border-acid-green/60'
+                    }`}
+                    title={DEBATE_MODES[mode].description}
+                  >
+                    {DEBATE_MODES[mode].label.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-text-muted mt-1">
+                {DEBATE_MODES[debateMode].description}
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               {/* Agents */}
               <div>
