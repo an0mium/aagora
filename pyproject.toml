@@ -90,8 +90,8 @@ research = [
 ]
 ml = [
     "numpy>=2.0,<3",
-    "scipy>=1.13.0",
-    "scikit-learn>=1.4.2",
+    "scipy>=1.14.0",  # 1.14.0+ required for NumPy 2.x support
+    "scikit-learn>=1.5.0",  # 1.5.0+ required for NumPy 2.x support
     "sentence-transformers>=3.0.0",
 ]
 all = [
