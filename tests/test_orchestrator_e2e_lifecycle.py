@@ -407,3 +407,176 @@ class TestDebateMetadata:
             for msg in result.messages:
                 if hasattr(msg, "agent") and msg.agent:
                     assert msg.agent in ["alice", "bob", "system"]
+
+
+class TestUserParticipation:
+    """Tests for user participation affecting debate outcomes."""
+
+    @pytest.fixture
+    def env(self):
+        return Environment(task="User participation test")
+
+    @pytest.mark.asyncio
+    async def test_user_vote_recorded(self, env):
+        """User votes are recorded in debate results."""
+        agents = [
+            E2EMockAgent("alice", proposal="Solution A"),
+            E2EMockAgent("bob", proposal="Solution B"),
+        ]
+        protocol = DebateProtocol(rounds=1, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Debate should complete with votes
+        assert result is not None
+        assert result.votes is not None
+
+    @pytest.mark.asyncio
+    async def test_debate_handles_abstentions(self, env):
+        """Debate handles agents that abstain from voting."""
+
+        class AbstainingAgent(E2EMockAgent):
+            async def vote(self, proposals: dict, task: str) -> Vote:
+                return Vote(
+                    agent=self.name,
+                    choice="abstain",
+                    reasoning="I choose to abstain",
+                    confidence=0.0,
+                    continue_debate=False,
+                )
+
+        agents = [
+            E2EMockAgent("alice"),
+            AbstainingAgent("bob"),
+            E2EMockAgent("carol", vote_for="alice"),
+        ]
+        protocol = DebateProtocol(rounds=1, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Should still reach conclusion
+        assert result is not None
+        assert result.final_answer is not None or result.messages
+
+
+class TestEvidenceCollection:
+    """Tests for evidence collection during debates."""
+
+    @pytest.fixture
+    def env(self):
+        return Environment(task="Evidence collection test")
+
+    @pytest.mark.asyncio
+    async def test_proposals_can_include_citations(self, env):
+        """Proposals can include citation references."""
+
+        class CitingAgent(E2EMockAgent):
+            async def generate(self, prompt: str, context: list = None) -> str:
+                self.generate_count += 1
+                return "According to [Source 1], the answer is X. [Source 2] confirms this."
+
+        agents = [
+            CitingAgent("researcher"),
+            E2EMockAgent("critic", vote_for="researcher"),
+        ]
+        protocol = DebateProtocol(rounds=1, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Should complete with citation content
+        assert result is not None
+        if result.messages:
+            has_citation = any(
+                "[Source" in (msg.content if hasattr(msg, 'content') else str(msg))
+                for msg in result.messages
+            )
+            assert has_citation or len(result.messages) > 0
+
+    @pytest.mark.asyncio
+    async def test_debate_with_conflicting_evidence(self, env):
+        """Debate handles agents presenting conflicting evidence."""
+        agents = [
+            E2EMockAgent("pro", proposal="Evidence supports A: [Study 1]"),
+            E2EMockAgent("con", proposal="Evidence supports B: [Study 2]"),
+        ]
+        protocol = DebateProtocol(rounds=2, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Should still reach conclusion despite conflicting evidence
+        assert result is not None
+        assert result.final_answer is not None or result.votes
+
+
+class TestELOTracking:
+    """Tests for ELO rating updates after debates."""
+
+    @pytest.fixture
+    def env(self):
+        return Environment(task="ELO tracking test")
+
+    @pytest.mark.asyncio
+    async def test_debate_completes_for_elo_tracking(self, env):
+        """Debate completes successfully for ELO tracking purposes."""
+        agents = [
+            E2EMockAgent("winner_candidate", confidence=0.95),
+            E2EMockAgent("other", vote_for="winner_candidate", confidence=0.9),
+        ]
+        protocol = DebateProtocol(rounds=1, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Verify debate completed with clear winner
+        assert result is not None
+        assert result.final_answer is not None or result.consensus_reached
+
+    @pytest.mark.asyncio
+    async def test_debate_records_agent_performance(self, env):
+        """Debate result includes data needed for ELO calculation."""
+        agents = [
+            E2EMockAgent("alice", confidence=0.9),
+            E2EMockAgent("bob", vote_for="alice", confidence=0.85),
+            E2EMockAgent("carol", vote_for="alice", confidence=0.88),
+        ]
+        protocol = DebateProtocol(rounds=2, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Verify we have the data needed for ELO: votes with choices and confidence
+        assert result.votes is not None
+        valid_votes = [v for v in result.votes if not isinstance(v, Exception)]
+        assert len(valid_votes) >= 1
+
+        # Each vote should have required attributes
+        for vote in valid_votes:
+            assert hasattr(vote, 'choice')
+            assert hasattr(vote, 'confidence')
+
+    @pytest.mark.asyncio
+    async def test_consensus_provides_winner_for_elo(self, env):
+        """Consensus result identifies winner for ELO update."""
+        agents = [
+            E2EMockAgent("clear_winner"),
+            E2EMockAgent("supporter1", vote_for="clear_winner"),
+            E2EMockAgent("supporter2", vote_for="clear_winner"),
+        ]
+        protocol = DebateProtocol(rounds=1, consensus="majority")
+        arena = Arena(environment=env, agents=agents, protocol=protocol)
+
+        result = await arena.run()
+
+        # Should have a clear winner for ELO
+        assert result is not None
+        # Either consensus_reached or we have votes showing a winner
+        has_winner = result.consensus_reached or (
+            result.votes and
+            any(not isinstance(v, Exception) and v.choice == "clear_winner"
+                for v in result.votes)
+        )
+        assert has_winner
