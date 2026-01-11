@@ -283,10 +283,10 @@ class TestMatrixDebatesPostEndpoint:
 
             handler = MatrixDebatesHandler({})
 
-            # Call internal method directly
+            # Call internal method directly (task must be 10+ chars)
             result = await handler._run_matrix_debate(
                 mock_handler,
-                {"task": "Test task"},
+                {"task": "Test matrix debate task"},
             )
 
             assert result.status_code == 400
@@ -303,9 +303,10 @@ class TestMatrixDebatesPostEndpoint:
 
             handler = MatrixDebatesHandler({})
 
+            # Task must be 10+ chars to pass task validation first
             result = await handler._run_matrix_debate(
                 mock_handler,
-                {"task": "Test task", "scenarios": []},
+                {"task": "Test matrix debate task", "scenarios": []},
             )
 
             assert result.status_code == 400

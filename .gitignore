@@ -126,3 +126,12 @@ aragora/live/playwright/.cache/
 # Local backups
 backups/
 :memory:
+
+# Runtime artifacts (nomic loop state directories)
+.nomic/epic_strategic_debate/
+.nomic/strategic_debate/
+
+# Screenshots (dev/testing artifacts)
+FireShot*.png
+Screenshot*.png
+*.screenshot.png

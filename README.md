@@ -76,6 +76,44 @@ Real-time debate visualization at **[live.aragora.ai](https://live.aragora.ai)**
 - Late-joiner state sync
 - Multi-loop support
 
+## AI Red Team Code Review
+
+Get **unanimous AI consensus** on your pull requests. When 3 independent AI models agree on an issue, you know it's worth fixing.
+
+```bash
+# Review a PR
+git diff main | aragora review
+
+# Review a GitHub PR URL
+aragora review https://github.com/owner/repo/pull/123
+
+# Try without API keys
+aragora review --demo
+```
+
+**What you get:**
+
+| Section | What It Means |
+|---------|--------------|
+| **Unanimous Issues** | All AI models agree → High confidence, fix first |
+| **Split Opinions** | Models disagree → See the tradeoff, you decide |
+| **Risk Areas** | Low confidence → Manual review recommended |
+
+Example output:
+```
+### Unanimous Issues
+> All AI models agree - address these first
+- SQL injection in search_users() - user input concatenated into query
+- Missing input validation on file upload endpoint
+
+### Split Opinions
+| Topic | For | Against |
+|-------|-----|---------|
+| Add request rate limiting | Claude, GPT-4 | Gemini |
+```
+
+**GitHub Actions**: Automatically review every PR with the included workflow.
+
 ## Quick Start
 
 ```bash

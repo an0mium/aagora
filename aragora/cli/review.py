@@ -6,10 +6,12 @@ Run multi-agent code review debates on diffs/PRs:
     git diff main | aragora review
     aragora review https://github.com/owner/repo/pull/123
     aragora review --diff-file pr.diff --output-dir ./artifacts
+    aragora review --demo  # Try without API keys
 """
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -24,6 +26,87 @@ from aragora.debate.disagreement import DisagreementReporter
 DEFAULT_REVIEW_AGENTS = "anthropic-api,openai-api"
 DEFAULT_ROUNDS = 2  # Fast reviews
 MAX_DIFF_SIZE = 50000  # 50KB max diff size
+
+
+def get_available_agents() -> str:
+    """Get available agents based on configured API keys.
+
+    Falls back gracefully if not all providers are configured.
+    """
+    agents = []
+
+    # Check Anthropic
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        agents.append("anthropic-api")
+
+    # Check OpenAI
+    if os.environ.get("OPENAI_API_KEY"):
+        agents.append("openai-api")
+
+    # Check OpenRouter as fallback
+    if os.environ.get("OPENROUTER_API_KEY"):
+        if len(agents) < 2:
+            agents.append("openrouter-api")
+
+    # Check other providers
+    if os.environ.get("GEMINI_API_KEY") and len(agents) < 2:
+        agents.append("gemini-api")
+
+    if os.environ.get("MISTRAL_API_KEY") and len(agents) < 2:
+        agents.append("mistral-api")
+
+    if not agents:
+        return ""
+
+    return ",".join(agents)
+
+
+def get_demo_findings() -> dict:
+    """Get demo review findings for trying without API keys."""
+    return {
+        "unanimous_critiques": [
+            "SQL injection vulnerability in user search - query built with string concatenation",
+            "Missing input validation on file upload endpoint",
+        ],
+        "split_opinions": [
+            ("Add request rate limiting", ["anthropic-api", "openai-api"], ["gemini-api"]),
+            ("Cache database queries", ["anthropic-api"], ["openai-api", "gemini-api"]),
+        ],
+        "risk_areas": [
+            "Error handling in payment flow may expose sensitive data",
+            "Session management needs manual review",
+        ],
+        "agreement_score": 0.75,
+        "agent_alignment": {
+            "anthropic-api": {"openai-api": 0.8, "gemini-api": 0.6},
+            "openai-api": {"anthropic-api": 0.8, "gemini-api": 0.7},
+        },
+        "critical_issues": [
+            {"agent": "anthropic-api", "issue": "SQL injection in search_users()", "target": "api/users.py:45"},
+        ],
+        "high_issues": [
+            {"agent": "openai-api", "issue": "Missing CSRF protection on POST endpoints", "target": "api/routes.py"},
+        ],
+        "medium_issues": [
+            {"agent": "gemini-api", "issue": "Unbounded query results - add pagination", "target": "api/products.py:102"},
+        ],
+        "low_issues": [],
+        "all_critiques": [],
+        "final_summary": """## AI Red Team Summary
+
+This code review identified **2 critical security issues** that all AI models agree on.
+
+**Unanimous Findings (High Confidence):**
+1. SQL injection in `search_users()` - user input directly concatenated into query
+2. Missing input validation on file upload - allows arbitrary file types
+
+**Split Opinions:**
+- Rate limiting: 2/3 models recommend adding, 1 suggests it's premature
+- Query caching: Models disagree on whether caching adds complexity without benefit
+
+**Recommendation:** Address the SQL injection immediately before merging.""",
+        "agents_used": ["anthropic-api", "openai-api", "gemini-api"],
+    }
 
 
 def build_review_prompt(diff: str, focus_areas: Optional[list[str]] = None) -> str:
@@ -266,6 +349,53 @@ def format_github_comment(result: DebateResult, findings: dict) -> str:
 
 def cmd_review(args: argparse.Namespace) -> int:
     """Handle 'review' command."""
+
+    # Demo mode - show sample output without API keys
+    if getattr(args, 'demo', False):
+        print("Running in demo mode (no API calls)...", file=sys.stderr)
+        findings = get_demo_findings()
+
+        # Create mock result for formatting
+        class MockResult:
+            pass
+        result = MockResult()
+
+        output_dir = Path(args.output_dir) if args.output_dir else None
+
+        if args.output_format == "github":
+            comment = format_github_comment(result, findings)
+            comment = "**[DEMO MODE]** " + comment
+            if output_dir:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "comment.md").write_text(comment)
+            print(comment)
+        elif args.output_format == "json":
+            import json
+            output = {
+                "demo_mode": True,
+                "unanimous_critiques": findings["unanimous_critiques"],
+                "split_opinions": [(d, m, mi) for d, m, mi in findings["split_opinions"]],
+                "risk_areas": findings["risk_areas"],
+                "agreement_score": findings["agreement_score"],
+                "critical_issues": findings["critical_issues"],
+                "high_issues": findings["high_issues"],
+                "summary": findings["final_summary"],
+            }
+            json_output = json.dumps(output, indent=2)
+            if output_dir:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "review.json").write_text(json_output)
+            print(json_output)
+        else:
+            print("Demo mode only supports github and json output formats", file=sys.stderr)
+            return 1
+
+        print("\n---", file=sys.stderr)
+        print("This was a demo. To run a real review, configure API keys:", file=sys.stderr)
+        print("  export ANTHROPIC_API_KEY=sk-ant-...", file=sys.stderr)
+        print("  export OPENAI_API_KEY=sk-...", file=sys.stderr)
+        return 0
+
     # Get diff content
     diff = ""
 
@@ -333,14 +463,28 @@ def cmd_review(args: argparse.Namespace) -> int:
         print("Error: Empty diff", file=sys.stderr)
         return 1
 
+    # Determine which agents to use
+    agents_str = args.agents
+    if agents_str == DEFAULT_REVIEW_AGENTS:
+        # Check if default agents are available, fall back if not
+        available = get_available_agents()
+        if not available:
+            print("Error: No API keys configured.", file=sys.stderr)
+            print("Set at least one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY", file=sys.stderr)
+            print("\nTry demo mode instead: aragora review --demo", file=sys.stderr)
+            return 1
+        if available != DEFAULT_REVIEW_AGENTS:
+            print(f"Note: Using available agents: {available}", file=sys.stderr)
+            agents_str = available
+
     # Run review debate
-    print(f"Running AI code review ({args.agents}, {args.rounds} rounds)...", file=sys.stderr)
+    print(f"Running AI code review ({agents_str}, {args.rounds} rounds)...", file=sys.stderr)
 
     try:
         result = asyncio.run(
             run_review_debate(
                 diff=diff,
-                agents_str=args.agents,
+                agents_str=agents_str,
                 rounds=args.rounds,
                 focus_areas=args.focus.split(",") if args.focus else None,
             )
@@ -450,6 +594,12 @@ def create_review_parser(subparsers) -> None:
     parser.add_argument(
         "--output-dir",
         help="Directory to save output artifacts",
+    )
+
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run in demo mode (no API keys required, shows sample output)",
     )
 
     parser.set_defaults(func=cmd_review)

@@ -64,6 +64,8 @@ class LaboratoryHandler(BaseHandler):
 
     def handle_post(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
         """Route POST requests to appropriate methods."""
+        from aragora.billing.jwt_auth import extract_user_from_request
+
         # Rate limit check (shared with GET)
         client_ip = get_client_ip(handler)
         if not _laboratory_limiter.is_allowed(client_ip):
@@ -71,6 +73,13 @@ class LaboratoryHandler(BaseHandler):
             return error_response("Rate limit exceeded. Please try again later.", 429)
 
         if path == "/api/laboratory/cross-pollinations/suggest":
+            # Require authentication for computationally expensive operations
+            # Dev mode: skip auth if user_store not configured
+            user_store = self.ctx.get("user_store")
+            if user_store is not None:
+                auth_ctx = extract_user_from_request(handler, user_store)
+                if not auth_ctx.is_authenticated:
+                    return error_response("Authentication required", 401)
             return self._suggest_cross_pollinations(handler)
         return None
 
