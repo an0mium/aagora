@@ -761,6 +761,60 @@ def cmd_gauntlet(args: argparse.Namespace) -> None:
         sys.exit(2)
 
 
+def cmd_badge(args) -> None:
+    """Generate badge markdown for README."""
+    style = getattr(args, "style", "flat")
+    repo = getattr(args, "repo", None)
+
+    # Badge URLs
+    badges = {
+        "reviewed": {
+            "flat": "https://img.shields.io/badge/Reviewed%20by-Aragora%20AI%20Red%20Team-blue?style=flat",
+            "flat-square": "https://img.shields.io/badge/Reviewed%20by-Aragora%20AI%20Red%20Team-blue?style=flat-square",
+            "for-the-badge": "https://img.shields.io/badge/Reviewed%20by-Aragora%20AI%20Red%20Team-blue?style=for-the-badge",
+            "plastic": "https://img.shields.io/badge/Reviewed%20by-Aragora%20AI%20Red%20Team-blue?style=plastic",
+        },
+        "consensus": {
+            "flat": "https://img.shields.io/badge/AI%20Consensus-Unanimous-brightgreen?style=flat",
+            "flat-square": "https://img.shields.io/badge/AI%20Consensus-Unanimous-brightgreen?style=flat-square",
+            "for-the-badge": "https://img.shields.io/badge/AI%20Consensus-Unanimous-brightgreen?style=for-the-badge",
+            "plastic": "https://img.shields.io/badge/AI%20Consensus-Unanimous-brightgreen?style=plastic",
+        },
+        "gauntlet": {
+            "flat": "https://img.shields.io/badge/Stress%20Tested-Aragora%20Gauntlet-orange?style=flat",
+            "flat-square": "https://img.shields.io/badge/Stress%20Tested-Aragora%20Gauntlet-orange?style=flat-square",
+            "for-the-badge": "https://img.shields.io/badge/Stress%20Tested-Aragora%20Gauntlet-orange?style=for-the-badge",
+            "plastic": "https://img.shields.io/badge/Stress%20Tested-Aragora%20Gauntlet-orange?style=plastic",
+        },
+    }
+
+    badge_type = getattr(args, "type", "reviewed")
+    badge_url = badges.get(badge_type, badges["reviewed"]).get(style, badges[badge_type]["flat"])
+
+    link_url = "https://github.com/an0mium/aragora"
+    if repo:
+        link_url = f"https://github.com/{repo}"
+
+    # Generate markdown
+    markdown = f"[![Aragora]({badge_url})]({link_url})"
+
+    print("\n📛 Aragora Badge\n")
+    print("Add this to your README.md:\n")
+    print("```markdown")
+    print(markdown)
+    print("```\n")
+
+    # Also show HTML version
+    print("Or use HTML:\n")
+    print("```html")
+    print(f'<a href="{link_url}"><img src="{badge_url}" alt="Aragora"></a>')
+    print("```\n")
+
+    # Copy hint
+    print("Preview:")
+    print(f"  {markdown}\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Aragora - Multi-Agent Debate Framework",
@@ -1009,6 +1063,30 @@ Examples:
         help="Disable deep audit",
     )
     gauntlet_parser.set_defaults(func=cmd_gauntlet)
+
+    # Badge command (generate README badges)
+    badge_parser = subparsers.add_parser(
+        "badge",
+        help="Generate Aragora badge for your README",
+        description="Generate shareable badges to show your project uses Aragora.",
+    )
+    badge_parser.add_argument(
+        "--type", "-t",
+        choices=["reviewed", "consensus", "gauntlet"],
+        default="reviewed",
+        help="Badge type: reviewed (blue), consensus (green), gauntlet (orange)",
+    )
+    badge_parser.add_argument(
+        "--style", "-s",
+        choices=["flat", "flat-square", "for-the-badge", "plastic"],
+        default="flat",
+        help="Badge style (default: flat)",
+    )
+    badge_parser.add_argument(
+        "--repo", "-r",
+        help="Link to specific repo (default: aragora repo)",
+    )
+    badge_parser.set_defaults(func=cmd_badge)
 
     args = parser.parse_args()
 

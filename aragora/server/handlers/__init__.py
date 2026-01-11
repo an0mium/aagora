@@ -72,6 +72,7 @@ from .matrix_debates import MatrixDebatesHandler
 from .features import FeaturesHandler
 from .memory_analytics import MemoryAnalyticsHandler
 from .gauntlet import GauntletHandler
+from .reviews import ReviewsHandler
 
 # List of all handler classes for automatic dispatch registration
 # Order matters: more specific handlers should come first
@@ -121,6 +122,7 @@ ALL_HANDLERS = [
     FeaturesHandler,
     MemoryAnalyticsHandler,
     GauntletHandler,
+    ReviewsHandler,
 ]
 
 # Handler stability classifications
@@ -171,6 +173,7 @@ HANDLER_STABILITY: dict[str, Stability] = {
     "LearningHandler": Stability.EXPERIMENTAL,
     "MemoryAnalyticsHandler": Stability.EXPERIMENTAL,
     "GauntletHandler": Stability.EXPERIMENTAL,  # Adversarial validation engine
+    "ReviewsHandler": Stability.EXPERIMENTAL,  # Shareable code reviews
 
     # Promoted to Preview (Jan 2026)
     "InsightsHandler": Stability.PREVIEW,  # Unit tests, flip detection

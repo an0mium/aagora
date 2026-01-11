@@ -11,8 +11,12 @@ Run multi-agent code review debates on diffs/PRs:
 
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 import sys
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +30,65 @@ from aragora.debate.disagreement import DisagreementReporter
 DEFAULT_REVIEW_AGENTS = "anthropic-api,openai-api"
 DEFAULT_ROUNDS = 2  # Fast reviews
 MAX_DIFF_SIZE = 50000  # 50KB max diff size
+REVIEWS_DIR = Path.home() / ".aragora" / "reviews"
+SHARE_BASE_URL = "https://live.aragora.ai/reviews"
+
+
+def generate_review_id(findings: dict, diff_hash: str) -> str:
+    """Generate a short, unique review ID."""
+    # Use first 8 chars of UUID combined with diff hash for uniqueness
+    uid = uuid.uuid4().hex[:8]
+    return f"{uid}"
+
+
+def save_review_for_sharing(
+    review_id: str,
+    findings: dict,
+    diff: str,
+    agents: str,
+    pr_url: Optional[str] = None,
+) -> Path:
+    """Save review to local storage for sharing.
+
+    Reviews are stored at ~/.aragora/reviews/{id}.json
+    The server can serve these for shareable links.
+    """
+    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Create review record
+    review_data = {
+        "id": review_id,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "agents": agents.split(","),
+        "pr_url": pr_url,
+        "diff_preview": diff[:500] + "..." if len(diff) > 500 else diff,
+        "diff_hash": hashlib.sha256(diff.encode()).hexdigest()[:16],
+        "findings": {
+            "unanimous_critiques": findings.get("unanimous_critiques", []),
+            "split_opinions": [
+                {"issue": d, "majority": m, "minority": mi}
+                for d, m, mi in findings.get("split_opinions", [])
+            ],
+            "risk_areas": findings.get("risk_areas", []),
+            "agreement_score": findings.get("agreement_score", 0),
+            "critical_issues": findings.get("critical_issues", []),
+            "high_issues": findings.get("high_issues", []),
+            "medium_issues": findings.get("medium_issues", []),
+            "low_issues": findings.get("low_issues", []),
+            "summary": findings.get("final_summary", ""),
+        },
+    }
+
+    # Save to file
+    review_path = REVIEWS_DIR / f"{review_id}.json"
+    review_path.write_text(json.dumps(review_data, indent=2))
+
+    return review_path
+
+
+def get_shareable_url(review_id: str) -> str:
+    """Get the shareable URL for a review."""
+    return f"{SHARE_BASE_URL}/{review_id}"
 
 
 def get_available_agents() -> str:
@@ -496,6 +559,22 @@ def cmd_review(args: argparse.Namespace) -> int:
     # Extract findings
     findings = extract_review_findings(result)
 
+    # Generate shareable link if requested
+    share_url = None
+    if getattr(args, "share", False):
+        diff_hash = hashlib.sha256(diff.encode()).hexdigest()[:16]
+        review_id = generate_review_id(findings, diff_hash)
+        save_review_for_sharing(
+            review_id=review_id,
+            findings=findings,
+            diff=diff,
+            agents=agents_str,
+            pr_url=getattr(args, "pr_url", None),
+        )
+        share_url = get_shareable_url(review_id)
+        print(f"\nShareable link: {share_url}", file=sys.stderr)
+        print(f"Review ID: {review_id}", file=sys.stderr)
+
     # Output based on format
     output_dir = Path(args.output_dir) if args.output_dir else None
 
@@ -600,6 +679,12 @@ def create_review_parser(subparsers) -> None:
         "--demo",
         action="store_true",
         help="Run in demo mode (no API keys required, shows sample output)",
+    )
+
+    parser.add_argument(
+        "--share",
+        action="store_true",
+        help="Generate a shareable link for this review",
     )
 
     parser.set_defaults(func=cmd_review)
