@@ -132,14 +132,17 @@ class TestUser:
         assert data["has_api_key"] is True
 
     def test_user_to_dict_includes_sensitive(self):
-        """With flag, to_dict should include API key."""
+        """With flag, to_dict should include API key prefix."""
         user = User(email="test@example.com")
-        user.generate_api_key()
+        api_key = user.generate_api_key()
 
         data = user.to_dict(include_sensitive=True)
 
+        # api_key is None (not stored in plaintext for security)
         assert "api_key" in data
-        assert data["api_key"].startswith("ara_")
+        assert data["api_key"] is None
+        # But prefix is available for identification
+        assert data["api_key_prefix"] == api_key[:12]
 
     def test_user_from_dict(self):
         """Should reconstruct user from dict."""
