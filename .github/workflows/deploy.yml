@@ -197,10 +197,15 @@ jobs:
               exit 1
             fi
 
-            # Configure Sentry DSN if provided
+            # Configure environment via systemd override (secure - not written to .env file)
             if [ -n "${{ secrets.SENTRY_DSN }}" ]; then
-              echo "Configuring Sentry DSN..."
-              echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" > .env
+              echo "Configuring environment via systemd..."
+              sudo mkdir -p /etc/systemd/system/aragora.service.d/
+              sudo tee /etc/systemd/system/aragora.service.d/env.conf > /dev/null << ENVEOF
+[Service]
+Environment="SENTRY_DSN=${{ secrets.SENTRY_DSN }}"
+ENVEOF
+              sudo systemctl daemon-reload
             fi
             echo "Restarting service..."
             sudo systemctl restart aragora-staging 2>/dev/null || sudo systemctl restart aragora

@@ -114,6 +114,34 @@ Example output:
 
 **GitHub Actions**: Automatically review every PR with the included workflow.
 
+## Gauntlet Mode - Adversarial Stress Testing
+
+Stress-test your specifications, architectures, and policies before they ship:
+
+```bash
+# Test a specification for security vulnerabilities
+aragora gauntlet spec.md --input-type spec --profile quick
+
+# GDPR compliance audit
+aragora gauntlet policy.yaml --input-type policy --compliance gdpr
+
+# Full adversarial stress test with HTML report
+aragora gauntlet architecture.md --profile thorough --output report.html
+```
+
+**What you get:**
+
+| Attack Type | What It Tests |
+|-------------|--------------|
+| **Red Team** | Security holes, injection points, auth bypasses |
+| **Devil's Advocate** | Logic flaws, hidden assumptions, edge cases |
+| **Scaling Critic** | Performance bottlenecks, SPOF, thundering herd |
+| **Compliance** | GDPR, HIPAA, SOC 2, AI Act violations |
+
+**Decision receipts** provide cryptographic audit trails for every finding, ready for regulatory review.
+
+See [docs/GAUNTLET.md](docs/GAUNTLET.md) for full documentation and [docs/AGENT_SELECTION.md](docs/AGENT_SELECTION.md) for agent recommendations.
+
 ## Quick Start
 
 ```bash
