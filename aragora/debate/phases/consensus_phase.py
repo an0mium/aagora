@@ -8,6 +8,9 @@ Arena._run_inner() method, handling:
 - Unanimous mode: All agents must agree
 - Judge mode: Single judge synthesizes
 
+Weight calculation and vote aggregation logic is extracted to:
+- weight_calculator.py: WeightCalculator class
+- vote_aggregator.py: VoteAggregator class, calculate_consensus_strength()
 """
 
 import asyncio
@@ -19,6 +22,11 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 from aragora.agents.errors import _build_error_action
 from aragora.config import AGENT_TIMEOUT_SECONDS
 from aragora.debate.complexity_governor import get_complexity_governor
+from aragora.debate.phases.weight_calculator import WeightCalculator
+from aragora.debate.phases.vote_aggregator import (
+    VoteAggregator,
+    calculate_consensus_strength,
+)
 
 if TYPE_CHECKING:
     from aragora.core import Agent, Vote, DebateResult
@@ -801,51 +809,19 @@ class ConsensusPhase:
         return vote_groups, choice_mapping
 
     def _compute_vote_weights(self, ctx: "DebateContext") -> dict[str, float]:
-        """Pre-compute vote weights for all agents."""
-        vote_weight_cache: dict[str, float] = {}
+        """Pre-compute vote weights for all agents.
 
-        # Batch fetch all agent ratings
-        ratings_cache: dict[str, Any] = {}
-        if self.elo_system:
-            try:
-                agent_names = [agent.name for agent in ctx.agents]
-                ratings_cache = self.elo_system.get_ratings_batch(agent_names)
-            except Exception as e:
-                logger.debug(f"Batch ratings fetch failed: {e}")
-
-        for agent in ctx.agents:
-            agent_weight = 1.0
-
-            # Reputation weight (0.5-1.5)
-            if self.memory and hasattr(self.memory, 'get_vote_weight'):
-                agent_weight = self.memory.get_vote_weight(agent.name)
-
-            # Reliability weight from capability probing (0.0-1.0 multiplier)
-            if self.agent_weights and agent.name in self.agent_weights:
-                agent_weight *= self.agent_weights[agent.name]
-
-            # Consistency weight from FlipDetector (0.5-1.0 multiplier)
-            if self.flip_detector:
-                try:
-                    consistency = self.flip_detector.get_agent_consistency(agent.name)
-                    consistency_weight = 0.5 + (consistency.consistency_score * 0.5)
-                    agent_weight *= consistency_weight
-                except Exception as e:
-                    logger.debug(f"FlipDetector consistency error: {e}")
-
-            # Calibration weight (0.5-1.5 multiplier)
-            if agent.name in ratings_cache:
-                cal_score = ratings_cache[agent.name].calibration_score
-                calibration_weight = 0.5 + cal_score
-            elif self._get_calibration_weight:
-                calibration_weight = self._get_calibration_weight(agent.name)
-            else:
-                calibration_weight = 1.0
-            agent_weight *= calibration_weight
-
-            vote_weight_cache[agent.name] = agent_weight
-
-        return vote_weight_cache
+        Uses the extracted WeightCalculator class for cleaner code.
+        """
+        calculator = WeightCalculator(
+            memory=self.memory,
+            elo_system=self.elo_system,
+            flip_detector=self.flip_detector,
+            agent_weights=self.agent_weights,
+            calibration_tracker=self.calibration_tracker,
+            get_calibration_weight=self._get_calibration_weight,
+        )
+        return calculator.compute_weights(ctx.agents)
 
     def _apply_calibration_to_votes(
         self,
