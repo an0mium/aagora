@@ -318,20 +318,41 @@ body {
   font-family: inherit;
 }
 
-/* Panel tabs */
+/* Panel tabs - horizontally scrollable on mobile */
 .panel-tabs {
   display: flex;
-  flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0.25rem;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0.375rem;
   margin-bottom: 1rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+/* Hide scrollbar on mobile for cleaner look */
+@media (max-width: 640px) {
+  .panel-tabs {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .panel-tabs::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Wrap tabs on larger screens */
+@media (min-width: 641px) {
+  .panel-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
 }
 
 .panel-tab {
-  flex: 1;
+  flex-shrink: 0;
   padding: 0.25rem 0.75rem;
   font-size: 0.875rem;
   border-radius: 0.25rem;
@@ -340,6 +361,14 @@ body {
   background: transparent;
   border: none;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+/* On larger screens, tabs can flex to fill */
+@media (min-width: 641px) {
+  .panel-tab {
+    flex: 1;
+  }
 }
 
 .panel-tab:hover {
@@ -675,4 +704,114 @@ input:focus, textarea:focus {
     background: #ffffff;
     border-color: var(--accent);
   }
+}
+
+/* ========================================
+   Mobile Responsive Utilities
+   ======================================== */
+
+/* Mobile-first card grid adjustments */
+@media (max-width: 640px) {
+  /* Reduce padding on mobile */
+  .panel {
+    padding: 0.75rem;
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .panel-header .panel-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Smaller text on mobile */
+  .panel-title {
+    font-size: 0.75rem;
+  }
+
+  /* Stack metric cards vertically on mobile */
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Reduce modal padding on mobile */
+  .modal-content {
+    padding: 1rem;
+    margin: 0.5rem;
+  }
+
+  /* Full-width buttons on mobile */
+  .btn-mobile-full {
+    width: 100%;
+  }
+
+  /* Reduce chart heights on mobile */
+  .chart-container {
+    height: 200px !important;
+  }
+
+  /* Scrollable tables on mobile */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Larger touch targets */
+  button, a, [role="button"] {
+    min-height: 44px;
+  }
+
+  /* Simpler animations on mobile */
+  .glow, .glow-border {
+    box-shadow: none;
+  }
+}
+
+/* Tablet adjustments */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .metric-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Touch device improvements */
+@media (hover: none) and (pointer: coarse) {
+  /* Larger touch targets */
+  .panel-tab {
+    padding: 0.5rem 1rem;
+    min-height: 44px;
+  }
+
+  /* Disable hover effects that don't work well on touch */
+  .panel-item:hover,
+  button:hover {
+    transform: none;
+  }
+}
+
+/* Safe area insets for notched devices */
+@supports (padding: max(0px)) {
+  .sticky-header {
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+
+  .bottom-bar {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Horizontal scroll container for mobile */
+.scroll-x-mobile {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scroll-x-mobile::-webkit-scrollbar {
+  display: none;
 }
