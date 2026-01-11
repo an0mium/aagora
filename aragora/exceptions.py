@@ -56,6 +56,44 @@ class ConsensusError(DebateError):
     pass
 
 
+class ConsensusTimeoutError(DebateError):
+    """Raised when consensus detection times out."""
+
+    def __init__(self, timeout_seconds: float, rounds_completed: int):
+        super().__init__(
+            f"Consensus timed out after {timeout_seconds}s ({rounds_completed} rounds)",
+            {"timeout_seconds": timeout_seconds, "rounds_completed": rounds_completed}
+        )
+        self.timeout_seconds = timeout_seconds
+        self.rounds_completed = rounds_completed
+
+
+class VoteValidationError(DebateError):
+    """Raised when vote validation fails."""
+
+    def __init__(self, agent_name: str, reason: str, vote_data: dict | None = None):
+        super().__init__(
+            f"Invalid vote from {agent_name}: {reason}",
+            {"agent_name": agent_name, "reason": reason}
+        )
+        self.agent_name = agent_name
+        self.reason = reason
+        self.vote_data = vote_data
+
+
+class PhaseExecutionError(DebateError):
+    """Raised when a debate phase fails to execute."""
+
+    def __init__(self, phase_name: str, reason: str, recoverable: bool = False):
+        super().__init__(
+            f"Phase '{phase_name}' failed: {reason}",
+            {"phase_name": phase_name, "reason": reason, "recoverable": recoverable}
+        )
+        self.phase_name = phase_name
+        self.reason = reason
+        self.recoverable = recoverable
+
+
 class RoundLimitExceededError(DebateError):
     """Raised when maximum rounds are exceeded."""
 
@@ -155,6 +193,23 @@ class SchemaValidationError(ValidationError):
         self.errors = errors
 
 
+class JSONParseError(ValidationError):
+    """Raised when JSON parsing fails."""
+
+    def __init__(self, source: str, reason: str, raw_text: str | None = None):
+        # Truncate raw text for error message
+        preview = ""
+        if raw_text:
+            preview = raw_text[:100] + "..." if len(raw_text) > 100 else raw_text
+        super().__init__(
+            f"Failed to parse JSON from {source}: {reason}",
+            {"source": source, "reason": reason, "preview": preview}
+        )
+        self.source = source
+        self.reason = reason
+        self.raw_text = raw_text
+
+
 # ============================================================================
 # Storage Errors
 # ============================================================================
@@ -210,6 +265,19 @@ class MemoryRetrievalError(MemoryError):
 class MemoryStorageError(MemoryError):
     """Raised when memory storage fails."""
     pass
+
+
+class TierTransitionError(MemoryError):
+    """Raised when memory tier transition fails."""
+
+    def __init__(self, from_tier: str, to_tier: str, reason: str):
+        super().__init__(
+            f"Failed to transition from {from_tier} to {to_tier}: {reason}",
+            {"from_tier": from_tier, "to_tier": to_tier, "reason": reason}
+        )
+        self.from_tier = from_tier
+        self.to_tier = to_tier
+        self.reason = reason
 
 
 class EmbeddingError(MemoryError):
@@ -447,6 +515,51 @@ class CacheCapacityError(CacheError):
         )
         self.current_size = current_size
         self.max_size = max_size
+
+
+# ============================================================================
+# Streaming Errors
+# ============================================================================
+
+class StreamingError(AragoraError):
+    """Base exception for streaming-related errors."""
+    pass
+
+
+class WebSocketError(StreamingError):
+    """Raised when WebSocket connection fails."""
+
+    def __init__(self, reason: str, code: int | None = None):
+        super().__init__(
+            f"WebSocket error: {reason}",
+            {"reason": reason, "code": code}
+        )
+        self.reason = reason
+        self.code = code
+
+
+class StreamConnectionError(StreamingError):
+    """Raised when stream connection is lost."""
+
+    def __init__(self, stream_id: str, reason: str):
+        super().__init__(
+            f"Stream connection lost for {stream_id}: {reason}",
+            {"stream_id": stream_id, "reason": reason}
+        )
+        self.stream_id = stream_id
+        self.reason = reason
+
+
+class StreamTimeoutError(StreamingError):
+    """Raised when stream operation times out."""
+
+    def __init__(self, stream_id: str, timeout_seconds: float):
+        super().__init__(
+            f"Stream {stream_id} timed out after {timeout_seconds}s",
+            {"stream_id": stream_id, "timeout_seconds": timeout_seconds}
+        )
+        self.stream_id = stream_id
+        self.timeout_seconds = timeout_seconds
 
 
 # ============================================================================
