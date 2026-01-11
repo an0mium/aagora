@@ -13,15 +13,30 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
+import re
+
 from .base import (
     BaseHandler,
     HandlerResult,
     json_response,
     error_response,
     handle_errors,
+    SAFE_AGENT_PATTERN,
 )
 
+# Suspicious patterns for task sanitization
+_SUSPICIOUS_PATTERNS = [
+    re.compile(r'<script', re.IGNORECASE),
+    re.compile(r'javascript:', re.IGNORECASE),
+    re.compile(r'\x00'),  # Null byte injection
+    re.compile(r'\{\{.*\}\}'),  # Template injection
+]
+from .utils.rate_limit import RateLimiter, get_client_ip
+
 logger = logging.getLogger(__name__)
+
+# Rate limiter for graph debates (5 requests per minute - branching debates are expensive)
+_graph_limiter = RateLimiter(requests_per_minute=5)
 
 
 class GraphDebatesHandler(BaseHandler):
@@ -67,24 +82,88 @@ class GraphDebatesHandler(BaseHandler):
         if not path.rstrip("/").endswith("/debates/graph"):
             return error_response("Not found", 404)
 
+        # Rate limit check (5/min - expensive branching operations)
+        client_ip = get_client_ip(handler)
+        if not _graph_limiter.is_allowed(client_ip):
+            logger.warning(f"Rate limit exceeded for graph debates: {client_ip}")
+            return error_response("Rate limit exceeded. Please try again later.", 429)
+
+        logger.debug(f"POST /api/debates/graph - running graph debate")
         return await self._run_graph_debate(handler, data)
 
     async def _run_graph_debate(self, handler, data: dict) -> HandlerResult:
         """Run a graph-structured debate with automatic branching.
 
         Request body:
-            task: str - The debate topic/question
-            agents: list[str] - Agent names to participate
-            max_rounds: int - Maximum rounds per branch (default: 5)
+            task: str - The debate topic/question (10-5000 chars)
+            agents: list[str] - Agent names to participate (2-10 agents)
+            max_rounds: int - Maximum rounds per branch (1-20, default: 5)
             branch_policy: dict - Custom branch policy settings
         """
+        # Validate task
         task = data.get("task")
         if not task:
             return error_response("task is required", 400)
+        if not isinstance(task, str):
+            return error_response("task must be a string", 400)
+        task = task.strip()
+        if len(task) < 10:
+            return error_response("task must be at least 10 characters", 400)
+        if len(task) > 5000:
+            return error_response("task must be at most 5000 characters", 400)
 
+        # Check for suspicious patterns in task (injection prevention)
+        for pattern in _SUSPICIOUS_PATTERNS:
+            if pattern.search(task):
+                return error_response("task contains invalid characters", 400)
+
+        # Validate agents
         agent_names = data.get("agents", [])
+        if not isinstance(agent_names, list):
+            return error_response("agents must be an array", 400)
+        if len(agent_names) < 2:
+            return error_response("At least 2 agents required for a debate", 400)
+        if len(agent_names) > 10:
+            return error_response("Maximum 10 agents allowed", 400)
+        # Validate each agent name using security pattern
+        for i, name in enumerate(agent_names):
+            if not isinstance(name, str):
+                return error_response(f"agents[{i}] must be a string", 400)
+            if len(name) > 50:
+                return error_response(f"agents[{i}] name too long (max 50 chars)", 400)
+            if not SAFE_AGENT_PATTERN.match(name):
+                return error_response(f"agents[{i}]: invalid agent name (alphanumeric, hyphens, underscores only)", 400)
+
+        # Validate max_rounds
         max_rounds = data.get("max_rounds", 5)
+        if not isinstance(max_rounds, int):
+            try:
+                max_rounds = int(max_rounds)
+            except (ValueError, TypeError):
+                return error_response("max_rounds must be an integer", 400)
+        if max_rounds < 1:
+            return error_response("max_rounds must be at least 1", 400)
+        if max_rounds > 20:
+            return error_response("max_rounds must be at most 20", 400)
+
+        # Validate branch_policy
         branch_policy_data = data.get("branch_policy", {})
+        if not isinstance(branch_policy_data, dict):
+            return error_response("branch_policy must be an object", 400)
+
+        # Validate branch_policy fields
+        if "min_disagreement" in branch_policy_data:
+            min_dis = branch_policy_data["min_disagreement"]
+            if not isinstance(min_dis, (int, float)) or min_dis < 0 or min_dis > 1:
+                return error_response("branch_policy.min_disagreement must be 0-1", 400)
+        if "max_branches" in branch_policy_data:
+            max_br = branch_policy_data["max_branches"]
+            if not isinstance(max_br, int) or max_br < 1 or max_br > 10:
+                return error_response("branch_policy.max_branches must be 1-10", 400)
+        if "merge_strategy" in branch_policy_data:
+            strategy = branch_policy_data["merge_strategy"]
+            if strategy not in ["synthesis", "vote", "best"]:
+                return error_response("branch_policy.merge_strategy must be 'synthesis', 'vote', or 'best'", 400)
 
         try:
             from aragora.debate.graph import (

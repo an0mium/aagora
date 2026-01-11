@@ -16,6 +16,9 @@ Endpoints:
 - GET /api/history/debates - Get debate history
 - GET /api/history/summary - Get history summary
 - GET /api/system/maintenance?task=<task> - Run database maintenance (status|vacuum|analyze|checkpoint|full)
+- GET /api/openapi - OpenAPI 3.0 JSON specification
+- GET /api/openapi.yaml - OpenAPI 3.0 YAML specification
+- GET /api/docs - Swagger UI interactive documentation
 - GET /api/auth/stats - Get authentication statistics
 - POST /api/auth/revoke - Revoke a token to invalidate it
 """
@@ -67,6 +70,9 @@ class SystemHandler(BaseHandler):
         "/api/openapi",
         "/api/openapi.json",
         "/api/openapi.yaml",
+        # Swagger UI documentation
+        "/api/docs",
+        "/api/docs/",
         "/api/auth/stats",
         "/api/auth/revoke",
         # Prometheus metrics
@@ -164,6 +170,9 @@ class SystemHandler(BaseHandler):
 
         if path == "/api/openapi.yaml":
             return self._get_openapi_spec("yaml")
+
+        if path in ("/api/docs", "/api/docs/"):
+            return self._get_swagger_ui()
 
         if path == "/api/auth/stats":
             return self._get_auth_stats()
@@ -398,6 +407,52 @@ class SystemHandler(BaseHandler):
         except Exception as e:
             logger.debug(f"Could not get memory stats: {type(e).__name__}: {e}")
 
+        # Add HTTP connector status (for API agent calls)
+        try:
+            from aragora.agents.api_agents.common import get_shared_connector
+            connector = get_shared_connector()
+            health["http_connector"] = {
+                "status": "healthy" if not connector.closed else "closed",
+                "closed": connector.closed,
+            }
+            if connector.closed:
+                health["status"] = "degraded"
+                warnings_list = health.get("warnings", [])
+                if isinstance(warnings_list, list):
+                    warnings_list.append("HTTP connector is closed")
+                    health["warnings"] = warnings_list
+        except ImportError:
+            health["http_connector"] = {"status": "unavailable", "reason": "module not found"}
+        except Exception as e:
+            health["http_connector"] = {"status": "error", "error": str(e)[:100]}
+
+        # Add export cache status
+        try:
+            from aragora.visualization.exporter import _export_cache, _export_cache_lock
+            with _export_cache_lock:
+                cache_size = len(_export_cache)
+            health["export_cache"] = {
+                "status": "healthy",
+                "entries": cache_size,
+            }
+        except ImportError:
+            health["export_cache"] = {"status": "unavailable"}
+        except Exception as e:
+            health["export_cache"] = {"status": "error", "error": str(e)[:100]}
+
+        # Add handler cache status
+        try:
+            from aragora.server.handlers.cache import get_cache_stats
+            cache_stats = get_cache_stats()
+            health["handler_cache"] = {
+                "status": "healthy",
+                **cache_stats,
+            }
+        except ImportError:
+            health["handler_cache"] = {"status": "unavailable"}
+        except Exception as e:
+            health["handler_cache"] = {"status": "error", "error": str(e)[:100]}
+
         return json_response(health)
 
     def _get_nomic_state(self) -> HandlerResult:
@@ -607,20 +662,56 @@ class SystemHandler(BaseHandler):
 
         return json_response({"modes": modes, "total": len(modes)})
 
+    def _load_filtered_json(
+        self,
+        file_path: Path,
+        loop_id: Optional[str] = None,
+        limit: int = 100
+    ) -> list:
+        """Load JSON file with optional filtering and early termination.
+
+        Filters during load to avoid loading entire large datasets when
+        only a subset is needed.
+
+        Args:
+            file_path: Path to JSON file
+            loop_id: Optional loop_id filter
+            limit: Maximum items to return
+
+        Returns:
+            List of matching items, limited to `limit` entries
+
+        Raises:
+            json.JSONDecodeError: If file contains invalid JSON
+            OSError: If file cannot be read
+        """
+        if not file_path.exists():
+            return []
+
+        with open(file_path) as f:
+            data = json.load(f)
+
+        if loop_id:
+            # Filter with early termination
+            filtered = []
+            for item in data:
+                if item.get("loop_id") == loop_id:
+                    filtered.append(item)
+                    if len(filtered) >= limit:
+                        break
+            return filtered
+        else:
+            return data[:limit]
+
     @ttl_cache(ttl_seconds=CACHE_TTL_HISTORY, key_prefix="history_cycles", skip_first=True)
     def _get_history_cycles(self, loop_id: Optional[str], limit: int) -> HandlerResult:
         """Get cycle history from Supabase or local storage."""
         try:
-            # Try local storage first
             nomic_dir = self.get_nomic_dir()
             if nomic_dir:
                 cycles_file = nomic_dir / "cycles.json"
-                if cycles_file.exists():
-                    with open(cycles_file) as f:
-                        cycles = json.load(f)
-                    if loop_id:
-                        cycles = [c for c in cycles if c.get("loop_id") == loop_id]
-                    return json_response({"cycles": cycles[:limit]})
+                cycles = self._load_filtered_json(cycles_file, loop_id, limit)
+                return json_response({"cycles": cycles})
 
             return json_response({"cycles": []})
         except Exception as e:
@@ -634,12 +725,8 @@ class SystemHandler(BaseHandler):
             nomic_dir = self.get_nomic_dir()
             if nomic_dir:
                 events_file = nomic_dir / "events.json"
-                if events_file.exists():
-                    with open(events_file) as f:
-                        events = json.load(f)
-                    if loop_id:
-                        events = [e for e in events if e.get("loop_id") == loop_id]
-                    return json_response({"events": events[:limit]})
+                events = self._load_filtered_json(events_file, loop_id, limit)
+                return json_response({"events": events})
 
             return json_response({"events": []})
         except Exception as e:
@@ -654,10 +741,22 @@ class SystemHandler(BaseHandler):
             return json_response({"debates": []})
 
         try:
-            debate_metadata = storage.list_recent(limit=limit)
-            debates = [d.__dict__ if hasattr(d, '__dict__') else d for d in debate_metadata]
+            # When filtering, fetch more to account for non-matching items
+            fetch_limit = limit * 3 if loop_id else limit
+            debate_metadata = storage.list_recent(limit=fetch_limit)
+
             if loop_id:
-                debates = [d for d in debates if d.get("loop_id") == loop_id]
+                # Filter with early termination
+                debates = []
+                for d in debate_metadata:
+                    item = d.__dict__ if hasattr(d, '__dict__') else d
+                    if item.get("loop_id") == loop_id:
+                        debates.append(item)
+                        if len(debates) >= limit:
+                            break
+            else:
+                debates = [d.__dict__ if hasattr(d, '__dict__') else d for d in debate_metadata[:limit]]
+
             return json_response({"debates": debates})
         except Exception as e:
             logger.error("Failed to get history debates: %s", e, exc_info=True)
@@ -763,6 +862,68 @@ class SystemHandler(BaseHandler):
             logger.exception(f"OpenAPI generation failed: {e}")
             return error_response(safe_error_message(e, "OpenAPI generation"), 500)
 
+    def _get_swagger_ui(self) -> HandlerResult:
+        """Serve Swagger UI for interactive API documentation.
+
+        Returns an HTML page that loads Swagger UI from CDN and points it
+        to the /api/openapi.json endpoint.
+
+        Returns:
+            HTML page with embedded Swagger UI
+        """
+        swagger_html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aragora API Documentation</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+    <style>
+        html { box-sizing: border-box; overflow-y: scroll; }
+        *, *:before, *:after { box-sizing: inherit; }
+        body { margin: 0; background: #fafafa; }
+        .swagger-ui .topbar { display: none; }
+        .swagger-ui .info { margin: 20px 0; }
+        .swagger-ui .info .title { font-size: 2em; }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            window.ui = SwaggerUIBundle({
+                url: "/api/openapi.json",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                validatorUrl: null,
+                docExpansion: "list",
+                defaultModelsExpandDepth: 1,
+                displayRequestDuration: true,
+                filter: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+                persistAuthorization: true
+            });
+        };
+    </script>
+</body>
+</html>"""
+        return HandlerResult(
+            status_code=200,
+            content_type="text/html; charset=utf-8",
+            body=swagger_html.encode("utf-8"),
+        )
+
     def _get_auth_stats(self) -> HandlerResult:
         """Get authentication and rate limiting statistics.
 
@@ -807,8 +968,17 @@ class SystemHandler(BaseHandler):
 
         reason = body.get("reason", "")
 
-        # Revoke the token
+        # Revoke the token using both in-memory and persistent backends
         success = auth_config.revoke_token(token, reason)
+
+        # Also persist revocation for multi-instance consistency
+        try:
+            from aragora.billing.jwt_auth import revoke_token_persistent
+            persistent_ok = revoke_token_persistent(token)
+            if not persistent_ok:
+                logger.warning("Token revoked in-memory but persistent revocation failed")
+        except ImportError:
+            logger.debug("Persistent token blacklist not available")
 
         if success:
             logger.info("Token revoked: reason=%s", reason or "not specified")

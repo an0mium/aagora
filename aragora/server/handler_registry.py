@@ -15,6 +15,7 @@ Usage:
         pass
 """
 
+import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -509,6 +510,15 @@ class HandlerRegistryMixin:
                 result = handler.handle_put(path, query_dict, self)
             else:
                 result = handler.handle(path, query_dict, self)
+
+            # Handle async handlers - await coroutines
+            if asyncio.iscoroutine(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(result)
 
             if result:
                 self.send_response(result.status_code)

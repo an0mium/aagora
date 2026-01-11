@@ -227,8 +227,44 @@ MAX_REFRESH_TOKEN_DAYS = 90  # 90 days max
 
 
 def _is_production() -> bool:
-    """Check if running in production environment."""
-    return ARAGORA_ENVIRONMENT.lower() == "production"
+    """Check if running in production environment.
+
+    Conservative detection - treats any production-like environment as production
+    to prevent security misconfigurations.
+    """
+    env = ARAGORA_ENVIRONMENT.lower()
+    production_indicators = ["production", "prod", "live", "prd"]
+    return any(indicator in env for indicator in production_indicators)
+
+
+def _validate_security_config() -> None:
+    """Validate security configuration at module load.
+
+    Logs warnings for insecure configurations and raises RuntimeError
+    if critical security misconfigurations are detected in production.
+    """
+    if _allow_format_only_api_keys():
+        # Check for production signals that might indicate misconfiguration
+        hostname = os.environ.get("HOSTNAME", "").lower()
+        k8s_namespace = os.environ.get("K8S_NAMESPACE", "").lower()
+
+        production_signals = [
+            "prod" in hostname,
+            k8s_namespace.startswith("prod"),
+            os.environ.get("CLOUD_ENVIRONMENT", "").lower() == "production",
+        ]
+
+        if any(production_signals):
+            raise RuntimeError(
+                "SECURITY ERROR: ARAGORA_ALLOW_FORMAT_ONLY_API_KEYS is enabled "
+                "but production environment indicators detected. "
+                "This is a critical security misconfiguration."
+            )
+
+        logger.warning(
+            "SECURITY: Format-only API key validation enabled. "
+            "Set ARAGORA_ALLOW_FORMAT_ONLY_API_KEYS=0 for production deployments."
+        )
 
 
 def _allow_format_only_api_keys() -> bool:
@@ -971,3 +1007,6 @@ __all__ = [
     "MIN_SECRET_LENGTH",
     "ALLOWED_ALGORITHMS",
 ]
+
+# Validate security configuration at module load
+_validate_security_config()
