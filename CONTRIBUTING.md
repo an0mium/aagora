@@ -107,6 +107,157 @@ fix(server): prevent path traversal in static file serving
 docs(readme): update installation instructions
 ```
 
+## Adding a New Handler
+
+Aragora uses modular HTTP handlers in `aragora/server/handlers/`. Each handler owns a set of endpoints.
+
+### Handler Structure
+
+Create a new file in `aragora/server/handlers/`:
+
+```python
+"""
+Your Handler - Brief description.
+
+Endpoints:
+- GET /api/yourfeature - List items
+- GET /api/yourfeature/{id} - Get specific item
+- POST /api/yourfeature - Create item
+"""
+
+from typing import Any
+from .base import BaseHandler, json_response, error_response, handle_errors
+from .utils.rate_limit import rate_limit
+
+class YourHandler(BaseHandler):
+    """Handler for your feature endpoints."""
+
+    ROUTES = [
+        "/api/yourfeature",
+        "/api/yourfeature/*",
+    ]
+
+    def can_handle(self, path: str, method: str) -> bool:
+        """Check if this handler can handle the request."""
+        return path.startswith("/api/yourfeature")
+
+    @handle_errors
+    @rate_limit(rpm=60)
+    async def handle(self, path: str, method: str, handler: Any = None):
+        """Route request to appropriate method."""
+        if path == "/api/yourfeature" and method == "GET":
+            return self._list_items()
+        # ... more routing
+        return None
+
+    def _list_items(self):
+        return json_response({"items": [], "total": 0})
+```
+
+### Registration
+
+1. Import your handler in `aragora/server/handlers/__init__.py`:
+   ```python
+   from .yourfeature import YourHandler
+   ```
+
+2. Add to `ALL_HANDLERS` list (order matters - more specific handlers first):
+   ```python
+   ALL_HANDLERS = [
+       # ... existing handlers
+       YourHandler,
+   ]
+   ```
+
+3. Set stability level in `HANDLER_STABILITY`:
+   ```python
+   HANDLER_STABILITY: dict[str, Stability] = {
+       # ...
+       "YourHandler": Stability.PREVIEW,  # Start as PREVIEW
+   }
+   ```
+
+4. Add to `__all__` exports.
+
+### Stability Levels
+
+| Level | Meaning | Usage |
+|-------|---------|-------|
+| `STABLE` | Production-ready, API stable | Core features |
+| `EXPERIMENTAL` | Works but may change | New features |
+| `PREVIEW` | Early access, expect issues | Alpha features |
+| `DEPRECATED` | Being phased out | Legacy code |
+
+### Handler Testing
+
+Create tests in `tests/test_handlers_yourfeature.py`:
+
+```python
+import pytest
+from aragora.server.handlers.yourfeature import YourHandler
+
+class TestYourHandler:
+    def setup_method(self):
+        self.handler = YourHandler({})
+
+    def test_can_handle_routes(self):
+        assert self.handler.can_handle("/api/yourfeature", "GET")
+        assert not self.handler.can_handle("/api/other", "GET")
+
+    def test_list_items(self):
+        result = self.handler._list_items()
+        assert result["total"] == 0
+```
+
+## Adding a Dashboard Page
+
+Frontend pages live in `aragora/live/src/app/`.
+
+### Page Structure
+
+Create `aragora/live/src/app/yourfeature/page.tsx`:
+
+```tsx
+'use client';
+
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import { Scanlines, CRTVignette } from '@/components/MatrixRain';
+import { AsciiBannerCompact } from '@/components/AsciiBanner';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { BackendSelector, useBackend } from '@/components/BackendSelector';
+import { PanelErrorBoundary } from '@/components/PanelErrorBoundary';
+
+const YourPanel = dynamic(
+  () => import('@/components/YourPanel').then(m => ({ default: m.YourPanel })),
+  { ssr: false, loading: () => <div className="animate-pulse h-96 bg-surface" /> }
+);
+
+export default function YourFeaturePage() {
+  const { config } = useBackend();
+
+  return (
+    <>
+      <Scanlines opacity={0.02} />
+      <CRTVignette />
+      <main className="min-h-screen bg-bg text-text">
+        {/* Header, content, footer - see existing pages */}
+        <PanelErrorBoundary panelName="Your Feature">
+          <YourPanel apiBase={config.api} />
+        </PanelErrorBoundary>
+      </main>
+    </>
+  );
+}
+```
+
+### Component Patterns
+
+- Use `dynamic` imports for code splitting
+- Wrap in `PanelErrorBoundary` for resilience
+- Use `useBackend()` hook for API base URL
+- Follow the cyberpunk/matrix visual theme
+
 ## Testing
 
 ### Running Tests
