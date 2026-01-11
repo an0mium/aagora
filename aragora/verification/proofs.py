@@ -28,6 +28,7 @@ import ast
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,30 @@ import uuid
 
 # Timeout for code execution (seconds) - prevents infinite loops/CPU exhaustion
 EXEC_TIMEOUT_SECONDS = 5.0
+
+
+def _get_safe_subprocess_env() -> dict[str, str]:
+    """Get a filtered environment for subprocess execution.
+
+    Removes sensitive environment variables (API keys, secrets, tokens)
+    to prevent them from being exposed to executed code.
+
+    Returns:
+        Minimal environment dict safe for subprocess execution
+    """
+    # Start with minimal required environment variables
+    safe_env = {}
+
+    # Required for Python to work properly
+    for key in ("PATH", "HOME", "PYTHONPATH", "LANG", "LC_ALL", "TMPDIR", "TMP", "TEMP"):
+        if key in os.environ:
+            safe_env[key] = os.environ[key]
+
+    # Set sensible defaults
+    if "LANG" not in safe_env:
+        safe_env["LANG"] = "en_US.UTF-8"
+
+    return safe_env
 
 # Patterns that could enable sandbox escape via Python introspection
 DANGEROUS_PATTERNS = [
@@ -235,6 +260,7 @@ except Exception as e:
                 timeout=timeout,
                 text=True,
                 shell=False,
+                env=_get_safe_subprocess_env(),  # Filtered env prevents API key leakage
             )
 
             if result.returncode != 0 and not result.stdout:

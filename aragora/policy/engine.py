@@ -35,12 +35,14 @@ Usage:
 
 from __future__ import annotations
 
+import ast
 import logging
+import operator
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
 from aragora.policy.risk import BlastRadius, RiskBudget, RiskLevel
 from aragora.policy.tools import Tool, ToolCapability, ToolRegistry, get_tool_registry
@@ -163,29 +165,100 @@ class Policy:
 
         return True
 
+    # Safe operators for AST evaluation
+    _SAFE_OPS: dict[type, Callable] = {
+        ast.Eq: operator.eq,
+        ast.NotEq: operator.ne,
+        ast.Lt: operator.lt,
+        ast.LtE: operator.le,
+        ast.Gt: operator.gt,
+        ast.GtE: operator.ge,
+        ast.In: lambda a, b: a in b,
+        ast.NotIn: lambda a, b: a not in b,
+    }
+
     def _eval_condition(self, condition: str, context: dict) -> bool:
-        """Safely evaluate a condition expression."""
-        # Only allow simple comparisons for security
-        # Pattern: "key op value" where op is ==, !=, in, not in, <, >, etc.
+        """Safely evaluate a condition expression using AST parsing.
 
-        # Safe built-ins for evaluation
-        safe_builtins = {
-            "True": True,
-            "False": False,
-            "None": None,
-            "len": len,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-        }
+        This replaces eval() with a secure AST-based evaluator that only
+        supports comparison operators, boolean logic, and variable access.
+        Attribute access and method calls are explicitly blocked.
 
+        Supported expressions:
+        - Comparisons: x == 1, y != "foo", z < 10
+        - Membership: x in ["a", "b"], y not in allowed_list
+        - Boolean: x == 1 and y == 2, x or y
+        - Negation: not x, not (x == 1)
+        """
         try:
-            # Create a restricted namespace
-            namespace = {**safe_builtins, **context}
-            return bool(eval(condition, {"__builtins__": {}}, namespace))
-        except (SyntaxError, NameError, TypeError, ValueError, AttributeError):
+            tree = ast.parse(condition, mode='eval')
+            return bool(self._eval_node(tree.body, context))
+        except (SyntaxError, ValueError, TypeError, KeyError):
             return False
+
+    def _eval_node(self, node: ast.AST, context: dict) -> Union[bool, int, float, str, list, None]:
+        """Recursively evaluate AST nodes safely.
+
+        Explicitly blocks:
+        - Attribute access (node.attr)
+        - Method calls
+        - Subscript operations beyond simple list access
+        - Lambda and function definitions
+        """
+        if isinstance(node, ast.Compare):
+            left = self._eval_node(node.left, context)
+            for op, comparator in zip(node.ops, node.comparators):
+                right = self._eval_node(comparator, context)
+                op_func = self._SAFE_OPS.get(type(op))
+                if op_func is None:
+                    raise ValueError(f"Unsupported operator: {type(op).__name__}")
+                if not op_func(left, right):
+                    return False
+                left = right
+            return True
+
+        elif isinstance(node, ast.Name):
+            # Only allow access to context variables, not builtins
+            if node.id in context:
+                return context[node.id]
+            # Allow True/False/None as literals
+            if node.id == "True":
+                return True
+            if node.id == "False":
+                return False
+            if node.id == "None":
+                return None
+            raise ValueError(f"Unknown variable: {node.id}")
+
+        elif isinstance(node, ast.Constant):
+            # Allow literal values (str, int, float, None, bool)
+            return node.value
+
+        elif isinstance(node, ast.List):
+            # Allow list literals for "in" checks
+            return [self._eval_node(elt, context) for elt in node.elts]
+
+        elif isinstance(node, ast.Tuple):
+            # Allow tuple literals
+            return tuple(self._eval_node(elt, context) for elt in node.elts)
+
+        elif isinstance(node, ast.BoolOp):
+            if isinstance(node.op, ast.And):
+                return all(self._eval_node(v, context) for v in node.values)
+            elif isinstance(node.op, ast.Or):
+                return any(self._eval_node(v, context) for v in node.values)
+            raise ValueError(f"Unsupported boolean operator: {type(node.op).__name__}")
+
+        elif isinstance(node, ast.UnaryOp):
+            if isinstance(node.op, ast.Not):
+                return not self._eval_node(node.operand, context)
+            raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
+
+        # Explicitly block dangerous node types
+        elif isinstance(node, (ast.Attribute, ast.Call, ast.Subscript)):
+            raise ValueError(f"Blocked node type for security: {type(node).__name__}")
+
+        raise ValueError(f"Unsupported node type: {type(node).__name__}")
 
 
 class PolicyEngine:

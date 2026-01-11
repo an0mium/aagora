@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -226,15 +227,14 @@ class LeanBackend:
         has_lean = shutil.which("lean") is not None
         if has_lean and self._lean_version is None:
             try:
-                import subprocess
                 result = subprocess.run(
                     ["lean", "--version"],
                     capture_output=True, text=True, timeout=5
                 )
                 if result.returncode == 0:
                     self._lean_version = result.stdout.strip().split("\n")[0]
-            except Exception:
-                pass
+            except (subprocess.SubprocessError, OSError, FileNotFoundError) as e:
+                logger.debug("Lean version check failed: %s", e)
         return has_lean
 
     @property
