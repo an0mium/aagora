@@ -172,19 +172,48 @@ class LeanBackend:
     """
     Lean 4 formal verification backend.
 
-    Status: STUB - Not yet implemented.
+    Uses LLM-assisted translation to convert natural language claims to Lean 4
+    theorems, then runs the Lean type checker to verify proofs.
 
-    Future implementation will:
-    - Use LLM-assisted translation (DeepSeek-Prover, Lean Copilot)
-    - Shell out to `lake build` for proof checking
-    - Query Mathlib for existing theorems
-    - Cache successful proofs
+    Features:
+    - LLM-assisted translation (Claude, GPT-4)
+    - Sandboxed Lean execution with resource limits
+    - Proof caching for repeated verification
+    - Support for common mathematical patterns
 
-    Prerequisites for implementation:
-    - Lean 4 toolchain installed
-    - Mathlib available
-    - LLM with Lean training (Claude, DeepSeek-Prover)
+    Prerequisites:
+    - Lean 4 toolchain installed (lean, lake)
+    - API key for translation (ANTHROPIC_API_KEY or OPENAI_API_KEY)
     """
+
+    # Claim types suitable for Lean verification
+    LEAN_CLAIM_TYPES = {
+        "MATHEMATICAL", "LOGICAL", "ARITHMETIC", "PROOF",
+        "THEOREM", "LEMMA", "PROPERTY", "INVARIANT",
+    }
+
+    # Patterns indicating mathematical content
+    MATH_PATTERNS = [
+        r"\bfor all\b", r"\bforall\b", r"\bexists\b", r"\bthere exists\b",
+        r"\biff\b", r"\bimplies\b", r"\bif and only if\b",
+        r"\bprove\b", r"\bproof\b", r"\btheorem\b", r"\blemma\b",
+        r"\bprime\b", r"\bdivisible\b", r"\beven\b", r"\bodd\b",
+        r"\bsum\b", r"\bproduct\b", r"\bintegral\b", r"\bderivative\b",
+        r"[∀∃→←↔∧∨¬⊢⊨≡≠≤≥∈∉⊂⊃∩∪∅ℕℤℚℝℂ]",
+    ]
+
+    def __init__(self, sandbox_timeout: float = 60.0, sandbox_memory_mb: int = 1024):
+        """
+        Initialize Lean backend.
+
+        Args:
+            sandbox_timeout: Maximum seconds for Lean execution.
+            sandbox_memory_mb: Memory limit for Lean process.
+        """
+        self._sandbox_timeout = sandbox_timeout
+        self._sandbox_memory_mb = sandbox_memory_mb
+        self._proof_cache: dict[str, FormalProofResult] = {}
+        self._lean_version: Optional[str] = None
 
     @property
     def language(self) -> FormalLanguage:
@@ -194,10 +223,50 @@ class LeanBackend:
     def is_available(self) -> bool:
         """Check if Lean 4 toolchain (lean and lake) is available."""
         import shutil
-        return shutil.which("lean") is not None and shutil.which("lake") is not None
+        has_lean = shutil.which("lean") is not None
+        if has_lean and self._lean_version is None:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["lean", "--version"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    self._lean_version = result.stdout.strip().split("\n")[0]
+            except Exception:
+                pass
+        return has_lean
+
+    @property
+    def lean_version(self) -> str:
+        """Get Lean version string."""
+        if self._lean_version is None and self.is_available:
+            pass  # is_available sets version
+        return self._lean_version or "unknown"
 
     def can_verify(self, claim: str, claim_type: Optional[str] = None) -> bool:
-        # Stub: Not yet implemented
+        """
+        Check if this backend can attempt to verify the claim.
+
+        Returns True for:
+        - Claims with explicit mathematical claim types
+        - Claims containing mathematical notation or keywords
+        - Claims that appear to be theorems or proofs
+        """
+        import re
+
+        if not self.is_available:
+            return False
+
+        # Check explicit claim type
+        if claim_type and claim_type.upper() in self.LEAN_CLAIM_TYPES:
+            return True
+
+        # Check for mathematical patterns
+        for pattern in self.MATH_PATTERNS:
+            if re.search(pattern, claim, re.IGNORECASE):
+                return True
+
         return False
 
     async def translate(self, claim: str, context: str = "") -> Optional[str]:
@@ -215,20 +284,26 @@ class LeanBackend:
             return None
 
         # Create translation prompt
-        prompt = f"""Translate the following natural language claim into a Lean 4 theorem statement.
-If the claim cannot be expressed as a formal theorem, return "UNTRANSLATABLE".
+        prompt = f"""Translate the following natural language claim into a Lean 4 theorem with proof.
 
 Claim: {claim}
 {f'Context: {context}' if context else ''}
 
-Guidelines:
-- Use valid Lean 4 syntax
-- Include necessary imports if needed
-- Use "sorry" as a placeholder proof
-- Keep the theorem name simple (e.g., claim_1, main_theorem)
+Requirements:
+1. Use valid Lean 4 syntax (not Lean 3)
+2. Include necessary imports (e.g., import Mathlib.Tactic)
+3. Provide a complete proof using tactics like simp, ring, omega, decide, etc.
+4. If the claim is false, prove its negation instead and note this
+5. Keep theorem name simple (claim_1, main_theorem)
+
+If the claim cannot be expressed as a Lean theorem, return exactly: UNTRANSLATABLE
 
 Return ONLY the Lean 4 code, no explanations. Example:
-theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
+```lean
+import Mathlib.Tactic
+
+theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp
+```"""
 
         try:
             anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -243,7 +318,7 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
                 }
                 payload = {
                     "model": "claude-sonnet-4-20250514",
-                    "max_tokens": 1024,
+                    "max_tokens": 2048,
                     "messages": [{"role": "user", "content": prompt}],
                 }
             elif openai_key:
@@ -254,11 +329,10 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
                 }
                 payload = {
                     "model": "gpt-4o",
-                    "max_tokens": 1024,
+                    "max_tokens": 2048,
                     "messages": [{"role": "user", "content": prompt}],
                 }
             else:
-                # No API key available for LLM translation
                 return None
 
             async with aiohttp.ClientSession() as session:
@@ -274,7 +348,7 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
                         return None
 
                     try:
-                        if os.environ.get("ANTHROPIC_API_KEY"):
+                        if anthropic_key:
                             result = data["content"][0]["text"].strip()
                         else:
                             result = data["choices"][0]["message"]["content"].strip()
@@ -284,6 +358,12 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
 
                     if "UNTRANSLATABLE" in result:
                         return None
+
+                    # Extract Lean code from markdown if present
+                    import re
+                    lean_match = re.search(r"```(?:lean4?|lean)?\n?(.*?)```", result, re.DOTALL)
+                    if lean_match:
+                        return lean_match.group(1).strip()
                     return result
 
         except aiohttp.ClientError as e:
@@ -297,14 +377,135 @@ theorem claim_1 : ∀ n : Nat, n + 0 = n := by simp"""
             return None
 
     async def prove(self, formal_statement: str, timeout_seconds: float = 60.0) -> FormalProofResult:
-        return FormalProofResult(
-            status=FormalProofStatus.BACKEND_UNAVAILABLE,
-            language=FormalLanguage.LEAN4,
-            error_message="Lean backend not yet implemented. See aragora/verification/formal.py",
-        )
+        """
+        Attempt to verify a Lean 4 theorem using the Lean type checker.
+
+        Runs the Lean code in a sandboxed subprocess and checks if it
+        type-checks successfully (meaning the proof is valid).
+
+        Args:
+            formal_statement: Lean 4 code with theorem and proof.
+            timeout_seconds: Maximum time for Lean execution.
+
+        Returns:
+            FormalProofResult with verification status.
+        """
+        import time
+
+        if not self.is_available:
+            return FormalProofResult(
+                status=FormalProofStatus.BACKEND_UNAVAILABLE,
+                language=FormalLanguage.LEAN4,
+                error_message="Lean 4 not installed. Install from https://leanprover.github.io/",
+            )
+
+        # Check cache
+        cache_key = hashlib.sha256(formal_statement.encode()).hexdigest()
+        if cache_key in self._proof_cache:
+            cached = self._proof_cache[cache_key]
+            logger.debug(f"Lean proof cache hit for {cache_key[:8]}")
+            return cached
+
+        start_time = time.time()
+
+        try:
+            from aragora.verification.sandbox import ProofSandbox, SandboxStatus
+
+            sandbox = ProofSandbox(
+                timeout=timeout_seconds,
+                memory_mb=self._sandbox_memory_mb,
+            )
+
+            result = await sandbox.execute_lean(formal_statement)
+            elapsed_ms = (time.time() - start_time) * 1000
+
+            if result.status == SandboxStatus.TIMEOUT:
+                proof_result = FormalProofResult(
+                    status=FormalProofStatus.TIMEOUT,
+                    language=FormalLanguage.LEAN4,
+                    formal_statement=formal_statement,
+                    proof_search_time_ms=elapsed_ms,
+                    error_message=f"Lean execution exceeded {timeout_seconds}s timeout",
+                    prover_version=self.lean_version,
+                )
+            elif result.status == SandboxStatus.SETUP_FAILED:
+                proof_result = FormalProofResult(
+                    status=FormalProofStatus.BACKEND_UNAVAILABLE,
+                    language=FormalLanguage.LEAN4,
+                    formal_statement=formal_statement,
+                    error_message=result.error_message,
+                    prover_version=self.lean_version,
+                )
+            elif result.is_success:
+                # Lean returned 0 = proof type-checked successfully
+                proof_hash = hashlib.sha256(formal_statement.encode()).hexdigest()[:16]
+                proof_result = FormalProofResult(
+                    status=FormalProofStatus.PROOF_FOUND,
+                    language=FormalLanguage.LEAN4,
+                    formal_statement=formal_statement,
+                    proof_text=formal_statement,
+                    proof_hash=proof_hash,
+                    proof_search_time_ms=elapsed_ms,
+                    prover_version=self.lean_version,
+                )
+            else:
+                # Lean returned non-zero = type error or proof failure
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                # Check for common error patterns
+                if "sorry" in error_msg.lower() or "declaration uses 'sorry'" in error_msg:
+                    error_msg = "Proof incomplete (contains 'sorry')"
+                elif "type mismatch" in error_msg.lower():
+                    error_msg = f"Type error in proof: {error_msg[:200]}"
+
+                proof_result = FormalProofResult(
+                    status=FormalProofStatus.PROOF_FAILED,
+                    language=FormalLanguage.LEAN4,
+                    formal_statement=formal_statement,
+                    proof_search_time_ms=elapsed_ms,
+                    error_message=error_msg[:500],
+                    prover_version=self.lean_version,
+                )
+
+            # Cache the result
+            self._proof_cache[cache_key] = proof_result
+            return proof_result
+
+        except ImportError:
+            return FormalProofResult(
+                status=FormalProofStatus.BACKEND_UNAVAILABLE,
+                language=FormalLanguage.LEAN4,
+                formal_statement=formal_statement,
+                error_message="ProofSandbox not available",
+            )
+        except Exception as e:
+            return FormalProofResult(
+                status=FormalProofStatus.BACKEND_UNAVAILABLE,
+                language=FormalLanguage.LEAN4,
+                formal_statement=formal_statement,
+                error_message=f"Lean execution error: {type(e).__name__}: {e}",
+                prover_version=self.lean_version,
+            )
 
     async def verify_proof(self, formal_statement: str, proof: str) -> bool:
-        return False
+        """
+        Verify that a proof is valid by re-running Lean.
+
+        For Lean, we combine the statement and proof and check if it type-checks.
+        """
+        # If proof is separate from statement, combine them
+        if proof and proof.strip() not in formal_statement:
+            full_code = f"{formal_statement}\n\n{proof}"
+        else:
+            full_code = formal_statement
+
+        result = await self.prove(full_code, timeout_seconds=30.0)
+        return result.status == FormalProofStatus.PROOF_FOUND
+
+    def clear_cache(self) -> int:
+        """Clear the proof cache. Returns number of entries cleared."""
+        count = len(self._proof_cache)
+        self._proof_cache.clear()
+        return count
 
 
 class Z3Backend:
