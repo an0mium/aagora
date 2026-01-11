@@ -9,6 +9,7 @@ Features:
 - O(1) exact path lookup via route index
 - LRU cached prefix matching for dynamic routes
 - Lazy handler initialization
+- API versioning support (/api/v1/... paths)
 
 Usage:
     class MyHandler(HandlerRegistryMixin, BaseHTTPRequestHandler):
@@ -19,6 +20,13 @@ import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, BinaryIO, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+
+from aragora.server.versioning import (
+    extract_version,
+    strip_version_prefix,
+    version_response_headers,
+    APIVersion,
+)
 
 if TYPE_CHECKING:
     from aragora.server.handlers.base import BaseHandler, HandlerResult
@@ -265,27 +273,48 @@ class RouteIndex:
     def get_handler(self, path: str) -> Optional[Tuple[str, Any]]:
         """Get handler for path with O(1) lookup for known routes.
 
+        Supports both versioned (/api/v1/debates) and legacy (/api/debates) paths.
+        Versioned paths are normalized by stripping the version prefix before matching.
+
         Args:
             path: URL path to match
 
         Returns:
             Tuple of (attr_name, handler) or None if no match
         """
-        # Fast path: exact match
+        # Fast path: exact match (for legacy paths)
         if path in self._exact_routes:
             return self._exact_routes[path]
 
+        # Try matching with version stripped (for /api/v1/* paths)
+        normalized_path = strip_version_prefix(path)
+        if normalized_path != path and normalized_path in self._exact_routes:
+            return self._exact_routes[normalized_path]
+
         # Cached prefix lookup for dynamic routes
-        return self._get_handler_cached(path)
+        return self._get_handler_cached(path, normalized_path)
 
     @lru_cache(maxsize=500)
-    def _get_handler_cached(self, path: str) -> Optional[Tuple[str, Any]]:
-        """Cached prefix matching for dynamic routes."""
+    def _get_handler_cached(self, path: str, normalized_path: str) -> Optional[Tuple[str, Any]]:
+        """Cached prefix matching for dynamic routes.
+
+        Tries matching both the original path and the normalized (version-stripped) path.
+        """
+        # Try original path first
         for prefix, attr_name, handler in self._prefix_routes:
             if path.startswith(prefix):
                 # Verify with handler's can_handle for complex patterns
                 if handler.can_handle(path):
                     return (attr_name, handler)
+
+        # Try normalized path for versioned routes (/api/v1/debates -> /api/debates)
+        if normalized_path != path:
+            for prefix, attr_name, handler in self._prefix_routes:
+                if normalized_path.startswith(prefix):
+                    # Check if handler can handle the normalized path
+                    if handler.can_handle(normalized_path):
+                        return (attr_name, handler)
+
         return None
 
 
@@ -465,7 +494,8 @@ class HandlerRegistryMixin:
         """Try to handle request via modular handlers.
 
         Uses O(1) route index for fast handler lookup instead of iterating
-        through all handlers.
+        through all handlers. Supports API versioning with automatic
+        version header injection.
 
         Returns True if handled, False if should fall through to legacy routes.
         """
@@ -475,23 +505,37 @@ class HandlerRegistryMixin:
         # Ensure handlers are initialized
         self._init_handlers()
 
+        # Extract API version from path/headers
+        request_headers = {}
+        if hasattr(self, 'headers'):
+            request_headers = {k: v for k, v in self.headers.items()}
+        api_version, is_legacy = extract_version(path, request_headers)
+
+        # Normalize path for handler matching (strip version prefix)
+        normalized_path = strip_version_prefix(path)
+
         # Convert query params from {key: [val]} to {key: val}
         query_dict = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in query.items()}
 
         # Determine HTTP method for routing
         method = getattr(self, 'command', 'GET')
 
-        # O(1) route lookup via index
+        # O(1) route lookup via index (uses both original and normalized paths)
         route_index = get_route_index()
         route_match = route_index.get_handler(path)
 
         if route_match is None:
             # Fallback: iterate through handlers for edge cases not in index
+            # Try normalized path first for versioned routes
             for attr_name, _ in HANDLER_REGISTRY:
                 handler = getattr(self, attr_name, None)
-                if handler and handler.can_handle(path):
-                    route_match = (attr_name, handler)
-                    break
+                if handler:
+                    if handler.can_handle(normalized_path):
+                        route_match = (attr_name, handler)
+                        break
+                    elif normalized_path != path and handler.can_handle(path):
+                        route_match = (attr_name, handler)
+                        break
 
         if route_match is None:
             return False
@@ -499,17 +543,20 @@ class HandlerRegistryMixin:
         attr_name, handler = route_match
 
         try:
+            # Use normalized path for handler dispatch
+            dispatch_path = normalized_path
+
             # Dispatch to appropriate handler method based on HTTP method
             if method == 'POST' and hasattr(handler, 'handle_post'):
-                result = handler.handle_post(path, query_dict, self)
+                result = handler.handle_post(dispatch_path, query_dict, self)
             elif method == 'DELETE' and hasattr(handler, 'handle_delete'):
-                result = handler.handle_delete(path, query_dict, self)
+                result = handler.handle_delete(dispatch_path, query_dict, self)
             elif method == 'PATCH' and hasattr(handler, 'handle_patch'):
-                result = handler.handle_patch(path, query_dict, self)
+                result = handler.handle_patch(dispatch_path, query_dict, self)
             elif method == 'PUT' and hasattr(handler, 'handle_put'):
-                result = handler.handle_put(path, query_dict, self)
+                result = handler.handle_put(dispatch_path, query_dict, self)
             else:
-                result = handler.handle(path, query_dict, self)
+                result = handler.handle(dispatch_path, query_dict, self)
 
             # Handle async handlers - await coroutines
             if asyncio.iscoroutine(result):
@@ -523,8 +570,16 @@ class HandlerRegistryMixin:
             if result:
                 self.send_response(result.status_code)
                 self.send_header('Content-Type', result.content_type)
+
+                # Add API version headers
+                version_headers = version_response_headers(api_version, is_legacy)
+                for h_name, h_val in version_headers.items():
+                    self.send_header(h_name, h_val)
+
+                # Add handler-specific headers
                 for h_name, h_val in result.headers.items():
                     self.send_header(h_name, h_val)
+
                 # Add CORS and security headers for modular handlers
                 self._add_cors_headers()
                 self._add_security_headers()
