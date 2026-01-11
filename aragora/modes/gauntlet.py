@@ -71,6 +71,22 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class GauntletProgress:
+    """Progress update during Gauntlet execution."""
+    phase: str  # Current phase name
+    phase_number: int  # 1-indexed phase number
+    total_phases: int  # Total number of phases
+    percent: float  # 0-100
+    message: str  # Human-readable status
+    findings_so_far: int = 0  # Findings discovered so far
+    current_task: Optional[str] = None  # Current sub-task
+
+
+# Type for progress callback
+ProgressCallback = Callable[[GauntletProgress], None]
+
+
 class InputType(Enum):
     """Types of inputs that can be stress-tested."""
     SPEC = "spec"  # Product/feature specification
@@ -313,6 +329,7 @@ class GauntletOrchestrator:
         self,
         agents: list[Agent],
         run_agent_fn: Optional[Callable] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ):
         """
         Initialize Gauntlet orchestrator.
@@ -320,9 +337,11 @@ class GauntletOrchestrator:
         Args:
             agents: Agents to participate in stress-testing
             run_agent_fn: Optional function to run agents (async callable)
+            on_progress: Optional callback for progress updates
         """
         self.agents = agents
         self.run_agent_fn = run_agent_fn or self._default_run_agent
+        self.on_progress = on_progress
 
         # Initialize sub-components
         self.redteam_mode = RedTeamMode()
@@ -333,6 +352,29 @@ class GauntletOrchestrator:
         # Tracking
         self._finding_counter = 0
         self._start_time: Optional[datetime] = None
+        self._findings_count = 0
+
+    def _emit_progress(
+        self,
+        phase: str,
+        phase_number: int,
+        total_phases: int,
+        percent: float,
+        message: str,
+        current_task: Optional[str] = None,
+    ) -> None:
+        """Emit progress update if callback is configured."""
+        if self.on_progress:
+            progress = GauntletProgress(
+                phase=phase,
+                phase_number=phase_number,
+                total_phases=total_phases,
+                percent=percent,
+                message=message,
+                findings_so_far=self._findings_count,
+                current_task=current_task,
+            )
+            self.on_progress(progress)
 
     async def _default_run_agent(self, agent: Agent, prompt: str) -> str:
         """Default agent runner using agent.generate()."""
@@ -349,6 +391,7 @@ class GauntletOrchestrator:
             GauntletResult with verdict and findings
         """
         self._start_time = datetime.now()
+        self._findings_count = 0
         gauntlet_id = f"gauntlet-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
         logger.info("=" * 60)
@@ -356,6 +399,9 @@ class GauntletOrchestrator:
         logger.info(f"Input Type: {config.input_type.value}")
         logger.info(f"Agents: {', '.join(a.name for a in self.agents)}")
         logger.info("=" * 60)
+
+        # Emit initial progress
+        self._emit_progress("Initialization", 1, 3, 0, "Starting Gauntlet stress-test...")
 
         all_findings: list[Finding] = []
         dissenting_views: list[DissentRecord] = []
@@ -372,6 +418,11 @@ class GauntletOrchestrator:
         # 1. Risk Assessment (fast, run first)
         if config.enable_risk_assessment:
             logger.info("--- Phase 1: Risk Assessment ---")
+            self._emit_progress(
+                "Risk Assessment", 1, 3, 10,
+                "Analyzing domain-specific risks...",
+                current_task="risk_assessment"
+            )
             risk_assessments = self.risk_assessor.assess_topic(
                 config.input_content[:2000]
             )
@@ -385,6 +436,11 @@ class GauntletOrchestrator:
                     mitigation=", ".join(ra.mitigations),
                     source="RiskAssessor",
                 ))
+            self._findings_count = len(all_findings)
+            self._emit_progress(
+                "Risk Assessment", 1, 3, 20,
+                f"Risk assessment complete: {len(risk_assessments)} risks identified"
+            )
 
         # 2. Run parallel stress tests
         tasks = []
@@ -407,6 +463,13 @@ class GauntletOrchestrator:
 
         # Execute with timeout
         logger.info("--- Phase 2: Parallel Stress Tests ---")
+        task_names = [t[0] for t in tasks]
+        self._emit_progress(
+            "Stress Testing", 2, 3, 25,
+            f"Running {len(tasks)} parallel stress tests: {', '.join(task_names)}",
+            current_task=task_names[0] if task_names else None
+        )
+
         if tasks:
             try:
                 results = await asyncio.wait_for(
@@ -415,18 +478,41 @@ class GauntletOrchestrator:
                 )
 
                 # Process results
+                completed_tasks = 0
                 for (task_name, _), result in zip(tasks, results):
+                    completed_tasks += 1
+                    progress_pct = 25 + (completed_tasks / len(tasks)) * 50  # 25-75%
+
                     if isinstance(result, Exception):
                         logger.warning(f"{task_name} failed: {result}")
+                        self._emit_progress(
+                            "Stress Testing", 2, 3, progress_pct,
+                            f"{task_name} failed: {str(result)[:50]}",
+                            current_task=task_name
+                        )
                         continue
 
                     if task_name == "redteam" and result:
                         redteam_result = result
-                        all_findings.extend(self._redteam_to_findings(result))
+                        new_findings = self._redteam_to_findings(result)
+                        all_findings.extend(new_findings)
+                        self._findings_count = len(all_findings)
+                        self._emit_progress(
+                            "Stress Testing", 2, 3, progress_pct,
+                            f"Red-team complete: {result.total_attacks} attacks, {len(new_findings)} findings",
+                            current_task="redteam"
+                        )
 
                     elif task_name == "probing" and result:
                         probe_report = result
-                        all_findings.extend(self._probe_to_findings(result))
+                        new_findings = self._probe_to_findings(result)
+                        all_findings.extend(new_findings)
+                        self._findings_count = len(all_findings)
+                        self._emit_progress(
+                            "Stress Testing", 2, 3, progress_pct,
+                            f"Probing complete: {result.vulnerabilities_found} vulnerabilities",
+                            current_task="probing"
+                        )
 
                     elif task_name == "deep_audit" and result:
                         audit_verdict = result
@@ -434,18 +520,39 @@ class GauntletOrchestrator:
                         all_findings.extend(findings)
                         dissenting_views.extend(dissents)
                         unresolved_tensions.extend(tensions)
+                        self._findings_count = len(all_findings)
+                        self._emit_progress(
+                            "Stress Testing", 2, 3, progress_pct,
+                            f"Deep audit complete: {len(findings)} findings, {len(audit_verdict.unanimous_issues)} unanimous",
+                            current_task="deep_audit"
+                        )
 
                     elif task_name == "verification" and result:
                         verified, unverified = result
                         verified_claims.extend(verified)
                         unverified_claims.extend(unverified)
+                        self._emit_progress(
+                            "Stress Testing", 2, 3, progress_pct,
+                            f"Verification complete: {len(verified)} verified, {len(unverified)} unverified",
+                            current_task="verification"
+                        )
 
                     elif task_name == "persona" and result:
                         # Persona findings are already Finding objects
                         all_findings.extend(result)
+                        self._findings_count = len(all_findings)
+                        self._emit_progress(
+                            "Stress Testing", 2, 3, progress_pct,
+                            f"Persona attacks complete: {len(result)} findings",
+                            current_task="persona"
+                        )
 
             except asyncio.TimeoutError:
                 logger.warning(f"Gauntlet timed out after {config.max_duration_seconds}s")
+                self._emit_progress(
+                    "Stress Testing", 2, 3, 75,
+                    f"Timeout after {config.max_duration_seconds}s"
+                )
 
         # 3. Aggregate and score
         logger.info("--- Phase 3: Aggregation ---")
