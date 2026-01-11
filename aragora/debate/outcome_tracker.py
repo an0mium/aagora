@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from aragora.config import DB_TIMEOUT_SECONDS
+
 logger = logging.getLogger(__name__)
 
 # Default database path
@@ -126,7 +128,7 @@ class OutcomeTracker:
         """Initialize database schema."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS outcomes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,7 +160,7 @@ class OutcomeTracker:
 
     def record_outcome(self, outcome: ConsensusOutcome) -> None:
         """Record an outcome to the database."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO outcomes (
                     debate_id, consensus_text, consensus_confidence,
@@ -184,7 +186,7 @@ class OutcomeTracker:
 
     def get_outcome(self, debate_id: str) -> Optional[ConsensusOutcome]:
         """Get outcome by debate ID."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM outcomes WHERE debate_id = ?",
@@ -197,7 +199,7 @@ class OutcomeTracker:
 
     def get_recent_outcomes(self, limit: int = 50) -> list[ConsensusOutcome]:
         """Get recent outcomes ordered by timestamp."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM outcomes ORDER BY timestamp DESC LIMIT ?",
@@ -215,7 +217,7 @@ class OutcomeTracker:
         Returns:
             Dict mapping confidence range (e.g., "0.7-0.8") to success rate
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             rows = conn.execute("""
                 SELECT
                     CAST(consensus_confidence * 10 AS INTEGER) * 0.1 as bucket_start,
@@ -251,7 +253,7 @@ class OutcomeTracker:
         bucket_size = 1.0 / num_buckets
         buckets = []
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             for i in range(num_buckets):
                 conf_min = i * bucket_size
                 conf_max = (i + 1) * bucket_size
@@ -283,7 +285,7 @@ class OutcomeTracker:
 
         Returns list of dicts with 'reason' and 'count' keys.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             rows = conn.execute("""
                 SELECT failure_reason, COUNT(*) as count
                 FROM outcomes
@@ -299,7 +301,7 @@ class OutcomeTracker:
 
     def get_overall_stats(self) -> dict:
         """Get overall outcome statistics."""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             row = conn.execute("""
                 SELECT
                     COUNT(*) as total,
@@ -333,7 +335,7 @@ class OutcomeTracker:
         Returns True if high-confidence (>threshold) debates have
         lower success rate than their confidence suggests.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_SECONDS) as conn:
             row = conn.execute("""
                 SELECT
                     AVG(consensus_confidence) as avg_confidence,

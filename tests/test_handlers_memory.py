@@ -299,3 +299,126 @@ class TestErrorHandling:
         result = handler.handle("/api/memory/continuum/consolidate", {}, None)
 
         assert result.status_code == 500
+
+
+class TestMemoryPressureEndpoint:
+    """Tests for the memory pressure monitoring endpoint."""
+
+    def test_can_handle_pressure_endpoint(self, handler):
+        """Handler recognizes pressure endpoint."""
+        assert handler.can_handle("/api/memory/pressure")
+
+    def test_pressure_returns_503_when_not_configured(self, mock_ctx):
+        """Returns 503 when continuum memory not configured."""
+        mock_ctx["continuum_memory"] = None
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        assert result.status_code == 503
+
+    def test_pressure_returns_normal_status(self, mock_ctx):
+        """Returns normal status when pressure is low."""
+        mock_continuum = Mock()
+        mock_continuum.get_memory_pressure.return_value = 0.3
+        mock_continuum.get_stats.return_value = {
+            "by_tier": {
+                "FAST": {"count": 10},
+                "MEDIUM": {"count": 50},
+            },
+            "total_memories": 60,
+        }
+        mock_ctx["continuum_memory"] = mock_continuum
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        assert result.status_code == 200
+        body = json.loads(result.body)
+        assert body["status"] == "normal"
+        assert body["pressure"] == 0.3
+        assert body["auto_cleanup_triggered"] is False
+
+    def test_pressure_returns_elevated_status(self, mock_ctx):
+        """Returns elevated status when pressure is moderate."""
+        mock_continuum = Mock()
+        mock_continuum.get_memory_pressure.return_value = 0.65
+        mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 100}
+        mock_ctx["continuum_memory"] = mock_continuum
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        body = json.loads(result.body)
+        assert body["status"] == "elevated"
+
+    def test_pressure_returns_high_status(self, mock_ctx):
+        """Returns high status when pressure is significant."""
+        mock_continuum = Mock()
+        mock_continuum.get_memory_pressure.return_value = 0.85
+        mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 200}
+        mock_ctx["continuum_memory"] = mock_continuum
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        body = json.loads(result.body)
+        assert body["status"] == "high"
+
+    def test_pressure_triggers_cleanup_when_critical(self, mock_ctx):
+        """Auto-triggers cleanup when pressure > 0.9."""
+        mock_continuum = Mock()
+        mock_continuum.get_memory_pressure.return_value = 0.95
+        mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 500}
+        mock_continuum.cleanup_expired_memories.return_value = {"cleaned": 50}
+        mock_ctx["continuum_memory"] = mock_continuum
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        body = json.loads(result.body)
+        assert body["status"] == "critical"
+        assert body["auto_cleanup_triggered"] is True
+        assert body["cleanup_result"] == {"cleaned": 50}
+        mock_continuum.cleanup_expired_memories.assert_called_once_with(archive=True)
+
+    def test_pressure_includes_tier_utilization(self, mock_ctx):
+        """Response includes per-tier utilization breakdown."""
+        mock_continuum = Mock()
+        mock_continuum.get_memory_pressure.return_value = 0.4
+        mock_continuum.get_stats.return_value = {
+            "by_tier": {
+                "FAST": {"count": 50},
+                "MEDIUM": {"count": 250},
+                "SLOW": {"count": 500},
+                "GLACIAL": {"count": 1000},
+            },
+            "total_memories": 1800,
+        }
+        mock_ctx["continuum_memory"] = mock_continuum
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        body = json.loads(result.body)
+        assert "tier_utilization" in body
+        assert body["tier_utilization"]["FAST"]["count"] == 50
+        assert body["tier_utilization"]["FAST"]["limit"] == 100
+        assert body["tier_utilization"]["FAST"]["utilization"] == 0.5
+
+    def test_pressure_handles_cleanup_failure(self, mock_ctx):
+        """Cleanup failure doesn't fail the request."""
+        mock_continuum = Mock()
+        mock_continuum.get_memory_pressure.return_value = 0.95
+        mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 500}
+        mock_continuum.cleanup_expired_memories.side_effect = Exception("Cleanup failed")
+        mock_ctx["continuum_memory"] = mock_continuum
+        handler = MemoryHandler(mock_ctx)
+
+        result = handler.handle("/api/memory/pressure", {}, None)
+
+        # Should still succeed
+        assert result.status_code == 200
+        body = json.loads(result.body)
+        assert body["status"] == "critical"
+        assert body["auto_cleanup_triggered"] is False  # Failed, so not triggered

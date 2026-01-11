@@ -575,17 +575,21 @@ export default function Home() {
           {/* Agent Activity - Takes more space on wider screens */}
           <div className="xl:col-span-3 min-h-[400px] sm:min-h-[500px]">
             {viewMode === 'deep-audit' ? (
-              <DeepAuditView
-                events={events}
-                isActive={true}
-                onToggle={() => setViewMode('tabs')}
-              />
+              <PanelErrorBoundary panelName="Deep Audit">
+                <DeepAuditView
+                  events={events}
+                  isActive={true}
+                  onToggle={() => setViewMode('tabs')}
+                />
+              </PanelErrorBoundary>
             ) : viewMode === 'tabs' ? (
               <PanelErrorBoundary panelName="Debate Dashboard">
                 <AgentTabs events={events} />
               </PanelErrorBoundary>
             ) : (
-              <AgentPanel events={events} />
+              <PanelErrorBoundary panelName="Agent Stream">
+                <AgentPanel events={events} />
+              </PanelErrorBoundary>
             )}
           </div>
 

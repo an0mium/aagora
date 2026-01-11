@@ -2,6 +2,8 @@
 Core abstractions for the Agora multi-agent debate framework.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -146,7 +148,7 @@ class DebateResult:
     # Convergence detection results
     convergence_status: str = ""  # "converged", "refining", "diverging", ""
     convergence_similarity: float = 0.0  # Average similarity at end
-    per_agent_similarity: dict = field(default_factory=dict)  # Agent -> similarity
+    per_agent_similarity: dict[str, float] = field(default_factory=dict)  # Agent -> similarity
     # Consensus strength: "strong" (var < 1), "medium" (var < 2), "weak" (var >= 2)
     consensus_strength: str = ""
     consensus_variance: float = 0.0
@@ -155,8 +157,8 @@ class DebateResult:
     # Evidence grounding (Heavy3-inspired)
     grounded_verdict: Optional[Any] = None  # GroundedVerdict from aragora.reasoning.citations
     # Belief network analysis - identifies key claims that drive disagreement
-    debate_cruxes: list[dict] = field(default_factory=list)  # From BeliefPropagationAnalyzer
-    evidence_suggestions: list[dict] = field(default_factory=list)  # Claims needing evidence
+    debate_cruxes: list[dict[str, Any]] = field(default_factory=list)  # From BeliefPropagationAnalyzer
+    evidence_suggestions: list[dict[str, Any]] = field(default_factory=list)  # Claims needing evidence
     # Verification results - claim verification during consensus
     verification_results: dict[str, int] = field(default_factory=dict)  # Agent -> verified_claim_count
     verification_bonuses: dict[str, float] = field(default_factory=dict)  # Agent -> vote_bonus_applied
@@ -272,7 +274,7 @@ REASONING: <brief explanation>"""
             continue_debate=continue_debate,
         )
 
-    def set_system_prompt(self, prompt: str):
+    def set_system_prompt(self, prompt: str) -> None:
         """Update the agent's system prompt (for self-improvement)."""
         self.system_prompt = prompt
 

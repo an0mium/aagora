@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -29,6 +30,10 @@ HASH_VERSION_SHA256 = "sha256:"
 HASH_VERSION_BCRYPT = "bcrypt:"
 HASH_VERSION_CURRENT = HASH_VERSION_BCRYPT if HAS_BCRYPT else HASH_VERSION_SHA256
 BCRYPT_ROUNDS = 12  # Cost factor for bcrypt
+
+# Security: Allow SHA-256 fallback only in development/testing
+# Set ARAGORA_ALLOW_INSECURE_PASSWORDS=1 to enable (NOT for production)
+ALLOW_INSECURE_PASSWORDS = os.environ.get("ARAGORA_ALLOW_INSECURE_PASSWORDS", "").lower() in ("1", "true", "yes")
 
 
 class SubscriptionTier(Enum):
@@ -138,34 +143,43 @@ def _hash_password_sha256(password: str, salt: Optional[str] = None) -> tuple[st
 
 def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
     """
-    Hash a password using bcrypt (preferred) or SHA-256 (fallback).
+    Hash a password using bcrypt.
 
-    New passwords are hashed with bcrypt if available, with version prefix
-    for migration support. Existing SHA-256 hashes continue to work and
-    are transparently upgraded on next login.
+    In production, bcrypt is REQUIRED. SHA-256 fallback is only allowed
+    when ARAGORA_ALLOW_INSECURE_PASSWORDS=1 is set (for testing only).
 
     Args:
         password: Plain text password
-        salt: Optional salt (only used for SHA-256 fallback)
+        salt: Optional salt (only used for SHA-256 fallback in dev)
 
     Returns:
         Tuple of (versioned_hash, salt)
         - For bcrypt: salt is empty string (embedded in hash)
         - For SHA-256: salt is the random salt used
+
+    Raises:
+        RuntimeError: If bcrypt is not installed and insecure fallback not enabled
     """
     if HAS_BCRYPT:
         # Use bcrypt (salt is embedded in the hash)
         password_bytes = password.encode("utf-8")
         hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
         return f"{HASH_VERSION_BCRYPT}{hashed.decode('utf-8')}", ""
-    else:
-        # Fall back to SHA-256 with version prefix
+    elif ALLOW_INSECURE_PASSWORDS:
+        # Fall back to SHA-256 ONLY in development/testing
         legacy_hash, salt = _hash_password_sha256(password, salt)
         logger.warning(
-            "Using SHA-256 for password hashing (bcrypt not installed). "
-            "Install bcrypt for production: pip install bcrypt"
+            "SECURITY WARNING: Using SHA-256 for password hashing. "
+            "This is insecure for production. Install bcrypt: pip install bcrypt"
         )
         return f"{HASH_VERSION_SHA256}{legacy_hash}", salt
+    else:
+        # Production: fail if bcrypt not available
+        raise RuntimeError(
+            "bcrypt is required for secure password hashing but is not installed. "
+            "Install it with: pip install bcrypt\n"
+            "For development/testing only, set ARAGORA_ALLOW_INSECURE_PASSWORDS=1"
+        )
 
 
 def verify_password(password: str, password_hash: str, salt: str) -> bool:

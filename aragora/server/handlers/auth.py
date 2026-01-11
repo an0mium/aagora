@@ -301,6 +301,7 @@ class AuthHandler(BaseHandler):
             }
         )
 
+    @rate_limit(rpm=20, limiter_name="auth_refresh")
     @handle_errors("token refresh")
     def _handle_refresh(self, handler) -> HandlerResult:
         """Handle token refresh."""
@@ -458,6 +459,7 @@ class AuthHandler(BaseHandler):
 
         return json_response({"user": user.to_dict()})
 
+    @rate_limit(rpm=3, limiter_name="auth_change_password")
     @handle_errors("change password")
     def _handle_change_password(self, handler) -> HandlerResult:
         """Change user password."""
@@ -556,6 +558,7 @@ class AuthHandler(BaseHandler):
         else:
             return error_response("Invalid token - could not revoke", 400)
 
+    @rate_limit(rpm=3, limiter_name="auth_api_key_gen")
     @handle_errors("generate API key")
     def _handle_generate_api_key(self, handler) -> HandlerResult:
         """Generate a new API key for the user."""
@@ -644,6 +647,7 @@ class AuthHandler(BaseHandler):
     # MFA/2FA Methods
     # =========================================================================
 
+    @rate_limit(rpm=5, limiter_name="mfa_setup")
     @handle_errors("MFA setup")
     @log_request("MFA setup")
     def _handle_mfa_setup(self, handler) -> HandlerResult:
@@ -684,6 +688,7 @@ class AuthHandler(BaseHandler):
             "message": "Scan QR code or enter secret in your authenticator app, then call /api/auth/mfa/enable with verification code",
         })
 
+    @rate_limit(rpm=5, limiter_name="mfa_enable")
     @handle_errors("MFA enable")
     @log_request("MFA enable")
     def _handle_mfa_enable(self, handler) -> HandlerResult:

@@ -262,9 +262,15 @@ class TestTokenValidation:
 
     def test_decode_expired_token(self):
         """Should reject expired tokens."""
-        # Create token that's already expired
-        token = create_access_token("user", "email", expiry_hours=-1)
-        payload = decode_jwt(token)
+        # Create token with minimum expiry
+        token = create_access_token("user", "email", expiry_hours=1)
+
+        # Fast-forward time to make token expired
+        with patch("aragora.billing.jwt_auth.time") as mock_time:
+            # Set time to 2 hours in the future (past the 1-hour expiry)
+            mock_time.time.return_value = time.time() + 7200
+            payload = decode_jwt(token)
+
         assert payload is None
 
 

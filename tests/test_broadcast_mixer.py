@@ -12,6 +12,8 @@ from aragora.broadcast.mixer import (
     mix_audio,
     mix_audio_with_ffmpeg,
     PYDUB_AVAILABLE,
+    _detect_audio_codec,
+    _has_mixed_codecs,
 )
 from aragora.broadcast import (
     broadcast_debate,
@@ -596,3 +598,311 @@ class TestEdgeCases:
         """PYDUB_AVAILABLE reflects actual pydub availability."""
         # This is a sanity check - the constant should be boolean
         assert isinstance(PYDUB_AVAILABLE, bool)
+
+
+# =============================================================================
+# Test Codec Detection
+# =============================================================================
+
+
+class TestDetectAudioCodec:
+    """Tests for _detect_audio_codec function."""
+
+    def test_detect_codec_mp3(self, tmp_path):
+        """Detect MP3 codec successfully."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "mp3\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec == "mp3"
+
+    def test_detect_codec_aac(self, tmp_path):
+        """Detect AAC codec successfully."""
+        audio_file = tmp_path / "test.m4a"
+        audio_file.write_bytes(b"fake aac")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "aac\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec == "aac"
+
+    def test_detect_codec_pcm(self, tmp_path):
+        """Detect PCM codec (uncompressed WAV)."""
+        audio_file = tmp_path / "test.wav"
+        audio_file.write_bytes(b"fake wav")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "pcm_s16le\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec == "pcm_s16le"
+
+    def test_detect_codec_opus(self, tmp_path):
+        """Detect Opus codec."""
+        audio_file = tmp_path / "test.opus"
+        audio_file.write_bytes(b"fake opus")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "opus\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec == "opus"
+
+    def test_detect_codec_ffprobe_failure(self, tmp_path):
+        """Return None when ffprobe fails."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec is None
+
+    def test_detect_codec_ffprobe_timeout(self, tmp_path):
+        """Return None when ffprobe times out."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ffprobe", 10)):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec is None
+
+    def test_detect_codec_ffprobe_not_found(self, tmp_path):
+        """Return None when ffprobe is not installed."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("ffprobe")):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec is None
+
+    def test_detect_codec_os_error(self, tmp_path):
+        """Return None on OS error."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        with patch("subprocess.run", side_effect=OSError("Some error")):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec is None
+
+    def test_detect_codec_empty_output(self, tmp_path):
+        """Return None when ffprobe returns empty output."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            codec = _detect_audio_codec(audio_file)
+
+        assert codec is None
+
+
+# =============================================================================
+# Test Mixed Codec Detection
+# =============================================================================
+
+
+class TestHasMixedCodecs:
+    """Tests for _has_mixed_codecs function."""
+
+    def test_same_codec_all_files(self, tmp_path):
+        """Return False when all files have same codec."""
+        audio_files = []
+        for i in range(3):
+            f = tmp_path / f"audio_{i}.mp3"
+            f.write_bytes(b"fake mp3")
+            audio_files.append(f)
+
+        # All files return mp3 codec
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "mp3\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = _has_mixed_codecs(audio_files)
+
+        assert result is False
+
+    def test_mixed_codecs_mp3_and_wav(self, tmp_path):
+        """Return True when files have different codecs."""
+        mp3_file = tmp_path / "audio.mp3"
+        mp3_file.write_bytes(b"fake mp3")
+        wav_file = tmp_path / "audio.wav"
+        wav_file.write_bytes(b"fake wav")
+
+        call_count = 0
+        def mock_ffprobe(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            result.returncode = 0
+            # Alternate between codecs
+            result.stdout = "mp3\n" if call_count % 2 == 1 else "pcm_s16le\n"
+            return result
+
+        with patch("subprocess.run", side_effect=mock_ffprobe):
+            result = _has_mixed_codecs([mp3_file, wav_file])
+
+        assert result is True
+
+    def test_mixed_codecs_elevenlabs_and_xtts(self, tmp_path):
+        """Return True for ElevenLabs MP3 + XTTS WAV (common scenario)."""
+        elevenlabs = tmp_path / "narrator.mp3"
+        elevenlabs.write_bytes(b"fake mp3")
+        xtts = tmp_path / "agent.wav"
+        xtts.write_bytes(b"fake wav")
+
+        call_count = 0
+        def mock_ffprobe(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "mp3\n" if call_count == 1 else "pcm_s16le\n"
+            return result
+
+        with patch("subprocess.run", side_effect=mock_ffprobe):
+            result = _has_mixed_codecs([elevenlabs, xtts])
+
+        assert result is True
+
+    def test_empty_file_list(self):
+        """Return False for empty file list."""
+        result = _has_mixed_codecs([])
+        assert result is False
+
+    def test_single_file(self, tmp_path):
+        """Return False for single file."""
+        audio_file = tmp_path / "test.mp3"
+        audio_file.write_bytes(b"fake mp3")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "mp3\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = _has_mixed_codecs([audio_file])
+
+        assert result is False
+
+    def test_skips_missing_files(self, tmp_path):
+        """Skip missing files when checking codecs."""
+        existing = tmp_path / "exists.mp3"
+        existing.write_bytes(b"fake mp3")
+        missing = tmp_path / "missing.mp3"  # Does not exist
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "mp3\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = _has_mixed_codecs([existing, missing])
+
+        # Only one file was checked, so no mixed codecs
+        assert result is False
+
+    def test_codec_detection_failure_handled(self, tmp_path):
+        """Handle codec detection failures gracefully."""
+        audio_files = []
+        for i in range(3):
+            f = tmp_path / f"audio_{i}.mp3"
+            f.write_bytes(b"fake mp3")
+            audio_files.append(f)
+
+        # All codec detections fail
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            result = _has_mixed_codecs(audio_files)
+
+        # No codecs detected = no mixed codecs
+        assert result is False
+
+
+# =============================================================================
+# Test Codec Integration with FFmpeg Mixing
+# =============================================================================
+
+
+class TestCodecAwareMixing:
+    """Tests for codec-aware mixing behavior."""
+
+    def test_ffmpeg_uses_filter_complex_for_mixed_codecs(self, tmp_path):
+        """FFmpeg uses filter_complex concat for mixed codecs."""
+        mp3_file = tmp_path / "audio.mp3"
+        mp3_file.write_bytes(b"fake mp3")
+        wav_file = tmp_path / "audio.wav"
+        wav_file.write_bytes(b"fake wav")
+        output_path = tmp_path / "output.mp3"
+
+        call_count = 0
+        def mock_subprocess(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            result.returncode = 0
+            # First two calls are codec detection (one per file)
+            if call_count <= 2:
+                result.stdout = "mp3\n" if call_count == 1 else "pcm_s16le\n"
+            return result
+
+        with patch("subprocess.run", side_effect=mock_subprocess) as mock_run:
+            mix_audio_with_ffmpeg([mp3_file, wav_file], output_path)
+
+        # Verify at least 3 calls: 2 codec detections + 1 ffmpeg mix
+        assert mock_run.call_count >= 3, f"Expected at least 3 calls, got {mock_run.call_count}"
+
+        # The last call should be the ffmpeg mixing command
+        # It should use filter_complex for mixed codecs
+        all_calls_str = " ".join(str(c) for c in mock_run.call_args_list)
+        assert "filter_complex" in all_calls_str, "Expected filter_complex for mixed codecs"
+
+    def test_ffmpeg_uses_concat_demuxer_for_same_codec(self, tmp_path):
+        """FFmpeg uses concat demuxer (faster) for same codecs."""
+        audio_files = []
+        for i in range(2):
+            f = tmp_path / f"audio_{i}.mp3"
+            f.write_bytes(b"fake mp3")
+            audio_files.append(f)
+        output_path = tmp_path / "output.mp3"
+
+        # All files return same codec
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "mp3\n"
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            mix_audio_with_ffmpeg(audio_files, output_path)
+
+        # Check that concat demuxer was used (not filter_complex)
+        ffmpeg_calls = [c for c in mock_run.call_args_list if "-f" in str(c) and "concat" in str(c)]
+        # Should have at least one call with "-f concat"
+        assert any("concat" in str(c) for c in mock_run.call_args_list)

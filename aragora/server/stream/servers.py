@@ -523,6 +523,8 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):  # type: ignore[
         rounds: int,
         consensus: str,
         trending_topic: Optional[Any],
+        user_id: str = "",
+        org_id: str = "",
     ) -> None:
         """Execute a debate in a background thread.
 
@@ -585,12 +587,25 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):  # type: ignore[
 
             # Create arena with hooks and available context systems
             hooks = create_arena_hooks(self.emitter)
+
+            # Initialize usage tracking if user/org context is available
+            usage_tracker = None
+            if user_id or org_id:
+                try:
+                    from aragora.billing.usage import UsageTracker
+                    usage_tracker = UsageTracker()
+                except ImportError:
+                    pass
+
             arena = Arena(
                 env, agents, protocol,  # type: ignore[arg-type]
                 event_hooks=hooks,
                 event_emitter=self.emitter,
                 loop_id=debate_id,
                 trending_topic=trending_topic,
+                user_id=user_id,
+                org_id=org_id,
+                usage_tracker=usage_tracker,
             )
 
             # Run debate with timeout protection
@@ -718,6 +733,20 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):  # type: ignore[
         if config["use_trending"]:
             trending_topic = await self._fetch_trending_topic_async(config["trending_category"])
 
+        # Extract user/org context from JWT for usage tracking
+        user_id = ""
+        org_id = ""
+        try:
+            from aragora.billing.jwt_auth import validate_access_token
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer ") and not auth_header[7:].startswith("ara_"):
+                payload = validate_access_token(auth_header[7:])
+                if payload:
+                    user_id = payload.get("sub", "")
+                    org_id = payload.get("org_id", "")
+        except ImportError:
+            pass
+
         # Generate debate ID
         debate_id = f"adhoc_{uuid.uuid4().hex[:8]}"
 
@@ -751,7 +780,8 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):  # type: ignore[
         try:
             executor.submit(
                 self._execute_debate_thread,
-                debate_id, question, agents_str, rounds, consensus, trending_topic
+                debate_id, question, agents_str, rounds, consensus, trending_topic,
+                user_id, org_id,
             )
         except RuntimeError:
             return web.json_response({
