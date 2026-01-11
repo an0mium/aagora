@@ -260,7 +260,8 @@ class VoteAggregator:
                     intensity_multiplier = self._user_vote_multiplier(
                         intensity, self.protocol
                     )
-                except Exception:
+                except Exception as e:
+                    logger.warning("User vote multiplier failed, using 1.0: %s", e)
                     intensity_multiplier = 1.0
             else:
                 intensity_multiplier = 1.0

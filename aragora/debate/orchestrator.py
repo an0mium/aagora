@@ -187,6 +187,11 @@ class ArenaConfig:
     prompt_evolver: Optional[object] = None  # PromptEvolver for extracting winning patterns
     enable_prompt_evolution: bool = False  # Auto-create PromptEvolver if True
 
+    # Billing/usage tracking (multi-tenancy)
+    org_id: str = ""  # Organization ID for multi-tenancy
+    user_id: str = ""  # User ID for usage attribution
+    usage_tracker: Optional[object] = None  # UsageTracker for token usage
+
 
 class Arena:
     """
@@ -445,6 +450,11 @@ class Arena:
             use_performance_selection=config.use_performance_selection,
             prompt_evolver=config.prompt_evolver,
             enable_prompt_evolution=config.enable_prompt_evolution,
+            checkpoint_manager=config.checkpoint_manager,
+            enable_checkpointing=config.enable_checkpointing,
+            org_id=config.org_id,
+            user_id=config.user_id,
+            usage_tracker=config.usage_tracker,
         )
 
     def _init_core(
