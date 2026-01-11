@@ -547,25 +547,28 @@ class TestEdgeCases:
 
         assert result == {}
 
-    def test_duplicate_debate_id_updates(self, elo):
-        """Test that recording same debate_id updates existing record."""
-        elo.record_match(
+    def test_duplicate_debate_id_ignored(self, elo):
+        """Test that recording same debate_id is ignored (prevents double-counting)."""
+        result1 = elo.record_match(
             debate_id="duplicate",
             participants=["a", "b"],
             scores={"a": 1.0, "b": 0.0}
         )
         rating_a_first = elo.get_rating("a").elo
+        assert result1 != {}  # First call should return ELO changes
 
-        # Record same debate again (should update/replace)
-        elo.record_match(
+        # Record same debate again (should be ignored)
+        result2 = elo.record_match(
             debate_id="duplicate",
             participants=["a", "b"],
             scores={"a": 1.0, "b": 0.0}
         )
         rating_a_second = elo.get_rating("a").elo
 
-        # Rating should have changed (match recorded twice)
-        assert rating_a_second > rating_a_first
+        # Rating should NOT change (duplicate ignored)
+        assert rating_a_second == rating_a_first
+        # Second call should return cached ELO changes from first call
+        assert result2 == result1
 
     def test_confidence_weight_clamping(self, elo):
         """Test that confidence_weight is clamped to valid range."""

@@ -787,6 +787,21 @@ class EloSystem:
         if len(participants) < 2:
             return {}
 
+        # Check for duplicate match recording to prevent ELO accumulation bug
+        with self._db.connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT elo_changes FROM matches WHERE debate_id = ?",
+                (debate_id,),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                # Match already recorded - return cached ELO changes
+                logger.debug(
+                    "Skipping duplicate record_match for debate_id=%s", debate_id
+                )
+                return safe_json_loads(existing[0], {})
+
         # Determine winner (highest score)
         sorted_agents = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         if len(sorted_agents) < 2:
