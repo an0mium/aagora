@@ -166,6 +166,10 @@ class ArenaConfig:
     # Human-in-the-loop breakpoints
     breakpoint_manager: Optional[object] = None  # BreakpointManager
 
+    # Debate checkpointing for resume support
+    checkpoint_manager: Optional[object] = None  # CheckpointManager for pause/resume
+    enable_checkpointing: bool = False  # Auto-create CheckpointManager if True
+
     # Performance telemetry
     performance_monitor: Optional[object] = None  # AgentPerformanceMonitor
     enable_performance_monitor: bool = False
@@ -234,6 +238,8 @@ class Arena:
         breeding_threshold: float = 0.8,  # Min confidence to trigger evolution
         evidence_collector=None,  # Optional EvidenceCollector for auto-collecting evidence
         breakpoint_manager=None,  # Optional BreakpointManager for human-in-the-loop
+        checkpoint_manager=None,  # Optional CheckpointManager for debate resume
+        enable_checkpointing: bool = False,  # Auto-create CheckpointManager if True
         performance_monitor=None,  # Optional AgentPerformanceMonitor for telemetry
         enable_performance_monitor: bool = False,  # Auto-create PerformanceMonitor if True
         enable_telemetry: bool = False,  # Enable Prometheus/Blackbox telemetry emission
@@ -315,6 +321,8 @@ class Arena:
             breeding_threshold=breeding_threshold,
             evidence_collector=evidence_collector,
             breakpoint_manager=breakpoint_manager,
+            checkpoint_manager=checkpoint_manager,
+            enable_checkpointing=enable_checkpointing,
             performance_monitor=performance_monitor,
             enable_performance_monitor=enable_performance_monitor,
             enable_telemetry=enable_telemetry,
@@ -464,6 +472,8 @@ class Arena:
         breeding_threshold: float,
         evidence_collector,
         breakpoint_manager,
+        checkpoint_manager,
+        enable_checkpointing: bool,
         performance_monitor,
         enable_performance_monitor: bool,
         enable_telemetry: bool,
@@ -543,6 +553,18 @@ class Arena:
         self.breakpoint_manager = breakpoint_manager
         self.agent_selector = agent_selector
         self.use_performance_selection = use_performance_selection
+
+        # Checkpoint manager for debate resume support
+        if checkpoint_manager:
+            self.checkpoint_manager = checkpoint_manager
+        elif enable_checkpointing:
+            from aragora.debate.checkpoint import CheckpointManager, DatabaseCheckpointStore
+            self.checkpoint_manager = CheckpointManager(
+                store=DatabaseCheckpointStore()
+            )
+            logger.debug("[checkpoint] Auto-created CheckpointManager with database store")
+        else:
+            self.checkpoint_manager = None
 
         # Billing/usage tracking
         self.org_id = org_id
@@ -1366,6 +1388,39 @@ class Arena:
         Delegates to PromptBuilder for the actual implementation.
         """
         return self.prompt_builder.get_stance_guidance(agent)
+
+    async def _create_checkpoint(self, ctx, round_num: int) -> None:
+        """Create a checkpoint after a debate round.
+
+        Called by DebateRoundsPhase after each round completes.
+        Only checkpoints if should_checkpoint returns True.
+
+        Args:
+            ctx: DebateContext with current debate state
+            round_num: The round number that just completed
+        """
+        if not self.checkpoint_manager:
+            return
+
+        if not self.checkpoint_manager.should_checkpoint(ctx.debate_id, round_num):
+            return
+
+        try:
+            await self.checkpoint_manager.create_checkpoint(
+                debate_id=ctx.debate_id,
+                task=self.env.task,
+                current_round=round_num,
+                total_rounds=self.protocol.rounds,
+                phase="revision",
+                messages=ctx.result.messages,
+                critiques=ctx.result.critiques,
+                votes=ctx.result.votes,
+                agents=self.agents,
+                current_consensus=getattr(ctx.result, 'final_answer', None),
+            )
+            logger.debug(f"[checkpoint] Saved checkpoint after round {round_num}")
+        except Exception as e:
+            logger.warning(f"[checkpoint] Failed to create checkpoint: {e}")
 
     async def run(self, correlation_id: str = "") -> DebateResult:
         """Run the full debate and return results.

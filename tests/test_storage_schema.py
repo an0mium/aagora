@@ -271,12 +271,11 @@ class TestSchemaManager:
         initial = "CREATE TABLE test (id INTEGER PRIMARY KEY)"
         manager.register_migration(1, 2, sql="INVALID SQL SYNTAX")
 
-        manager.ensure_schema(initial_schema=initial)
-
+        # ensure_schema creates initial schema (v1) then tries migration (v1->v2) which fails
         with pytest.raises(sqlite3.OperationalError):
-            manager.ensure_schema()
+            manager.ensure_schema(initial_schema=initial)
 
-        # Version should still be 1 (migration failed)
+        # Version should still be 1 (migration failed, but initial schema succeeded)
         assert manager.get_version() == 1
 
     def test_validate_schema(self):

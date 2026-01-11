@@ -99,6 +99,11 @@ aragora/live/out/
 tsconfig.tsbuildinfo
 .env.production
 
+# Playwright E2E tests
+aragora/live/playwright-report/
+aragora/live/test-results/
+aragora/live/playwright/.cache/
+
 # Nomic loop state (runtime artifacts, not needed in git)
 # All .nomic state should be excluded - keep only schema/config templates
 .nomic/backups/

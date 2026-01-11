@@ -408,8 +408,9 @@ class WebhookDispatcher:
         if any(hostname_lower.endswith(suffix) for suffix in blocked_suffixes):
             return False, f"Internal hostname not allowed: {parsed.hostname}"
 
-        # Skip IP validation if localhost is allowed (for testing)
-        if self._allow_localhost:
+        # Skip IP validation only for actual localhost (for testing)
+        # Don't bypass ALL validation - only skip for specific localhost identifiers
+        if self._allow_localhost and hostname_lower in ('localhost', '127.0.0.1', '::1'):
             return True, ""
 
         # Try to resolve hostname and check all returned IPs (IPv4 and IPv6)

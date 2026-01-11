@@ -188,9 +188,47 @@ class TestRetrieveEndpoint:
 class TestConsolidateEndpoint:
     """Test /api/memory/continuum/consolidate endpoint."""
 
-    def test_consolidate_no_continuum(self, handler):
-        """Returns 503 when continuum memory not configured."""
+    def _make_auth_handler(self, authenticated=True):
+        """Create mock request handler with auth headers."""
+        mock_handler = Mock()
+        mock_handler.headers = {"Authorization": "Bearer test_token"} if authenticated else {}
+        return mock_handler
+
+    def test_consolidate_returns_405_on_get(self, handler):
+        """GET request returns 405 Method Not Allowed."""
         result = handler.handle("/api/memory/continuum/consolidate", {}, None)
+        assert result is not None
+        assert result.status_code == 405
+        body = json.loads(result.body)
+        assert "POST" in body.get("error", "")
+
+    def test_consolidate_requires_auth(self, mock_ctx):
+        """Returns 401 when not authenticated."""
+        mock_ctx["user_store"] = None
+        handler = MemoryHandler(mock_ctx)
+        mock_handler = self._make_auth_handler(authenticated=False)
+
+        with patch("aragora.billing.jwt_auth.extract_user_from_request") as mock_extract:
+            mock_auth_ctx = Mock()
+            mock_auth_ctx.is_authenticated = False
+            mock_extract.return_value = mock_auth_ctx
+            result = handler.handle_post("/api/memory/continuum/consolidate", {}, mock_handler)
+
+        assert result is not None
+        assert result.status_code == 401
+
+    def test_consolidate_no_continuum(self, mock_ctx):
+        """Returns 503 when continuum memory not configured."""
+        mock_ctx["user_store"] = Mock()
+        handler = MemoryHandler(mock_ctx)
+        mock_handler = self._make_auth_handler()
+
+        with patch("aragora.billing.jwt_auth.extract_user_from_request") as mock_extract:
+            mock_auth_ctx = Mock()
+            mock_auth_ctx.is_authenticated = True
+            mock_extract.return_value = mock_auth_ctx
+            result = handler.handle_post("/api/memory/continuum/consolidate", {}, mock_handler)
+
         assert result is not None
         assert result.status_code == 503
 
@@ -203,9 +241,15 @@ class TestConsolidateEndpoint:
             "consolidated": 2,
         }
         mock_ctx["continuum_memory"] = mock_continuum
+        mock_ctx["user_store"] = Mock()
         handler = MemoryHandler(mock_ctx)
+        mock_handler = self._make_auth_handler()
 
-        result = handler.handle("/api/memory/continuum/consolidate", {}, None)
+        with patch("aragora.billing.jwt_auth.extract_user_from_request") as mock_extract:
+            mock_auth_ctx = Mock()
+            mock_auth_ctx.is_authenticated = True
+            mock_extract.return_value = mock_auth_ctx
+            result = handler.handle_post("/api/memory/continuum/consolidate", {}, mock_handler)
 
         assert result is not None
         assert result.status_code == 200
@@ -221,9 +265,15 @@ class TestConsolidateEndpoint:
         mock_continuum = Mock()
         mock_continuum.consolidate.return_value = {}
         mock_ctx["continuum_memory"] = mock_continuum
+        mock_ctx["user_store"] = Mock()
         handler = MemoryHandler(mock_ctx)
+        mock_handler = self._make_auth_handler()
 
-        result = handler.handle("/api/memory/continuum/consolidate", {}, None)
+        with patch("aragora.billing.jwt_auth.extract_user_from_request") as mock_extract:
+            mock_auth_ctx = Mock()
+            mock_auth_ctx.is_authenticated = True
+            mock_extract.return_value = mock_auth_ctx
+            result = handler.handle_post("/api/memory/continuum/consolidate", {}, mock_handler)
 
         body = json.loads(result.body)
         assert "duration_seconds" in body
@@ -242,11 +292,19 @@ class TestMemoryNotConfigured:
         assert result.status_code == 503
 
     def test_consolidate_unavailable_system(self, mock_ctx):
-        """Returns 503 when continuum system unavailable."""
+        """Returns 503 when continuum system unavailable (via POST with auth)."""
         mock_ctx["continuum_memory"] = None
+        mock_ctx["user_store"] = Mock()
         handler = MemoryHandler(mock_ctx)
+        mock_handler = Mock()
+        mock_handler.headers = {"Authorization": "Bearer test"}
 
-        result = handler.handle("/api/memory/continuum/consolidate", {}, None)
+        with patch("aragora.billing.jwt_auth.extract_user_from_request") as mock_extract:
+            mock_auth_ctx = Mock()
+            mock_auth_ctx.is_authenticated = True
+            mock_extract.return_value = mock_auth_ctx
+            result = handler.handle_post("/api/memory/continuum/consolidate", {}, mock_handler)
+
         assert result.status_code == 503
 
 
@@ -290,13 +348,20 @@ class TestErrorHandling:
         assert result.status_code == 500
 
     def test_consolidate_handles_exception(self, mock_ctx):
-        """Consolidate handles exceptions gracefully."""
+        """Consolidate handles exceptions gracefully (via POST with auth)."""
         mock_continuum = Mock()
         mock_continuum.consolidate.side_effect = Exception("Test error")
         mock_ctx["continuum_memory"] = mock_continuum
+        mock_ctx["user_store"] = Mock()
         handler = MemoryHandler(mock_ctx)
+        mock_handler = Mock()
+        mock_handler.headers = {"Authorization": "Bearer test"}
 
-        result = handler.handle("/api/memory/continuum/consolidate", {}, None)
+        with patch("aragora.billing.jwt_auth.extract_user_from_request") as mock_extract:
+            mock_auth_ctx = Mock()
+            mock_auth_ctx.is_authenticated = True
+            mock_extract.return_value = mock_auth_ctx
+            result = handler.handle_post("/api/memory/continuum/consolidate", {}, mock_handler)
 
         assert result.status_code == 500
 
@@ -337,7 +402,7 @@ class TestMemoryPressureEndpoint:
         body = json.loads(result.body)
         assert body["status"] == "normal"
         assert body["pressure"] == 0.3
-        assert body["auto_cleanup_triggered"] is False
+        assert body["cleanup_recommended"] is False
 
     def test_pressure_returns_elevated_status(self, mock_ctx):
         """Returns elevated status when pressure is moderate."""
@@ -365,12 +430,11 @@ class TestMemoryPressureEndpoint:
         body = json.loads(result.body)
         assert body["status"] == "high"
 
-    def test_pressure_triggers_cleanup_when_critical(self, mock_ctx):
-        """Auto-triggers cleanup when pressure > 0.9."""
+    def test_pressure_recommends_cleanup_when_critical(self, mock_ctx):
+        """Recommends cleanup when pressure > 0.9 (no auto-trigger for idempotent GET)."""
         mock_continuum = Mock()
         mock_continuum.get_memory_pressure.return_value = 0.95
         mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 500}
-        mock_continuum.cleanup_expired_memories.return_value = {"cleaned": 50}
         mock_ctx["continuum_memory"] = mock_continuum
         handler = MemoryHandler(mock_ctx)
 
@@ -378,9 +442,9 @@ class TestMemoryPressureEndpoint:
 
         body = json.loads(result.body)
         assert body["status"] == "critical"
-        assert body["auto_cleanup_triggered"] is True
-        assert body["cleanup_result"] == {"cleaned": 50}
-        mock_continuum.cleanup_expired_memories.assert_called_once_with(archive=True)
+        assert body["cleanup_recommended"] is True
+        # GET endpoint should be idempotent - no cleanup call
+        mock_continuum.cleanup_expired_memories.assert_not_called()
 
     def test_pressure_includes_tier_utilization(self, mock_ctx):
         """Response includes per-tier utilization breakdown."""
@@ -406,19 +470,17 @@ class TestMemoryPressureEndpoint:
         assert body["tier_utilization"]["FAST"]["limit"] == 100
         assert body["tier_utilization"]["FAST"]["utilization"] == 0.5
 
-    def test_pressure_handles_cleanup_failure(self, mock_ctx):
-        """Cleanup failure doesn't fail the request."""
+    def test_pressure_does_not_recommend_cleanup_when_normal(self, mock_ctx):
+        """Does not recommend cleanup when pressure is below threshold."""
         mock_continuum = Mock()
-        mock_continuum.get_memory_pressure.return_value = 0.95
-        mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 500}
-        mock_continuum.cleanup_expired_memories.side_effect = Exception("Cleanup failed")
+        mock_continuum.get_memory_pressure.return_value = 0.5
+        mock_continuum.get_stats.return_value = {"by_tier": {}, "total_memories": 100}
         mock_ctx["continuum_memory"] = mock_continuum
         handler = MemoryHandler(mock_ctx)
 
         result = handler.handle("/api/memory/pressure", {}, None)
 
-        # Should still succeed
         assert result.status_code == 200
         body = json.loads(result.body)
-        assert body["status"] == "critical"
-        assert body["auto_cleanup_triggered"] is False  # Failed, so not triggered
+        assert body["status"] == "elevated"
+        assert body["cleanup_recommended"] is False

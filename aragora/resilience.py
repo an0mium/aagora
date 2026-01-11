@@ -527,3 +527,177 @@ class CircuitBreaker:
             logger.debug(f"Circuit breaker (sync) recorded failure for {name}: {type(e).__name__}: {e}")
             self.record_failure(entity)
             raise
+
+
+# =============================================================================
+# SQLite Persistence for Circuit Breaker State
+# =============================================================================
+
+_DB_PATH: Optional[str] = None
+
+
+def init_circuit_breaker_persistence(db_path: str = ".data/circuit_breaker.db") -> None:
+    """Initialize SQLite database for circuit breaker persistence.
+
+    Creates the database and table if they don't exist.
+
+    Args:
+        db_path: Path to SQLite database file
+    """
+    import sqlite3
+    from pathlib import Path
+
+    global _DB_PATH
+    _DB_PATH = db_path
+
+    # Ensure directory exists
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS circuit_breakers (
+                name TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
+                failure_threshold INTEGER NOT NULL,
+                cooldown_seconds REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_circuit_breakers_updated
+            ON circuit_breakers(updated_at)
+        """)
+        conn.commit()
+
+    logger.info(f"Circuit breaker persistence initialized: {db_path}")
+
+
+def persist_circuit_breaker(name: str, cb: CircuitBreaker) -> None:
+    """Persist a single circuit breaker to SQLite.
+
+    Args:
+        name: Circuit breaker name/identifier
+        cb: CircuitBreaker instance to persist
+    """
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    if not _DB_PATH:
+        return
+
+    try:
+        state = cb.to_dict()
+        state_json = json.dumps(state)
+
+        with sqlite3.connect(_DB_PATH) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO circuit_breakers
+                (name, state_json, failure_threshold, cooldown_seconds, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                name,
+                state_json,
+                cb.failure_threshold,
+                cb.cooldown_seconds,
+                datetime.now().isoformat(),
+            ))
+            conn.commit()
+    except Exception as e:
+        logger.debug(f"Failed to persist circuit breaker {name}: {e}")
+
+
+def persist_all_circuit_breakers() -> int:
+    """Persist all registered circuit breakers to SQLite.
+
+    Returns:
+        Number of circuit breakers persisted
+    """
+    if not _DB_PATH:
+        return 0
+
+    with _circuit_breakers_lock:
+        count = 0
+        for name, cb in _circuit_breakers.items():
+            persist_circuit_breaker(name, cb)
+            count += 1
+
+    logger.debug(f"Persisted {count} circuit breakers")
+    return count
+
+
+def load_circuit_breakers() -> int:
+    """Load circuit breakers from SQLite into the global registry.
+
+    Returns:
+        Number of circuit breakers loaded
+    """
+    import json
+    import sqlite3
+
+    if not _DB_PATH:
+        return 0
+
+    try:
+        with sqlite3.connect(_DB_PATH) as conn:
+            cursor = conn.execute("""
+                SELECT name, state_json, failure_threshold, cooldown_seconds
+                FROM circuit_breakers
+            """)
+
+            count = 0
+            with _circuit_breakers_lock:
+                for row in cursor.fetchall():
+                    name, state_json, threshold, cooldown = row
+                    try:
+                        state = json.loads(state_json)
+                        cb = CircuitBreaker.from_dict(
+                            state,
+                            failure_threshold=threshold,
+                            cooldown_seconds=cooldown,
+                        )
+                        _circuit_breakers[name] = cb
+                        count += 1
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.debug(f"Failed to load circuit breaker {name}: {e}")
+
+            logger.info(f"Loaded {count} circuit breakers from {_DB_PATH}")
+            return count
+
+    except Exception as e:
+        logger.warning(f"Failed to load circuit breakers: {e}")
+        return 0
+
+
+def cleanup_stale_persisted(max_age_hours: float = 72.0) -> int:
+    """Remove persisted circuit breakers older than max_age_hours.
+
+    Args:
+        max_age_hours: Maximum age in hours before deletion
+
+    Returns:
+        Number of stale entries deleted
+    """
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    if not _DB_PATH:
+        return 0
+
+    try:
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+
+        with sqlite3.connect(_DB_PATH) as conn:
+            cursor = conn.execute("""
+                DELETE FROM circuit_breakers WHERE updated_at < ?
+            """, (cutoff,))
+            conn.commit()
+            deleted = cursor.rowcount
+
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} stale persisted circuit breakers")
+        return deleted
+
+    except Exception as e:
+        logger.debug(f"Failed to cleanup stale circuit breakers: {e}")
+        return 0

@@ -331,13 +331,24 @@ def setup_default_tasks(
         run_on_startup=False,
     )
 
-    # Circuit breaker cleanup - runs every hour
+    # Circuit breaker cleanup and persistence - runs every hour
     def circuit_breaker_cleanup():
         try:
-            from aragora.resilience import prune_circuit_breakers
+            from aragora.resilience import (
+                prune_circuit_breakers,
+                persist_all_circuit_breakers,
+                cleanup_stale_persisted,
+            )
+            # Prune in-memory stale circuit breakers
             cleaned = prune_circuit_breakers()
             if cleaned > 0:
                 logger.info("Cleaned up %d stale circuit breakers", cleaned)
+            # Persist current state to SQLite
+            persisted = persist_all_circuit_breakers()
+            if persisted > 0:
+                logger.debug("Persisted %d circuit breakers to disk", persisted)
+            # Cleanup old persisted entries
+            cleanup_stale_persisted(max_age_hours=72.0)
         except ImportError:
             pass  # resilience module may not be available
         except Exception as e:

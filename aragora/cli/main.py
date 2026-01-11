@@ -597,6 +597,36 @@ def cmd_serve(args: argparse.Namespace) -> None:
         print("\n\nServer stopped.")
 
 
+def cmd_init(args: argparse.Namespace) -> None:
+    """Handle 'init' command - project scaffolding."""
+    from aragora.cli.init import cmd_init as init_handler
+    init_handler(args)
+
+
+def cmd_repl(args: argparse.Namespace) -> None:
+    """Handle 'repl' command - interactive debate mode."""
+    from aragora.cli.repl import cmd_repl as repl_handler
+    repl_handler(args)
+
+
+def cmd_config(args: argparse.Namespace) -> None:
+    """Handle 'config' command - manage configuration."""
+    from aragora.cli.config import cmd_config as config_handler
+    config_handler(args)
+
+
+def cmd_replay(args: argparse.Namespace) -> None:
+    """Handle 'replay' command - replay stored debates."""
+    from aragora.cli.replay import cmd_replay as replay_handler
+    replay_handler(args)
+
+
+def cmd_bench(args: argparse.Namespace) -> None:
+    """Handle 'bench' command - benchmark agents."""
+    from aragora.cli.bench import cmd_bench as bench_handler
+    bench_handler(args)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Aragora - Multi-Agent Debate Framework",
@@ -704,6 +734,57 @@ Examples:
     serve_parser.add_argument("--api-port", type=int, default=8080, help="HTTP API port")
     serve_parser.add_argument("--host", default="localhost", help="Host to bind to")
     serve_parser.set_defaults(func=cmd_serve)
+
+    # Init command (project scaffolding)
+    init_parser = subparsers.add_parser("init", help="Initialize Aragora project")
+    init_parser.add_argument("directory", nargs="?", help="Target directory (default: current)")
+    init_parser.add_argument("--force", "-f", action="store_true", help="Overwrite existing files")
+    init_parser.add_argument("--no-git", action="store_true", help="Don't modify .gitignore")
+    init_parser.set_defaults(func=cmd_init)
+
+    # REPL command (interactive mode)
+    repl_parser = subparsers.add_parser("repl", help="Interactive debate mode")
+    repl_parser.add_argument(
+        "--agents", "-a", default="anthropic-api,openai-api",
+        help="Comma-separated agents for debates"
+    )
+    repl_parser.add_argument("--rounds", "-r", type=int, default=3, help="Debate rounds")
+    repl_parser.set_defaults(func=cmd_repl)
+
+    # Config command (manage settings)
+    config_parser = subparsers.add_parser("config", help="Manage configuration")
+    config_parser.add_argument(
+        "action", nargs="?", default="show",
+        choices=["show", "get", "set", "env", "path"],
+        help="Config action"
+    )
+    config_parser.add_argument("key", nargs="?", help="Config key (for get/set)")
+    config_parser.add_argument("value", nargs="?", help="Config value (for set)")
+    config_parser.set_defaults(func=cmd_config)
+
+    # Replay command (replay stored debates)
+    replay_parser = subparsers.add_parser("replay", help="Replay stored debates")
+    replay_parser.add_argument(
+        "action", nargs="?", default="list",
+        choices=["list", "show", "play"],
+        help="Replay action"
+    )
+    replay_parser.add_argument("id", nargs="?", help="Replay ID (for show/play)")
+    replay_parser.add_argument("--directory", "-d", help="Replays directory")
+    replay_parser.add_argument("--limit", "-n", type=int, default=10, help="Max replays to list")
+    replay_parser.add_argument("--speed", "-s", type=float, default=1.0, help="Playback speed")
+    replay_parser.set_defaults(func=cmd_replay)
+
+    # Bench command (benchmark agents)
+    bench_parser = subparsers.add_parser("bench", help="Benchmark agents")
+    bench_parser.add_argument(
+        "--agents", "-a", default="anthropic-api,openai-api",
+        help="Comma-separated agents to benchmark"
+    )
+    bench_parser.add_argument("--iterations", "-n", type=int, default=3, help="Iterations per task")
+    bench_parser.add_argument("--task", "-t", help="Custom benchmark task")
+    bench_parser.add_argument("--quick", "-q", action="store_true", help="Quick mode (1 iteration)")
+    bench_parser.set_defaults(func=cmd_bench)
 
     args = parser.parse_args()
 

@@ -67,6 +67,7 @@ class DebateRoundsPhase:
         check_early_stopping: Optional[Callable] = None,
         inject_challenge: Optional[Callable] = None,  # Callback to inject trickster challenges
         refresh_evidence: Optional[Callable] = None,  # Callback to refresh evidence during rounds
+        checkpoint_callback: Optional[Callable] = None,  # Async callback to save checkpoint after each round
     ):
         """
         Initialize the debate rounds phase.
@@ -94,6 +95,7 @@ class DebateRoundsPhase:
             check_early_stopping: Async callback for early stopping
             inject_challenge: Callback to inject trickster challenge into context
             refresh_evidence: Async callback to refresh evidence based on round claims
+            checkpoint_callback: Async callback to save checkpoint after each round
         """
         self.protocol = protocol
         self.circuit_breaker = circuit_breaker
@@ -119,6 +121,7 @@ class DebateRoundsPhase:
         self._check_early_stopping = check_early_stopping
         self._inject_challenge = inject_challenge
         self._refresh_evidence = refresh_evidence
+        self._checkpoint_callback = checkpoint_callback
 
         # Internal state
         self._partial_messages: list["Message"] = []
@@ -239,6 +242,13 @@ class DebateRoundsPhase:
             self._track_novelty(ctx, round_num)
 
             result.rounds_used = round_num
+
+            # Create checkpoint after each round
+            if self._checkpoint_callback:
+                try:
+                    await self._checkpoint_callback(ctx, round_num)
+                except Exception as e:
+                    logger.debug(f"Checkpoint failed for round {round_num}: {e}")
 
             # Convergence detection
             should_break = self._check_convergence(ctx, round_num)

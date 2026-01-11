@@ -400,12 +400,12 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):  # type: ignore[
             if token.startswith("ara_"):
                 return None  # API key, skip JWT-based check
 
-            # Validate JWT and get payload
+            # Validate JWT and get payload (returns JWTPayload dataclass)
             payload = validate_access_token(token)
             if not payload:
                 return None  # Invalid token, skip check
 
-            org_id = payload.get("org_id")
+            org_id = payload.org_id
             if not org_id:
                 return None  # No org in token, skip check
 
@@ -742,8 +742,9 @@ class AiohttpUnifiedServer(ServerBase, StreamAPIHandlersMixin):  # type: ignore[
             if auth_header.startswith("Bearer ") and not auth_header[7:].startswith("ara_"):
                 payload = validate_access_token(auth_header[7:])
                 if payload:
-                    user_id = payload.get("sub", "")
-                    org_id = payload.get("org_id", "")
+                    # JWTPayload is a dataclass, use attribute access not dict
+                    user_id = payload.sub or ""
+                    org_id = payload.org_id or ""
         except ImportError:
             pass
 

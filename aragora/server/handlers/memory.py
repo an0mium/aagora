@@ -62,16 +62,22 @@ class MemoryHandler(BaseHandler):
                 return True
         return False
 
+    def _get_user_store(self):
+        """Get user store from context."""
+        return self.ctx.get("user_store")
+
     def handle(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
         """Route memory requests to appropriate handler methods."""
         if path == "/api/memory/continuum/retrieve":
             return self._get_continuum_memories(query_params)
 
-        if path == "/api/memory/continuum/consolidate":
-            return self._trigger_consolidation()
-
-        if path == "/api/memory/continuum/cleanup":
-            return self._trigger_cleanup(query_params)
+        # POST-only endpoints - return 405 Method Not Allowed for GET
+        if path in ("/api/memory/continuum/consolidate", "/api/memory/continuum/cleanup"):
+            return error_response(
+                "Use POST method for this endpoint",
+                405,
+                headers={"Allow": "POST"},
+            )
 
         if path == "/api/memory/tier-stats":
             return self._get_tier_stats()
@@ -81,6 +87,28 @@ class MemoryHandler(BaseHandler):
 
         if path == "/api/memory/pressure":
             return self._get_memory_pressure()
+
+        return None
+
+    def handle_post(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
+        """Route POST memory requests to state-mutating methods with auth."""
+        from aragora.billing.jwt_auth import extract_user_from_request
+
+        if path == "/api/memory/continuum/consolidate":
+            # Require authentication for state mutation
+            user_store = self._get_user_store()
+            auth_ctx = extract_user_from_request(handler, user_store)
+            if not auth_ctx.is_authenticated:
+                return error_response("Authentication required", 401)
+            return self._trigger_consolidation()
+
+        if path == "/api/memory/continuum/cleanup":
+            # Require authentication for state mutation
+            user_store = self._get_user_store()
+            auth_ctx = extract_user_from_request(handler, user_store)
+            if not auth_ctx.is_authenticated:
+                return error_response("Authentication required", 401)
+            return self._trigger_cleanup(query_params)
 
         return None
 
@@ -298,26 +326,16 @@ class MemoryHandler(BaseHandler):
         else:
             status = "critical"
 
-        # Auto-trigger cleanup if pressure is critical
-        auto_cleanup_triggered = False
-        cleanup_result = None
-        if pressure > 0.9:
-            try:
-                cleanup_result = continuum.cleanup_expired_memories(archive=True)
-                auto_cleanup_triggered = True
-            except Exception:
-                pass  # Don't fail the request if cleanup fails
+        # Note: GET endpoints should be idempotent - no auto-cleanup here.
+        # Use POST /api/memory/continuum/cleanup to trigger cleanup explicitly.
 
         response_data = {
             "pressure": round(pressure, 3),
             "status": status,
             "tier_utilization": tier_utilization,
             "total_memories": stats.get("total_memories", 0),
-            "auto_cleanup_triggered": auto_cleanup_triggered,
+            "cleanup_recommended": pressure > 0.9,  # Hint to caller
         }
-
-        if cleanup_result is not None:
-            response_data["cleanup_result"] = cleanup_result
 
         return json_response(response_data)
 

@@ -1370,6 +1370,21 @@ class UnifiedServer:
         except ImportError:
             pass  # sentry-sdk not installed
 
+        # Initialize circuit breaker persistence
+        try:
+            from aragora.resilience import (
+                init_circuit_breaker_persistence,
+                load_circuit_breakers,
+            )
+            data_dir = self.nomic_dir or Path(".data")
+            db_path = str(data_dir / "circuit_breaker.db")
+            init_circuit_breaker_persistence(db_path)
+            loaded = load_circuit_breakers()
+            if loaded > 0:
+                logger.info(f"Restored {loaded} circuit breaker states from disk")
+        except Exception as e:
+            logger.debug(f"Circuit breaker persistence not available: {e}")
+
         # Initialize background tasks for maintenance
         try:
             from aragora.server.background import get_background_manager, setup_default_tasks
