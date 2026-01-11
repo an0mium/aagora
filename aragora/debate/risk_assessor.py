@@ -11,7 +11,10 @@ Identifies potential risks in debate domains and topics:
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
+
+# Type alias for pattern configuration
+PatternConfig = dict[str, Any]
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +96,7 @@ class RiskAssessor:
         Args:
             custom_patterns: Additional risk patterns to check
         """
-        self.patterns = {**RISK_PATTERNS}
+        self.patterns: dict[str, PatternConfig] = {**RISK_PATTERNS}
         if custom_patterns:
             self.patterns.update(custom_patterns)
 

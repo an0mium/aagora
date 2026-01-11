@@ -689,8 +689,8 @@ class DatabaseCheckpointStore(CheckpointStore):
                 conn = self._pool.pop()
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Error closing pooled connection: {e}")
 
     def get_pool_stats(self) -> dict:
         """Get connection pool statistics.

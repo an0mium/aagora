@@ -944,14 +944,18 @@ class ContinuumMemory:
             cursor = conn.cursor()
 
             # Collect promotion candidates for all tier pairs
+            # Limit to 1000 per tier to prevent memory issues with large databases
+            batch_limit = 1000
             for from_tier, to_tier in promotion_pairs:
                 config = TIER_CONFIGS[from_tier]
                 cursor.execute(
                     """
                     SELECT id FROM continuum_memory
                     WHERE tier = ? AND surprise_score > ?
+                    ORDER BY surprise_score DESC
+                    LIMIT ?
                     """,
-                    (from_tier.value, config.promotion_threshold),
+                    (from_tier.value, config.promotion_threshold, batch_limit),
                 )
                 ids = [row[0] for row in cursor.fetchall()]
                 if ids:
@@ -966,8 +970,10 @@ class ContinuumMemory:
                     WHERE tier = ?
                       AND (1.0 - surprise_score) > ?
                       AND update_count > 10
+                    ORDER BY updated_at ASC
+                    LIMIT ?
                     """,
-                    (from_tier.value, config.demotion_threshold),
+                    (from_tier.value, config.demotion_threshold, batch_limit),
                 )
                 ids = [row[0] for row in cursor.fetchall()]
                 if ids:

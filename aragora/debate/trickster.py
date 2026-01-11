@@ -34,7 +34,6 @@ from aragora.debate.evidence_quality import (
     HollowConsensusAlert,
     HollowConsensusDetector,
 )
-from aragora.debate.evidence_linker import EvidenceClaimLinker
 from aragora.debate.cross_proposal_analyzer import (
     CrossProposalAnalyzer,
     CrossProposalAnalysis,
@@ -42,6 +41,20 @@ from aragora.debate.cross_proposal_analyzer import (
 from aragora.debate.roles import CognitiveRole, RoleAssignment, ROLE_PROMPTS
 
 logger = logging.getLogger(__name__)
+
+
+def _get_evidence_linker_class():
+    """Lazy import of EvidenceClaimLinker to avoid scipy/numpy import failures.
+
+    Returns:
+        EvidenceClaimLinker class if available, None otherwise
+    """
+    try:
+        from aragora.debate.evidence_linker import EvidenceClaimLinker
+        return EvidenceClaimLinker
+    except ImportError as e:
+        logger.debug(f"EvidenceClaimLinker not available: {e}")
+        return None
 
 
 class InterventionType(Enum):
@@ -130,7 +143,7 @@ class EvidencePoweredTrickster:
         config: Optional[TricksterConfig] = None,
         on_intervention: Optional[Callable[[TricksterIntervention], None]] = None,
         on_alert: Optional[Callable[[HollowConsensusAlert], None]] = None,
-        linker: Optional[EvidenceClaimLinker] = None,
+        linker: Optional[Any] = None,
     ):
         """
         Initialize the trickster.
@@ -151,8 +164,14 @@ class EvidencePoweredTrickster:
             min_quality_threshold=self.config.min_quality_threshold,
         )
 
-        # New semantic evidence-claim linking
-        self._linker = linker or EvidenceClaimLinker()
+        # Lazy load EvidenceClaimLinker to avoid scipy/numpy import failures
+        self._linker = linker
+        if self._linker is None:
+            EvidenceClaimLinker = _get_evidence_linker_class()
+            if EvidenceClaimLinker is not None:
+                self._linker = EvidenceClaimLinker()
+
+        # CrossProposalAnalyzer can work with None linker
         self._cross_analyzer = CrossProposalAnalyzer(self._linker)
 
     def check_and_intervene(

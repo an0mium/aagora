@@ -451,8 +451,8 @@ and building on others' ideas."""
                         if summary.total_predictions >= 5:
                             accuracy = 1.0 - summary.brier_score  # Convert Brier to accuracy
                             calib_str = f", {accuracy:.0%} calibration"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to get calibration summary for {name}: {e}")
 
                 lines.append(f"  {rank}. {name}: {elo:.0f} ELO ({total} debates{calib_str}){marker}")
 

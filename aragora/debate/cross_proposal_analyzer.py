@@ -16,16 +16,36 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
-from aragora.debate.evidence_linker import (
-    EvidenceClaimLinker,
-    EvidenceLink,
-    EvidenceCoverageResult,
-)
 from aragora.debate.evidence_quality import EvidenceType
 
 logger = logging.getLogger(__name__)
+
+
+# Lazy import to avoid scipy/numpy import failures
+_evidence_linker_module = None
+
+
+def _get_evidence_linker_module():
+    """Lazy import of evidence_linker module."""
+    global _evidence_linker_module
+    if _evidence_linker_module is None:
+        try:
+            from aragora.debate import evidence_linker as _module
+            _evidence_linker_module = _module
+        except ImportError as e:
+            logger.debug(f"evidence_linker module not available: {e}")
+            return None
+    return _evidence_linker_module
+
+
+def _get_evidence_linker_class():
+    """Get EvidenceClaimLinker class if available."""
+    module = _get_evidence_linker_module()
+    if module:
+        return module.EvidenceClaimLinker
+    return None
 
 
 @dataclass
@@ -132,7 +152,7 @@ class CrossProposalAnalyzer:
 
     def __init__(
         self,
-        linker: Optional[EvidenceClaimLinker] = None,
+        linker: Optional[Any] = None,
         min_redundancy_similarity: float = 0.7,
         min_claim_overlap: float = 0.5,
     ):
@@ -144,7 +164,12 @@ class CrossProposalAnalyzer:
             min_redundancy_similarity: Threshold for redundancy detection
             min_claim_overlap: Threshold for claim overlap detection
         """
-        self.linker = linker or EvidenceClaimLinker()
+        # Lazy load EvidenceClaimLinker to avoid scipy/numpy import failures
+        self.linker = linker
+        if self.linker is None:
+            EvidenceClaimLinker = _get_evidence_linker_class()
+            if EvidenceClaimLinker is not None:
+                self.linker = EvidenceClaimLinker()
         self.min_redundancy_similarity = min_redundancy_similarity
         self.min_claim_overlap = min_claim_overlap
 
@@ -161,9 +186,14 @@ class CrossProposalAnalyzer:
         if not proposals or len(proposals) < 2:
             return self._empty_analysis()
 
+        # If linker not available (ML dependencies missing), return empty analysis
+        if self.linker is None:
+            logger.debug("EvidenceClaimLinker not available, skipping analysis")
+            return self._empty_analysis()
+
         # Get evidence coverage for each agent
-        agent_coverage: dict[str, EvidenceCoverageResult] = {}
-        agent_links: dict[str, list[EvidenceLink]] = {}
+        agent_coverage: dict[str, Any] = {}
+        agent_links: dict[str, list] = {}
 
         for agent, text in proposals.items():
             coverage = self.linker.compute_evidence_coverage(text)

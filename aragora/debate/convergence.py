@@ -862,8 +862,8 @@ class ConvergenceDetector:
             return backend
         except ImportError as e:
             logger.debug(f"sentence-transformers not available: {e}")
-        except RuntimeError as e:
-            # RuntimeError can occur from transformers/Keras compatibility issues
+        except (RuntimeError, AttributeError) as e:
+            # RuntimeError/AttributeError: transformers/scipy/numpy compatibility issues
             logger.debug(f"sentence-transformers failed to initialize: {e}")
         except OSError as e:
             # OSError can occur when model files are corrupted or missing
@@ -874,8 +874,9 @@ class ConvergenceDetector:
             backend = TFIDFBackend()
             logger.info("Using TFIDFBackend (good accuracy)")
             return backend
-        except ImportError as e:
-            logger.debug(f"scikit-learn not available: {e}")
+        except (ImportError, AttributeError, RuntimeError) as e:
+            # AttributeError/RuntimeError: scipy/numpy version mismatch
+            logger.debug(f"scikit-learn/scipy not available: {e}")
 
         # Fallback to Jaccard (always available)
         logger.info("Using JaccardBackend (fallback)")

@@ -10,8 +10,11 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 from collections import defaultdict
+
+# Type alias for strategy template
+StrategyTemplate = dict[str, str | list[str]]
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +313,7 @@ class StrategyIdentifier:
     recurring successful strategies.
     """
 
-    STRATEGY_TEMPLATES = {
+    STRATEGY_TEMPLATES: dict[str, StrategyTemplate] = {
         "evidence_based": {
             "name": "Evidence-Based Argumentation",
             "description": "Relies heavily on evidence, citations, and data",

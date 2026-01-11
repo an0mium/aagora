@@ -1082,8 +1082,8 @@ class ConsensusPhase:
         if self._extract_debate_domain:
             try:
                 domain = self._extract_debate_domain()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to extract debate domain: {e}")
 
         # Process verification results for each agent
         for agent_name, verification_data in result.verification_results.items():

@@ -9,8 +9,8 @@ Phase 4: Verify changes work
 - Evidence staleness check
 """
 
+import asyncio
 import logging
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -79,13 +79,13 @@ class VerifyPhase:
         checks = []
 
         # 1. Python syntax check
-        checks.append(self._check_syntax())
+        checks.append(await self._check_syntax())
 
         # 2. Import check
-        checks.append(self._check_imports())
+        checks.append(await self._check_imports())
 
         # 3. Run tests
-        checks.append(self._run_tests())
+        checks.append(await self._run_tests())
 
         all_passed = all(c.get("passed", False) for c in checks)
 
@@ -122,78 +122,91 @@ class VerifyPhase:
             syntax_valid=checks[0].get("passed", False) if checks else False,
         )
 
-    def _check_syntax(self) -> dict:
+    async def _check_syntax(self) -> dict:
         """Check Python syntax."""
         self._log("  Checking syntax...")
         try:
-            result = subprocess.run(
-                ["python", "-m", "py_compile", "aragora/__init__.py"],
+            proc = await asyncio.create_subprocess_exec(
+                "python", "-m", "py_compile", "aragora/__init__.py",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            passed = result.returncode == 0
+            _, stderr = await proc.communicate()
+            passed = proc.returncode == 0
+            stderr_text = stderr.decode() if stderr else ""
             check = {
                 "check": "syntax",
                 "passed": passed,
-                "output": result.stderr,
+                "output": stderr_text,
             }
             self._log(f"    {'passed' if passed else 'FAILED'} syntax")
-            self._stream_emit("on_verification_result", "syntax", passed, result.stderr if result.stderr else "")
+            self._stream_emit("on_verification_result", "syntax", passed, stderr_text)
             return check
         except Exception as e:
             self._log(f"    FAILED syntax: {e}")
             self._stream_emit("on_verification_result", "syntax", False, str(e))
             return {"check": "syntax", "passed": False, "error": str(e)}
 
-    def _check_imports(self) -> dict:
+    async def _check_imports(self) -> dict:
         """Check that aragora can be imported."""
         self._log("  Checking imports...")
         try:
-            result = subprocess.run(
-                ["python", "-c", "import aragora; print('OK')"],
+            proc = await asyncio.create_subprocess_exec(
+                "python", "-c", "import aragora; print('OK')",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
-                timeout=180,  # 3 min timeout
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            passed = "OK" in result.stdout
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
+            stdout_text = stdout.decode() if stdout else ""
+            stderr_text = stderr.decode() if stderr else ""
+            passed = "OK" in stdout_text
             check = {
                 "check": "import",
                 "passed": passed,
-                "output": result.stderr if result.returncode != 0 else "",
+                "output": stderr_text if proc.returncode != 0 else "",
             }
             self._log(f"    {'passed' if passed else 'FAILED'} import")
-            self._stream_emit("on_verification_result", "import", passed, result.stderr if result.stderr else "")
+            self._stream_emit("on_verification_result", "import", passed, stderr_text)
             return check
+        except asyncio.TimeoutError:
+            self._log("    FAILED import: timeout")
+            self._stream_emit("on_verification_result", "import", False, "timeout")
+            return {"check": "import", "passed": False, "error": "timeout"}
         except Exception as e:
             self._log(f"    FAILED import: {e}")
             self._stream_emit("on_verification_result", "import", False, str(e))
             return {"check": "import", "passed": False, "error": str(e)}
 
-    def _run_tests(self) -> dict:
+    async def _run_tests(self) -> dict:
         """Run pytest tests."""
         self._log("  Running tests...")
         try:
-            result = subprocess.run(
-                ["python", "-m", "pytest", "tests/", "-x", "--tb=short", "-q"],
+            proc = await asyncio.create_subprocess_exec(
+                "python", "-m", "pytest", "tests/", "-x", "--tb=short", "-q",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
-                timeout=240,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=240)
+            stdout_text = stdout.decode() if stdout else ""
             # pytest returns 5 when no tests are collected - treat as pass
-            no_tests_collected = result.returncode == 5 or "no tests ran" in result.stdout.lower()
-            passed = result.returncode == 0 or no_tests_collected
+            no_tests_collected = proc.returncode == 5 or "no tests ran" in stdout_text.lower()
+            passed = proc.returncode == 0 or no_tests_collected
             check = {
                 "check": "tests",
                 "passed": passed,
-                "output": result.stdout[-500:] if result.stdout else "",
+                "output": stdout_text[-500:] if stdout_text else "",
                 "note": "no tests collected" if no_tests_collected else "",
             }
             self._log(f"    {'passed' if passed else 'FAILED'} tests" + (" (no tests collected)" if no_tests_collected else ""))
-            self._stream_emit("on_verification_result", "tests", passed, result.stdout[-200:] if result.stdout else "")
+            self._stream_emit("on_verification_result", "tests", passed, stdout_text[-200:] if stdout_text else "")
             return check
+        except asyncio.TimeoutError:
+            self._log("    FAILED tests (timeout)")
+            self._stream_emit("on_verification_result", "tests", False, "Test execution timed out")
+            return {"check": "tests", "passed": False, "error": "timeout", "note": "Test execution timed out"}
         except Exception as e:
             self._log(f"    FAILED tests (exception): {e}")
             self._stream_emit("on_verification_result", "tests", False, f"Exception: {e}")
@@ -203,17 +216,18 @@ class VerifyPhase:
         """Run Codex verification audit on changed files."""
         try:
             self._log("  [hybrid] Codex verification audit...")
-            changed_files = self._get_changed_files()
+            changed_files = await self._get_changed_files()
             diff_output = ""
 
             if changed_files:
-                diff_result = subprocess.run(
-                    ["git", "diff", "--unified=3"],
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "diff", "--unified=3",
                     cwd=self.aragora_path,
-                    capture_output=True,
-                    text=True,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
-                diff_output = diff_result.stdout[:5000] if diff_result.returncode == 0 else ""
+                stdout, _ = await proc.communicate()
+                diff_output = stdout.decode()[:5000] if proc.returncode == 0 and stdout else ""
 
             audit_prompt = f"""As the verification lead, audit this implementation:
 
@@ -259,17 +273,18 @@ Be concise - this is a quality gate, not a full review."""
             }
         return None
 
-    def _get_changed_files(self) -> list[str]:
+    async def _get_changed_files(self) -> list[str]:
         """Get list of files changed in this cycle."""
         try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only"],
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--name-only",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode == 0:
-                return [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0 and stdout:
+                return [f.strip() for f in stdout.decode().strip().split('\n') if f.strip()]
         except Exception:
             pass
         return []
@@ -277,7 +292,7 @@ Be concise - this is a quality gate, not a full review."""
     async def _check_staleness(self) -> list:
         """Check for stale evidence claims."""
         try:
-            changed_files = self._get_changed_files()
+            changed_files = await self._get_changed_files()
             if changed_files:
                 self._log(f"  [integration] Checking staleness for {len(changed_files)} changed files...")
                 self._log(f"  [integration] Changed files: {changed_files[:5]}...")

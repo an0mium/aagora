@@ -15,9 +15,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from aragora.audience.suggestions import cluster_suggestions, format_for_prompt
-from aragora.core import Agent, Critique, DebateResult, DisagreementReport, Environment, Message, Vote
+from aragora.core import Agent, Critique, DebateResult, Environment, Message, Vote
 from aragora.debate.convergence import ConvergenceDetector
-from aragora.debate.disagreement import DisagreementReporter
 from aragora.debate.event_bridge import EventEmitterBridge
 from aragora.debate.immune_system import TransparentImmuneSystem, get_immune_system
 from aragora.debate.chaos_theater import ChaosDirector, get_chaos_director, DramaLevel
@@ -990,15 +989,6 @@ class Arena:
         scorer = JudgeScoringMixin(self.elo_system)
         return scorer.get_calibration_weight(agent_name)
 
-    def _compute_composite_judge_score(self, agent_name: str) -> float:
-        """Compute composite score for judge selection (ELO + calibration).
-
-        Delegates to JudgeScoringMixin. For new code, use:
-            JudgeScoringMixin(elo_system).compute_composite_score(agent_name)
-        """
-        scorer = JudgeScoringMixin(self.elo_system)
-        return scorer.compute_composite_score(agent_name)
-
     def _select_critics_for_proposal(self, proposal_agent: str, all_critics: list[Agent]) -> list[Agent]:
         """Select which critics should critique the given proposal based on topology.
 
@@ -1081,20 +1071,6 @@ class Arena:
         except Exception as e:
             # Unexpected error - log type for debugging
             logger.warning(f"Relationship update error (type={type(e).__name__}): {e}")
-
-    def _generate_disagreement_report(
-        self,
-        votes: list[Vote],
-        critiques: list[Critique],
-        winner: Optional[str] = None,
-    ) -> DisagreementReport:
-        """
-        Generate a DisagreementReport from debate votes and critiques.
-
-        Delegates to DisagreementReporter for the actual analysis.
-        """
-        reporter = DisagreementReporter()
-        return reporter.generate_report(votes, critiques, winner)
 
     def _create_grounded_verdict(self, result: "DebateResult"):
         """Create a GroundedVerdict for the final answer.
@@ -1708,29 +1684,6 @@ Respond with only: CONTINUE or STOP
         )
         return await selector.select_judge(proposals, context)
 
-    async def _vote_for_judge(self, proposals: dict[str, str], context: list[Message]) -> Agent:
-        """Have agents vote on who should be the judge.
-
-        Delegates to JudgeSelector with voted strategy.
-        """
-        async def generate_wrapper(agent, prompt, ctx):
-            return await agent.generate(prompt, ctx)
-
-        selector = JudgeSelector(
-            agents=self._require_agents(),
-            elo_system=self.elo_system,
-            judge_selection="voted",
-            generate_fn=generate_wrapper,
-            build_vote_prompt_fn=lambda candidates, props: self.prompt_builder.build_judge_vote_prompt(candidates, props),
-            sanitize_fn=OutputSanitizer.sanitize_agent_output,
-            consensus_memory=self.consensus_memory,
-        )
-        return await selector.select_judge(proposals, context)
-
-    def _build_judge_vote_prompt(self, candidates: list[Agent], proposals: dict[str, str]) -> str:
-        """Build prompt for voting on who should judge."""
-        return self.prompt_builder.build_judge_vote_prompt(candidates, proposals)
-
     def _get_agreement_intensity_guidance(self) -> str:
         """Generate prompt guidance based on agreement intensity setting.
 
@@ -1996,58 +1949,57 @@ and building on others' ideas."""
 
         return None
 
-    def _build_proposal_prompt(self, agent: Agent) -> str:
-        """Build the initial proposal prompt."""
-        # Drain pending audience events before building prompt
+    def _prepare_audience_context(self, emit_event: bool = False) -> str:
+        """Prepare audience context for prompt building.
+
+        Handles the shared pre-processing for prompt building:
+        1. Drain pending audience events
+        2. Sync Arena state to PromptBuilder
+        3. Compute audience section from suggestions
+
+        Args:
+            emit_event: Whether to emit spectator event for dashboard
+
+        Returns:
+            Formatted audience section string (empty if no suggestions)
+        """
+        # Drain pending audience events
         self._drain_user_events()
 
         # Sync state to PromptBuilder
         self._sync_prompt_builder_state()
 
-        # Compute audience section (needs spectator callback)
-        audience_section = ""
-        if (
+        # Compute audience section if enabled and suggestions exist
+        if not (
             self.protocol.audience_injection in ("summary", "inject")
             and self.user_suggestions
         ):
-            clusters = cluster_suggestions(list(self.user_suggestions))
-            audience_section = format_for_prompt(clusters)
+            return ""
 
-            # Emit stream event for dashboard
-            if self.spectator and clusters:
-                self._notify_spectator(
-                    "audience_summary",
-                    details=f"{sum(c.count for c in clusters)} suggestions in {len(clusters)} clusters",
-                    metric=len(clusters),
-                )
+        clusters = cluster_suggestions(list(self.user_suggestions))
+        audience_section = format_for_prompt(clusters)
 
+        # Emit stream event for dashboard if requested
+        if emit_event and self.spectator and clusters:
+            self._notify_spectator(
+                "audience_summary",
+                details=f"{sum(c.count for c in clusters)} suggestions in {len(clusters)} clusters",
+                metric=len(clusters),
+            )
+
+        return audience_section
+
+    def _build_proposal_prompt(self, agent: Agent) -> str:
+        """Build the initial proposal prompt."""
+        audience_section = self._prepare_audience_context(emit_event=True)
         return self.prompt_builder.build_proposal_prompt(agent, audience_section)
 
     def _build_revision_prompt(
         self, agent: Agent, original: str, critiques: list[Critique]
     ) -> str:
         """Build the revision prompt including critiques."""
-        # Drain pending audience events before building prompt
-        self._drain_user_events()
-
-        # Sync state to PromptBuilder
-        self._sync_prompt_builder_state()
-
-        # Compute audience section
-        audience_section = ""
-        if (
-            self.protocol.audience_injection in ("summary", "inject")
-            and self.user_suggestions
-        ):
-            clusters = cluster_suggestions(list(self.user_suggestions))
-            audience_section = format_for_prompt(clusters)
-
+        audience_section = self._prepare_audience_context(emit_event=False)
         return self.prompt_builder.build_revision_prompt(
             agent, original, critiques, audience_section
         )
 
-    def _build_judge_prompt(
-        self, proposals: dict[str, str], task: str, critiques: list[Critique]
-    ) -> str:
-        """Build the judge/synthesizer prompt."""
-        return self.prompt_builder.build_judge_prompt(proposals, task, critiques)

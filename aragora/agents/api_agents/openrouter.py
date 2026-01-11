@@ -5,6 +5,7 @@ OpenRouter agent and provider-specific subclasses.
 import aiohttp
 import asyncio
 import logging
+import os
 from typing import AsyncGenerator
 
 from aragora.agents.api_agents.base import APIAgent

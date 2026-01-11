@@ -8,9 +8,9 @@ Phase 3: Code generation
 - Pre-verification review
 """
 
+import asyncio
 import hashlib
 import os
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Set
@@ -170,7 +170,7 @@ class ImplementPhase:
                 return await self._legacy_implement(design)
 
             completed = set()
-            stash_ref = self._git_stash_create()
+            stash_ref = await self._git_stash_create()
 
             if self._progress_saver:
                 self._progress_saver({
@@ -218,7 +218,7 @@ class ImplementPhase:
                     self._progress_clearer(self.aragora_path)
                 self._log(f"  All {tasks_completed} tasks completed successfully")
 
-                diff = self._get_git_diff()
+                diff = await self._get_git_diff()
                 phase_duration = (datetime.now() - phase_start).total_seconds()
                 self._stream_emit(
                     "on_phase_end", "implement", self.cycle_count, True,
@@ -232,7 +232,7 @@ class ImplementPhase:
                         "tasks_total": len(plan.tasks),
                     },
                     duration_seconds=phase_duration,
-                    files_modified=self._get_modified_files(),
+                    files_modified=await self._get_modified_files(),
                     diff_summary=diff[:2000] if diff else "",
                 )
             else:
@@ -244,6 +244,7 @@ class ImplementPhase:
                     phase_duration, {"tasks_failed": len(failed)}
                 )
 
+                diff = await self._get_git_diff()
                 return ImplementResult(
                     success=False,
                     error=failed[0].error if failed else "Unknown error",
@@ -252,14 +253,14 @@ class ImplementPhase:
                         "tasks_total": len(plan.tasks),
                     },
                     duration_seconds=phase_duration,
-                    files_modified=self._get_modified_files(),
-                    diff_summary=self._get_git_diff()[:2000] if self._get_git_diff() else "",
+                    files_modified=await self._get_modified_files(),
+                    diff_summary=diff[:2000] if diff else "",
                 )
 
         except Exception as e:
             self._log(f"  Catastrophic failure: {e}")
             self._log("  Rolling back changes...")
-            self._git_stash_pop(stash_ref)
+            await self._git_stash_pop(stash_ref)
             phase_duration = (datetime.now() - phase_start).total_seconds()
             self._stream_emit(
                 "on_phase_end", "implement", self.cycle_count, False,
@@ -299,30 +300,33 @@ CRITICAL SAFETY RULES:
 - Preserve ALL existing imports, classes, and functions"""
 
         try:
-            result = subprocess.run(
-                ["codex", "exec", "-C", str(self.aragora_path), prompt],
-                capture_output=True,
-                text=True,
-                timeout=1200,
+            proc = await asyncio.create_subprocess_exec(
+                "codex", "exec", "-C", str(self.aragora_path), prompt,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=1200
             )
 
             phase_duration = (datetime.now() - phase_start).total_seconds()
-            success = result.returncode == 0
+            success = proc.returncode == 0
 
             self._stream_emit(
                 "on_phase_end", "implement", self.cycle_count, success,
                 phase_duration, {}
             )
 
+            diff = await self._get_git_diff()
             return ImplementResult(
                 success=success,
-                data={"output": result.stdout},
+                data={"output": stdout.decode() if stdout else ""},
                 duration_seconds=phase_duration,
-                files_modified=self._get_modified_files(),
-                diff_summary=self._get_git_diff()[:2000] if self._get_git_diff() else "",
+                files_modified=await self._get_modified_files(),
+                diff_summary=diff[:2000] if diff else "",
             )
 
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             phase_duration = (datetime.now() - phase_start).total_seconds()
             self._stream_emit(
                 "on_phase_end", "implement", self.cycle_count, False,
@@ -351,57 +355,62 @@ CRITICAL SAFETY RULES:
                 diff_summary="",
             )
 
-    def _git_stash_create(self) -> Optional[str]:
+    async def _git_stash_create(self) -> Optional[str]:
         """Create a git stash for rollback."""
         try:
-            result = subprocess.run(
-                ["git", "stash", "create"],
+            proc = await asyncio.create_subprocess_exec(
+                "git", "stash", "create",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            return result.stdout.strip() if result.returncode == 0 else None
+            stdout, _ = await proc.communicate()
+            return stdout.decode().strip() if proc.returncode == 0 else None
         except Exception:
             return None
 
-    def _git_stash_pop(self, stash_ref: Optional[str]) -> bool:
+    async def _git_stash_pop(self, stash_ref: Optional[str]) -> bool:
         """Pop a git stash to rollback changes."""
         if not stash_ref:
             return False
         try:
-            subprocess.run(
-                ["git", "stash", "apply", stash_ref],
+            proc = await asyncio.create_subprocess_exec(
+                "git", "stash", "apply", stash_ref,
                 cwd=self.aragora_path,
-                capture_output=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            await proc.communicate()
             return True
         except Exception:
             return False
 
-    def _get_git_diff(self) -> str:
+    async def _get_git_diff(self) -> str:
         """Get current git diff."""
         try:
-            result = subprocess.run(
-                ["git", "diff", "--stat"],
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--stat",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            return result.stdout if result.returncode == 0 else ""
+            stdout, _ = await proc.communicate()
+            return stdout.decode() if proc.returncode == 0 else ""
         except Exception:
             return ""
 
-    def _get_modified_files(self) -> List[str]:
+    async def _get_modified_files(self) -> List[str]:
         """Get list of modified files."""
         try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only"],
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--name-only",
                 cwd=self.aragora_path,
-                capture_output=True,
-                text=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if result.returncode == 0:
-                return [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                return [f.strip() for f in stdout.decode().strip().split('\n') if f.strip()]
         except Exception:
             pass
         return []
