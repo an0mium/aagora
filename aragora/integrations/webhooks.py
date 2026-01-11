@@ -19,6 +19,7 @@ import urllib.request
 import urllib.error
 import socket
 import ipaddress
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -267,6 +268,11 @@ class WebhookDispatcher:
         self._started = False  # Tracks if we've ever started
         self._worker: Optional[threading.Thread] = None
 
+        # Thread pool for parallel webhook delivery (prevents one slow webhook from blocking others)
+        # Max workers = number of webhook configs, capped at 10 to prevent resource exhaustion
+        max_workers = min(len(configs), 10) if configs else 4
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="webhook-deliver")
+
         # Thread-safe stats
         self._stats_lock = threading.Lock()
         self._drop_count = 0
@@ -306,6 +312,10 @@ class WebhookDispatcher:
         self._shutdown_event.set()  # Thread-safe signal to stop
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=timeout)
+
+        # Shutdown executor, wait for pending deliveries to complete
+        self._executor.shutdown(wait=True, cancel_futures=False)
+
         with self._stats_lock:
             # Use safe logging to avoid errors during interpreter shutdown
             _safe_log(
@@ -465,12 +475,18 @@ class WebhookDispatcher:
 
             for cfg in self.configs:
                 if self._matches_config(cfg, event_type, loop_id):
-                    success = self._deliver(cfg, event_dict)
-                    with self._stats_lock:
-                        if success:
-                            self._delivery_count += 1
-                        else:
-                            self._failure_count += 1
+                    # Submit to thread pool for parallel delivery
+                    # This prevents one slow webhook from blocking others
+                    self._executor.submit(self._deliver_and_track, cfg, event_dict)
+
+    def _deliver_and_track(self, cfg: "WebhookConfig", event_dict: Dict[str, Any]) -> None:
+        """Deliver webhook and update stats (runs in thread pool)."""
+        success = self._deliver(cfg, event_dict)
+        with self._stats_lock:
+            if success:
+                self._delivery_count += 1
+            else:
+                self._failure_count += 1
 
     def _deliver(self, cfg: WebhookConfig, event_dict: Dict[str, Any]) -> bool:
         """Attempt delivery to a single webhook with retries.

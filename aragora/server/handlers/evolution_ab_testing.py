@@ -88,6 +88,11 @@ class EvolutionABTestingHandler(BaseHandler):
         if len(parts) >= 5:
             segment = parts[4]
 
+            # Validate path segment before using in queries
+            valid, err = validate_path_segment(segment, "id_or_agent")
+            if not valid:
+                return error_response(err or "Invalid path segment", 400)
+
             # GET /api/evolution/ab-tests/{agent}/active
             if len(parts) == 6 and parts[5] == "active":
                 return self._get_active_test(segment)
@@ -113,6 +118,11 @@ class EvolutionABTestingHandler(BaseHandler):
             test_id = parts[4]
             action = parts[5]
 
+            # Validate test_id before using in queries
+            valid, err = validate_path_segment(test_id, "test_id")
+            if not valid:
+                return error_response(err or "Invalid test ID", 400)
+
             # POST /api/evolution/ab-tests/{id}/record
             if action == "record":
                 return self._record_result(test_id, body)
@@ -133,6 +143,12 @@ class EvolutionABTestingHandler(BaseHandler):
         # DELETE /api/evolution/ab-tests/{id}
         if len(parts) == 5:
             test_id = parts[4]
+
+            # Validate test_id before using in queries
+            valid, err = validate_path_segment(test_id, "test_id")
+            if not valid:
+                return error_response(err or "Invalid test ID", 400)
+
             return self._cancel_test(test_id)
 
         return None

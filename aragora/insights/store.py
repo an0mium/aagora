@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 # Schema version for InsightStore migrations
 INSIGHT_STORE_SCHEMA_VERSION = 2
 
+# Explicit column list for SELECT queries - must match _row_to_insight() order
+INSIGHT_COLUMNS = """id, type, title, description, confidence,
+    debate_id, agents_involved, evidence, created_at, metadata"""
+
 
 def _escape_like_pattern(value: str) -> str:
     """Escape special characters in SQL LIKE patterns to prevent injection.
@@ -301,7 +305,7 @@ class InsightStore:
         """Sync helper: Retrieve insight row by ID."""
         with self.db.connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM insights WHERE id = ?", (insight_id,))
+            cursor.execute(f"SELECT {INSIGHT_COLUMNS} FROM insights WHERE id = ?", (insight_id,))
             return cursor.fetchone()
 
     async def get_insight(self, insight_id: str) -> Optional[Insight]:
@@ -322,7 +326,7 @@ class InsightStore:
         with self.db.connection() as conn:
             cursor = conn.cursor()
 
-            sql = "SELECT * FROM insights WHERE 1=1"
+            sql = f"SELECT {INSIGHT_COLUMNS} FROM insights WHERE 1=1"
             params: list = []
 
             if query:
@@ -504,7 +508,7 @@ class InsightStore:
         with self.db.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM insights ORDER BY created_at DESC LIMIT ?",
+                f"SELECT {INSIGHT_COLUMNS} FROM insights ORDER BY created_at DESC LIMIT ?",
                 (limit,)
             )
             return cursor.fetchall()
@@ -714,8 +718,8 @@ class InsightStore:
         with self.db.connection() as conn:
             cursor = conn.cursor()
 
-            sql = """
-                SELECT * FROM insights
+            sql = f"""
+                SELECT {INSIGHT_COLUMNS} FROM insights
                 WHERE confidence >= ?
             """
             params: list = [min_confidence]

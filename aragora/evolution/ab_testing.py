@@ -21,6 +21,11 @@ from aragora.config import DB_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
+# Explicit column list for SELECT queries - must match ABTest.from_row() order
+AB_TEST_COLUMNS = """id, agent, baseline_prompt_version, evolved_prompt_version,
+    baseline_wins, evolved_wins, baseline_debates, evolved_debates,
+    started_at, concluded_at, status, metadata"""
+
 
 class ABTestStatus(Enum):
     """Status of an A/B test."""
@@ -281,7 +286,7 @@ class ABTestManager:
         ) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM ab_tests WHERE id = ?",
+                f"SELECT {AB_TEST_COLUMNS} FROM ab_tests WHERE id = ?",
                 (test_id,),
             )
             row = cursor.fetchone()
@@ -298,7 +303,7 @@ class ABTestManager:
         ) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM ab_tests WHERE agent = ? AND status = 'active'",
+                f"SELECT {AB_TEST_COLUMNS} FROM ab_tests WHERE agent = ? AND status = 'active'",
                 (agent,),
             )
             row = cursor.fetchone()
@@ -315,8 +320,8 @@ class ABTestManager:
         ) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """
-                SELECT * FROM ab_tests
+                f"""
+                SELECT {AB_TEST_COLUMNS} FROM ab_tests
                 WHERE agent = ?
                 ORDER BY started_at DESC
                 LIMIT ?

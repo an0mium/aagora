@@ -492,6 +492,37 @@ class FeaturesHandler(BaseHandler):
         """Initialize with server context."""
         super().__init__(server_context)
 
+    def can_handle(self, path: str) -> bool:
+        """Check if this handler can process the given path."""
+        # Direct route match
+        if path in self.ROUTES:
+            return True
+        # Handle parameterized routes: /api/features/{feature_id}
+        if path.startswith("/api/features/") and path not in self.ROUTES:
+            # Check it's not a nested path we don't handle
+            parts = path.split("/")
+            if len(parts) == 4:  # /api/features/{feature_id}
+                return True
+        return False
+
+    def handle(self, path: str, query_params: dict, handler=None) -> Optional[HandlerResult]:
+        """Route GET requests to appropriate methods."""
+        # Direct route match
+        if path in self.ROUTES:
+            method_name = self.ROUTES[path]
+            method = getattr(self, method_name, None)
+            if method:
+                return method()
+
+        # Parameterized route: /api/features/{feature_id}
+        if path.startswith("/api/features/"):
+            parts = path.split("/")
+            if len(parts) == 4:
+                feature_id = parts[3]
+                return self._get_feature_status(feature_id)
+
+        return None
+
     def _get_features_summary(self) -> HandlerResult:
         """Get summary of feature availability."""
         available = get_available_features()

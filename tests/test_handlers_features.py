@@ -32,7 +32,7 @@ from aragora.server.handlers.features import (
 @pytest.fixture
 def features_handler():
     """Create FeaturesHandler instance."""
-    return FeaturesHandler()
+    return FeaturesHandler(server_context={})
 
 
 # ============================================================================
@@ -309,7 +309,8 @@ class TestFeatureUnavailableResponse:
         data = json.loads(result.body)
 
         assert "error" in data
-        assert "Trending Topics" in data["error"]
+        # error is now a structured dict with message and details
+        assert "Trending Topics" in data["error"]["message"]
 
     def test_known_feature_with_custom_message(self):
         """Test response with custom message."""
@@ -317,7 +318,8 @@ class TestFeatureUnavailableResponse:
 
         assert result.status_code == 503
         data = json.loads(result.body)
-        assert data["error"] == "Custom message"
+        # error is now a structured dict with message and details
+        assert data["error"]["message"] == "Custom message"
 
     def test_unknown_feature_response(self):
         """Test response for unknown feature."""
@@ -325,7 +327,8 @@ class TestFeatureUnavailableResponse:
 
         assert result.status_code == 503
         data = json.loads(result.body)
-        assert "nonexistent" in data["error"]
+        # error is now a structured dict with message and details
+        assert "nonexistent" in data["error"]["message"]
 
 
 # ============================================================================
