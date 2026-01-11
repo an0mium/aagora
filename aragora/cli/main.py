@@ -647,8 +647,14 @@ def cmd_gauntlet(args: argparse.Namespace) -> None:
         THOROUGH_GAUNTLET,
         CODE_REVIEW_GAUNTLET,
         POLICY_GAUNTLET,
+        GDPR_GAUNTLET,
+        HIPAA_GAUNTLET,
+        AI_ACT_GAUNTLET,
+        SECURITY_GAUNTLET,
+        get_compliance_gauntlet,
     )
-    from aragora.export.decision_receipt import generate_decision_receipt
+    from aragora.gauntlet.personas import list_personas, get_persona
+    from aragora.gauntlet.receipt import DecisionReceipt
 
     print("\n" + "=" * 60)
     print("GAUNTLET - Adversarial Stress-Testing")
@@ -697,7 +703,18 @@ def cmd_gauntlet(args: argparse.Namespace) -> None:
     print(f"Agents: {', '.join(a.name for a in agents)}")
 
     # Select config profile
-    if args.profile == "quick":
+    persona = None
+    if hasattr(args, 'persona') and args.persona:
+        # Use persona-based compliance profile
+        persona = args.persona
+        print(f"Persona: {persona}")
+        if args.profile == "quick":
+            base_config = QUICK_GAUNTLET
+        elif args.profile == "thorough":
+            base_config = THOROUGH_GAUNTLET
+        else:
+            base_config = get_compliance_gauntlet(persona)
+    elif args.profile == "quick":
         base_config = QUICK_GAUNTLET
     elif args.profile == "thorough":
         base_config = THOROUGH_GAUNTLET
@@ -705,6 +722,18 @@ def cmd_gauntlet(args: argparse.Namespace) -> None:
         base_config = CODE_REVIEW_GAUNTLET
     elif args.profile == "policy":
         base_config = POLICY_GAUNTLET
+    elif args.profile == "gdpr":
+        base_config = GDPR_GAUNTLET
+        persona = "gdpr"
+    elif args.profile == "hipaa":
+        base_config = HIPAA_GAUNTLET
+        persona = "hipaa"
+    elif args.profile == "ai_act":
+        base_config = AI_ACT_GAUNTLET
+        persona = "ai_act"
+    elif args.profile == "security":
+        base_config = SECURITY_GAUNTLET
+        persona = "security"
     else:
         base_config = GauntletConfig()
 
@@ -721,6 +750,7 @@ def cmd_gauntlet(args: argparse.Namespace) -> None:
         enable_probing=not args.no_probing,
         enable_deep_audit=not args.no_audit,
         enable_verification=args.verify,
+        persona=persona,
     )
 
     print(f"Profile: {args.profile}")
@@ -741,16 +771,51 @@ def cmd_gauntlet(args: argparse.Namespace) -> None:
     # Generate and save receipt
     if args.output:
         output_path = Path(args.output)
-        receipt = generate_decision_receipt(result)
+
+        # Create DecisionReceipt from result
+        receipt = DecisionReceipt(
+            receipt_id=f"receipt-{result.gauntlet_id[-12:]}",
+            gauntlet_id=result.gauntlet_id,
+            timestamp=result.created_at,
+            input_summary=result.input_summary,
+            input_hash=result.checksum,
+            risk_summary={
+                "critical": len(result.critical_findings),
+                "high": len(result.high_findings),
+                "medium": len(result.medium_findings),
+                "low": len(result.low_findings),
+                "total": result.total_findings,
+            },
+            attacks_attempted=result.redteam_result.total_attacks if result.redteam_result else 0,
+            attacks_successful=len(result.redteam_result.critical_issues) if result.redteam_result else 0,
+            probes_run=result.probe_report.probes_run if result.probe_report else 0,
+            vulnerabilities_found=result.total_findings,
+            verdict=result.verdict.value.upper(),
+            confidence=result.confidence,
+            robustness_score=result.robustness_score,
+            verdict_reasoning=f"Risk score: {result.risk_score:.0%}, Coverage: {result.coverage_score:.0%}",
+        )
 
         # Determine format from extension or --format
         format_ext = args.format or output_path.suffix.lstrip(".")
-        if format_ext not in ("json", "md", "html"):
+        if format_ext not in ("json", "md", "html", "pdf"):
             format_ext = "html"
 
-        saved_path = receipt.save(output_path, format=format_ext)
-        print(f"\nDecision Receipt saved: {saved_path}")
-        print(f"Checksum: {receipt.checksum}")
+        # Save in appropriate format
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if format_ext == "json":
+            output_file = output_path.with_suffix(".json")
+            output_file.write_text(receipt.to_json())
+        elif format_ext == "md":
+            output_file = output_path.with_suffix(".md")
+            output_file.write_text(receipt.to_markdown())
+        else:
+            output_file = output_path.with_suffix(".html")
+            output_file.write_text(receipt.to_html())
+
+        print(f"\nDecision Receipt saved: {output_file}")
+        print(f"Artifact Hash: {receipt.artifact_hash[:16]}...")
 
     # Exit with non-zero if rejected
     if result.verdict.value == "rejected":
@@ -1019,9 +1084,14 @@ Examples:
     )
     gauntlet_parser.add_argument(
         "--profile", "-p",
-        choices=["default", "quick", "thorough", "code", "policy"],
+        choices=["default", "quick", "thorough", "code", "policy", "gdpr", "hipaa", "ai_act", "security"],
         default="default",
         help="Pre-configured test profile (default: default)",
+    )
+    gauntlet_parser.add_argument(
+        "--persona",
+        choices=["gdpr", "hipaa", "ai_act", "security"],
+        help="Regulatory persona for compliance-focused stress testing",
     )
     gauntlet_parser.add_argument(
         "--rounds", "-r",

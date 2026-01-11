@@ -59,6 +59,15 @@ from aragora.verification.formal import (
     get_formal_verification_manager,
 )
 
+# Import personas for compliance-aware stress testing
+try:
+    from aragora.gauntlet.personas import RegulatoryPersona, PersonaAttack, get_persona
+    PERSONAS_AVAILABLE = True
+except ImportError:
+    PERSONAS_AVAILABLE = False
+    RegulatoryPersona = None  # type: ignore
+    PersonaAttack = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -154,10 +163,18 @@ class GauntletConfig:
     # Deep audit rounds (fewer for speed, more for thoroughness)
     deep_audit_rounds: int = 4
 
+    # Regulatory persona for compliance-aware stress testing
+    # Can be a RegulatoryPersona instance or string name ("gdpr", "hipaa", "ai_act", "security")
+    persona: Optional[Any] = None  # RegulatoryPersona or str
+
     def __post_init__(self):
         # Load content from path if provided
         if self.input_path and not self.input_content:
             self.input_content = self.input_path.read_text()
+
+        # Resolve persona string to instance
+        if self.persona and isinstance(self.persona, str) and PERSONAS_AVAILABLE:
+            self.persona = get_persona(self.persona)
 
 
 @dataclass
@@ -384,6 +401,10 @@ class GauntletOrchestrator:
         if config.enable_verification:
             tasks.append(("verification", self._run_verification(config)))
 
+        # Persona-specific compliance attacks
+        if config.persona and PERSONAS_AVAILABLE and self.agents:
+            tasks.append(("persona", self._run_persona_attacks(config)))
+
         # Execute with timeout
         logger.info("--- Phase 2: Parallel Stress Tests ---")
         if tasks:
@@ -418,6 +439,10 @@ class GauntletOrchestrator:
                         verified, unverified = result
                         verified_claims.extend(verified)
                         unverified_claims.extend(unverified)
+
+                    elif task_name == "persona" and result:
+                        # Persona findings are already Finding objects
+                        all_findings.extend(result)
 
             except asyncio.TimeoutError:
                 logger.warning(f"Gauntlet timed out after {config.max_duration_seconds}s")
@@ -521,6 +546,102 @@ class GauntletOrchestrator:
         except Exception as e:
             logger.warning(f"Red-team failed: {e}")
             return None
+
+    async def _run_persona_attacks(self, config: GauntletConfig) -> list[Finding]:
+        """Run persona-specific compliance attacks."""
+        if not config.persona or not PERSONAS_AVAILABLE:
+            return []
+
+        if not self.agents:
+            return []
+
+        logger.info(f"Running persona attacks: {config.persona.name}...")
+
+        findings: list[Finding] = []
+        persona = config.persona
+
+        # Run each persona attack using available agents
+        attack_agents = self.agents[:config.parallel_attacks]
+
+        for attack in persona.attack_prompts:
+            try:
+                # Generate attack prompt
+                attack_prompt = persona.get_attack_prompt(
+                    config.input_content[:5000],  # Limit context
+                    attack
+                )
+
+                # Run attack with first available agent
+                agent = attack_agents[0] if attack_agents else self.agents[0]
+                response = await self.run_agent_fn(agent, attack_prompt)
+
+                # Parse response for findings
+                parsed_findings = self._parse_persona_response(
+                    response, attack, persona, agent.name
+                )
+                findings.extend(parsed_findings)
+
+            except Exception as e:
+                logger.debug(f"Persona attack {attack.id} failed: {e}")
+
+        logger.info(f"Persona attacks: {len(findings)} findings from {len(persona.attack_prompts)} attacks")
+        return findings
+
+    def _parse_persona_response(
+        self,
+        response: str,
+        attack: Any,  # PersonaAttack
+        persona: Any,  # RegulatoryPersona
+        agent_name: str,
+    ) -> list[Finding]:
+        """Parse persona attack response into findings."""
+        findings = []
+
+        # Simple heuristic parsing - look for severity indicators
+        response_lower = response.lower()
+
+        # Check if response indicates findings
+        has_critical = "critical" in response_lower and ("finding" in response_lower or "violation" in response_lower or "issue" in response_lower)
+        has_high = "high" in response_lower and ("finding" in response_lower or "risk" in response_lower or "severity" in response_lower)
+        has_medium = "medium" in response_lower and ("finding" in response_lower or "risk" in response_lower or "severity" in response_lower)
+
+        # If response contains compliance findings, create a finding
+        compliance_indicators = [
+            "violation", "non-compliant", "missing", "inadequate",
+            "failure", "gap", "risk", "concern", "issue"
+        ]
+
+        if any(ind in response_lower for ind in compliance_indicators):
+            # Determine severity from response
+            if has_critical:
+                severity = 0.95
+            elif has_high:
+                severity = 0.75
+            elif has_medium:
+                severity = 0.50
+            else:
+                severity = 0.35
+
+            # Apply persona severity weight
+            if attack.category in persona.severity_weights:
+                severity = min(1.0, severity * persona.severity_weights[attack.category])
+
+            # Extract first paragraph as summary
+            paragraphs = [p.strip() for p in response.split("\n\n") if p.strip()]
+            summary = paragraphs[0] if paragraphs else response[:300]
+
+            findings.append(Finding(
+                finding_id=self._next_finding_id(),
+                category=f"persona/{attack.category}",
+                severity=severity,
+                title=f"{persona.regulation}: {attack.name}",
+                description=summary[:500],
+                evidence=response[:1000],
+                mitigation=None,  # Would need more sophisticated parsing
+                source=f"Persona/{persona.name}/{agent_name}",
+            ))
+
+        return findings
 
     async def _run_probing(self, config: GauntletConfig) -> Optional[VulnerabilityReport]:
         """Run capability probing on agents."""
@@ -895,3 +1016,38 @@ POLICY_GAUNTLET = GauntletConfig(
     deep_audit_rounds=5,
     severity_threshold=0.3,  # More sensitive
 )
+
+
+# Compliance-focused gauntlet profiles
+def get_compliance_gauntlet(persona_name: str = "gdpr") -> GauntletConfig:
+    """
+    Get a compliance-focused Gauntlet config with a regulatory persona.
+
+    Args:
+        persona_name: Name of persona ("gdpr", "hipaa", "ai_act", "security")
+
+    Returns:
+        GauntletConfig with persona configured
+
+    Example:
+        config = get_compliance_gauntlet("gdpr")
+        result = await run_gauntlet(spec, agents, config=config)
+    """
+    return GauntletConfig(
+        input_type=InputType.POLICY,
+        attack_types=[
+            AttackType.LOGICAL_FALLACY,
+            AttackType.UNSTATED_ASSUMPTION,
+            AttackType.EDGE_CASE,
+            AttackType.COUNTEREXAMPLE,
+        ],
+        deep_audit_rounds=4,
+        severity_threshold=0.3,
+        persona=persona_name,  # Will be resolved in __post_init__
+    )
+
+
+GDPR_GAUNTLET = get_compliance_gauntlet("gdpr") if PERSONAS_AVAILABLE else None
+HIPAA_GAUNTLET = get_compliance_gauntlet("hipaa") if PERSONAS_AVAILABLE else None
+AI_ACT_GAUNTLET = get_compliance_gauntlet("ai_act") if PERSONAS_AVAILABLE else None
+SECURITY_GAUNTLET = get_compliance_gauntlet("security") if PERSONAS_AVAILABLE else None

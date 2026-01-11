@@ -322,13 +322,13 @@ class GauntletHandler(BaseHandler):
         if format_str == "markdown" or format_str == "md":
             return HandlerResult(
                 body=receipt.to_markdown().encode(),
-                status=200,
+                status_code=200,
                 content_type="text/markdown",
             )
         elif format_str == "html":
             return HandlerResult(
                 body=receipt.to_html().encode(),
-                status=200,
+                status_code=200,
                 content_type="text/html",
             )
         else:  # json
