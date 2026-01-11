@@ -115,6 +115,15 @@ jobs:
             source venv/bin/activate
             echo "Installing package (low memory mode)..."
             pip install -e . --quiet --no-cache-dir
+
+            # Pre-flight check: verify server module can be imported
+            echo "Running pre-flight import check..."
+            if ! python -c "from aragora.server.unified_server import UnifiedServer; print('Import OK')" 2>&1; then
+              echo "::error::Pre-flight import check failed! Python traceback:"
+              python -c "from aragora.server.unified_server import UnifiedServer" 2>&1 || true
+              exit 1
+            fi
+
             # Update systemd service
             echo "Updating systemd service..."
             sudo cp deploy/aragora.service /etc/systemd/system/aragora.service.tmp
@@ -129,7 +138,8 @@ jobs:
             sleep 5
             if ! sudo systemctl is-active --quiet aragora; then
               echo "::error::Service failed to start! Showing recent logs:"
-              sudo journalctl -u aragora -n 50 --no-pager || true
+              sudo journalctl -u aragora -n 100 --no-pager || true
+              exit 1
             fi
             sudo systemctl status aragora --no-pager || true
             echo "Deploy complete"
@@ -168,7 +178,7 @@ jobs:
 
       - name: Deploy to EC2
         run: |
-          ssh -i ~/.ssh/ec2 ec2-user@${{ secrets.EC2_HOST }} << EOF
+          ssh -i ~/.ssh/ec2 ec2-user@${{ secrets.EC2_HOST }} << 'EOF'
             set -e
             cd ~/aragora || cd /home/ec2-user/aragora || cd /home/ubuntu/aragora
             echo "Stashing any local changes..."
@@ -178,6 +188,15 @@ jobs:
             source venv/bin/activate || source ~/venv/bin/activate
             echo "Installing package..."
             pip install -e . --quiet
+
+            # Pre-flight check: verify server module can be imported
+            echo "Running pre-flight import check..."
+            if ! python -c "from aragora.server.unified_server import UnifiedServer; print('Import OK')" 2>&1; then
+              echo "::error::Pre-flight import check failed! Python traceback:"
+              python -c "from aragora.server.unified_server import UnifiedServer" 2>&1 || true
+              exit 1
+            fi
+
             # Configure Sentry DSN if provided
             if [ -n "${{ secrets.SENTRY_DSN }}" ]; then
               echo "Configuring Sentry DSN..."
@@ -189,8 +208,9 @@ jobs:
             sleep 5
             if ! sudo systemctl is-active --quiet aragora-staging 2>/dev/null && ! sudo systemctl is-active --quiet aragora; then
               echo "::error::Service failed to start! Showing recent logs:"
-              sudo journalctl -u aragora-staging -n 50 --no-pager 2>/dev/null || true
-              sudo journalctl -u aragora -n 50 --no-pager 2>/dev/null || true
+              sudo journalctl -u aragora-staging -n 100 --no-pager 2>/dev/null || true
+              sudo journalctl -u aragora -n 100 --no-pager 2>/dev/null || true
+              exit 1
             fi
             sudo systemctl status aragora-staging --no-pager 2>/dev/null || sudo systemctl status aragora --no-pager || true
             echo "Deploy complete"

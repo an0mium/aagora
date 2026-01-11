@@ -130,6 +130,68 @@ if context.authenticated:
         pass
 ```
 
+### Token Revocation
+
+Revoke tokens to immediately invalidate user sessions:
+
+```python
+from aragora.billing.jwt_auth import (
+    TokenBlacklist,
+    revoke_token,
+    is_token_revoked,
+)
+
+# Get the singleton blacklist instance
+blacklist = TokenBlacklist.get_instance()
+
+# Revoke a specific token (by JTI claim)
+revoke_token(token_jti="abc123", reason="user_logout")
+
+# Check if a token is revoked
+if is_token_revoked(token_jti="abc123"):
+    print("Token has been revoked")
+
+# Revoke all tokens for a user (on password change, account compromise)
+blacklist.revoke_all_for_user(user_id="user_123", reason="password_changed")
+
+# Cleanup expired entries (automatic, but can be triggered manually)
+blacklist.cleanup()
+```
+
+### Revocation API Endpoints
+
+```http
+# Logout - revokes current access token
+POST /api/auth/logout
+Authorization: Bearer <access_token>
+
+# Revoke specific token
+POST /api/auth/revoke
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "token": "<token_to_revoke>",
+  "reason": "manual_revocation"
+}
+
+# Token refresh (automatically revokes old refresh token)
+POST /api/auth/refresh
+Content-Type: application/json
+
+{
+  "refresh_token": "<refresh_token>"
+}
+```
+
+**Response (revoke):**
+```json
+{
+  "success": true,
+  "message": "Token revoked successfully"
+}
+```
+
 ## User Management
 
 ### Creating Users
