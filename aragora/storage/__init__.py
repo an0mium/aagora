@@ -5,6 +5,7 @@ Provides persistent storage backends for users, organizations, and usage trackin
 """
 
 from .base_database import BaseDatabase
+from .base_store import SQLiteStore
 from .user_store import UserStore
 from .webhook_store import (
     WebhookStoreBackend,
@@ -17,6 +18,7 @@ from .webhook_store import (
 
 __all__ = [
     "BaseDatabase",
+    "SQLiteStore",
     "UserStore",
     # Webhook idempotency
     "WebhookStoreBackend",

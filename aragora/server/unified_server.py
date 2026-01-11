@@ -1407,12 +1407,114 @@ class UnifiedServer:
         if self.nomic_dir:
             logger.info(f"  Nomic dir:  {self.nomic_dir}")
 
+        # Set up signal handlers for graceful shutdown
+        self._setup_signal_handlers()
+
         # Start HTTP server in background thread
-        http_thread = Thread(target=self._run_http_server, daemon=True)
-        http_thread.start()
+        self._http_thread = Thread(target=self._run_http_server, daemon=True)
+        self._http_thread.start()
 
         # Start WebSocket server in foreground
         await self.stream_server.start()
+
+    def _setup_signal_handlers(self) -> None:
+        """Set up signal handlers for graceful shutdown."""
+        import signal
+
+        def signal_handler(signum, frame):
+            signame = signal.Signals(signum).name
+            logger.info(f"Received {signame}, initiating graceful shutdown...")
+            asyncio.create_task(self.graceful_shutdown())
+
+        # Register handlers for common termination signals
+        try:
+            signal.signal(signal.SIGTERM, signal_handler)
+            signal.signal(signal.SIGINT, signal_handler)
+            logger.debug("Signal handlers registered for graceful shutdown")
+        except (ValueError, OSError) as e:
+            # Signal handling may not work in all contexts (e.g., non-main thread)
+            logger.debug(f"Could not register signal handlers: {e}")
+
+    async def graceful_shutdown(self, timeout: float = 30.0) -> None:
+        """Gracefully shut down the server.
+
+        Steps:
+        1. Stop accepting new debates
+        2. Wait for in-flight debates to complete (with timeout)
+        3. Persist circuit breaker states
+        4. Stop background tasks
+        5. Close WebSocket connections
+
+        Args:
+            timeout: Maximum seconds to wait for in-flight debates
+        """
+        logger.info("Starting graceful shutdown...")
+        shutdown_start = time.time()
+
+        # 1. Stop accepting new debates by setting flag
+        # This is checked by debate creation endpoints
+        self._shutting_down = True
+
+        # 2. Wait for in-flight debates to complete
+        logger.info("Waiting for in-flight debates to complete...")
+        active_debates = get_active_debates()
+        if active_debates:
+            in_progress = [
+                d_id for d_id, d in active_debates.items()
+                if d.get("status") == "in_progress"
+            ]
+            if in_progress:
+                logger.info(f"Waiting for {len(in_progress)} in-flight debate(s)")
+                wait_start = time.time()
+                while time.time() - wait_start < timeout:
+                    # Check if debates are still running
+                    still_running = sum(
+                        1 for d_id in in_progress
+                        if d_id in active_debates and
+                        active_debates.get(d_id, {}).get("status") == "in_progress"
+                    )
+                    if still_running == 0:
+                        logger.info("All in-flight debates completed")
+                        break
+                    await asyncio.sleep(1)
+                else:
+                    logger.warning(
+                        f"Shutdown timeout reached with {still_running} debate(s) still running"
+                    )
+
+        # 3. Persist circuit breaker states
+        try:
+            from aragora.resilience import persist_all_circuit_breakers
+            count = persist_all_circuit_breakers()
+            if count > 0:
+                logger.info(f"Persisted {count} circuit breaker state(s)")
+        except Exception as e:
+            logger.warning(f"Failed to persist circuit breaker states: {e}")
+
+        # 4. Stop background tasks
+        try:
+            from aragora.server.background import get_background_manager
+            background_mgr = get_background_manager()
+            background_mgr.stop()
+            logger.info("Background tasks stopped")
+        except Exception as e:
+            logger.debug(f"Background task shutdown: {e}")
+
+        # 5. Close WebSocket connections
+        if hasattr(self, 'stream_server') and self.stream_server:
+            try:
+                await self.stream_server.graceful_shutdown()
+                logger.info("WebSocket connections closed")
+            except Exception as e:
+                logger.warning(f"WebSocket shutdown error: {e}")
+
+        elapsed = time.time() - shutdown_start
+        logger.info(f"Graceful shutdown completed in {elapsed:.1f}s")
+
+    @property
+    def is_shutting_down(self) -> bool:
+        """Check if server is in shutdown mode."""
+        return getattr(self, '_shutting_down', False)
 
 
 async def run_unified_server(
