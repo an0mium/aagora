@@ -20,6 +20,7 @@ class AttackCategory(Enum):
 
     # Compliance attacks
     COMPLIANCE = "compliance"
+    REGULATORY_VIOLATION = "regulatory_violation"
     GDPR = "gdpr"
     HIPAA = "hipaa"
     AI_ACT = "ai_act"
@@ -28,6 +29,7 @@ class AttackCategory(Enum):
     ARCHITECTURE = "architecture"
     SCALABILITY = "scalability"
     PERFORMANCE = "performance"
+    RESOURCE_EXHAUSTION = "resource_exhaustion"
 
     # Logic attacks
     LOGIC = "logic"
@@ -35,6 +37,7 @@ class AttackCategory(Enum):
     EDGE_CASES = "edge_cases"
     EDGE_CASE = "edge_case"
     ASSUMPTIONS = "assumptions"
+    STAKEHOLDER_CONFLICT = "stakeholder_conflict"
     UNSTATED_ASSUMPTION = "unstated_assumption"
     COUNTEREXAMPLES = "counterexamples"
     COUNTEREXAMPLE = "counterexample"
@@ -42,6 +45,7 @@ class AttackCategory(Enum):
     # Operational attacks
     OPERATIONAL = "operational"
     DEPENDENCY_FAILURE = "dependency_failure"
+    RACE_CONDITION = "race_condition"
     RACE_CONDITIONS = "race_conditions"
 
 
@@ -99,7 +103,9 @@ class PassFailCriteria:
     max_high_findings: int = 2
     min_robustness_score: float = 0.7
     min_verification_coverage: float = 0.0
+    require_formal_verification: bool = False
     require_consensus: bool = False
+    min_confidence: float = 0.5
 
     @classmethod
     def strict(cls) -> "PassFailCriteria":
@@ -109,7 +115,9 @@ class PassFailCriteria:
             max_high_findings=0,
             min_robustness_score=0.85,
             min_verification_coverage=0.5,
+            require_formal_verification=True,
             require_consensus=True,
+            min_confidence=0.7,
         )
 
     @classmethod
@@ -121,6 +129,7 @@ class PassFailCriteria:
             min_robustness_score=0.5,
             min_verification_coverage=0.0,
             require_consensus=False,
+            min_confidence=0.5,
         )
 
 
@@ -132,6 +141,20 @@ class GauntletConfig:
     Controls which attacks, probes, and scenarios to run,
     as well as thresholds for pass/fail verdicts.
     """
+
+    # Template metadata
+    name: str = "Gauntlet Validation"
+    description: str = ""
+    template_id: Optional[str] = None
+    input_type: str = "text"
+    domain: str = "general"
+    tags: list[str] = field(default_factory=list)
+
+    # Pipeline toggles
+    enable_scenario_analysis: bool = True
+    enable_adversarial_probing: bool = True
+    enable_formal_verification: bool = False
+    enable_deep_audit: bool = False
 
     # Attack configuration
     attack_categories: list[AttackCategory] = field(
@@ -153,16 +176,21 @@ class GauntletConfig:
         ]
     )
     probes_per_category: int = 2
+    max_total_probes: int = 10
 
     # Scenario configuration
     run_scenario_matrix: bool = True
     scenario_preset: Optional[str] = "comprehensive"  # scale, time_horizon, risk, comprehensive
     max_parallel_scenarios: int = 3
+    scenario_presets: list[str] = field(default_factory=list)
+    custom_scenarios: list[dict] = field(default_factory=list)
 
     # Agent configuration
     agents: list[str] = field(
         default_factory=lambda: ["anthropic-api", "openai-api"]
     )
+    max_agents: int = 3
+    deep_audit_rounds: int = 4
 
     # Verdict thresholds
     critical_threshold: int = 0  # Max critical issues for PASS
@@ -170,14 +198,18 @@ class GauntletConfig:
     vulnerability_rate_threshold: float = 0.2  # Max vulnerability rate for PASS
     consensus_threshold: float = 0.7  # Min consensus confidence for PASS
     robustness_threshold: float = 0.6  # Min robustness score for PASS
+    criteria: PassFailCriteria = field(default_factory=PassFailCriteria)
 
     # Output configuration
     output_dir: Optional[str] = None
     output_formats: list[str] = field(
         default_factory=lambda: ["json", "md"]
     )
+    save_artifacts: bool = False
+    generate_receipt: bool = True
 
     # Timeouts (seconds)
+    timeout_seconds: int = 300
     attack_timeout: int = 60
     probe_timeout: int = 30
     scenario_timeout: int = 120
@@ -187,8 +219,14 @@ class GauntletConfig:
         if not self.agents:
             raise ValueError("At least one agent required")
 
+        if self.max_agents < 1:
+            raise ValueError("max_agents must be >= 1")
+
         if self.attack_rounds < 1:
             raise ValueError("attack_rounds must be >= 1")
+
+        if self.timeout_seconds < 1:
+            raise ValueError("timeout_seconds must be >= 1")
 
         if not (0 <= self.vulnerability_rate_threshold <= 1):
             raise ValueError("vulnerability_rate_threshold must be 0-1")
@@ -199,25 +237,59 @@ class GauntletConfig:
         if not (0 <= self.robustness_threshold <= 1):
             raise ValueError("robustness_threshold must be 0-1")
 
+        if not self.enable_scenario_analysis or not self.run_scenario_matrix:
+            self.enable_scenario_analysis = False
+            self.run_scenario_matrix = False
+
+        if not self.scenario_presets and self.scenario_preset:
+            self.scenario_presets = [self.scenario_preset]
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
+            "name": self.name,
+            "description": self.description,
+            "template_id": self.template_id,
+            "input_type": self.input_type,
+            "domain": self.domain,
+            "tags": self.tags,
+            "enable_scenario_analysis": self.enable_scenario_analysis,
+            "enable_adversarial_probing": self.enable_adversarial_probing,
+            "enable_formal_verification": self.enable_formal_verification,
+            "enable_deep_audit": self.enable_deep_audit,
             "attack_categories": [c.value for c in self.attack_categories],
             "attack_rounds": self.attack_rounds,
             "attacks_per_category": self.attacks_per_category,
             "probe_categories": [c.value for c in self.probe_categories],
             "probes_per_category": self.probes_per_category,
+            "max_total_probes": self.max_total_probes,
             "run_scenario_matrix": self.run_scenario_matrix,
             "scenario_preset": self.scenario_preset,
             "max_parallel_scenarios": self.max_parallel_scenarios,
+            "scenario_presets": self.scenario_presets,
+            "custom_scenarios": self.custom_scenarios,
             "agents": self.agents,
+            "max_agents": self.max_agents,
+            "deep_audit_rounds": self.deep_audit_rounds,
             "critical_threshold": self.critical_threshold,
             "high_threshold": self.high_threshold,
             "vulnerability_rate_threshold": self.vulnerability_rate_threshold,
             "consensus_threshold": self.consensus_threshold,
             "robustness_threshold": self.robustness_threshold,
+            "criteria": {
+                "max_critical_findings": self.criteria.max_critical_findings,
+                "max_high_findings": self.criteria.max_high_findings,
+                "min_robustness_score": self.criteria.min_robustness_score,
+                "min_verification_coverage": self.criteria.min_verification_coverage,
+                "require_formal_verification": self.criteria.require_formal_verification,
+                "require_consensus": self.criteria.require_consensus,
+                "min_confidence": self.criteria.min_confidence,
+            },
             "output_dir": self.output_dir,
             "output_formats": self.output_formats,
+            "save_artifacts": self.save_artifacts,
+            "generate_receipt": self.generate_receipt,
+            "timeout_seconds": self.timeout_seconds,
             "attack_timeout": self.attack_timeout,
             "probe_timeout": self.probe_timeout,
             "scenario_timeout": self.scenario_timeout,
@@ -237,6 +309,8 @@ class GauntletConfig:
                 ProbeCategory(c) if isinstance(c, str) else c
                 for c in data["probe_categories"]
             ]
+        if "criteria" in data and isinstance(data["criteria"], dict):
+            data["criteria"] = PassFailCriteria(**data["criteria"])
         return cls(**data)
 
     @classmethod
@@ -377,10 +451,19 @@ class GauntletResult:
 
     def evaluate_pass_fail(self) -> None:
         """Evaluate pass/fail based on criteria."""
-        criteria = PassFailCriteria()
+        criteria = (
+            self.config.criteria
+            if self.config and getattr(self.config, "criteria", None)
+            else PassFailCriteria()
+        )
 
         critical_count = len(self.critical_findings)
         high_count = len([f for f in self.findings if f.severity == GauntletSeverity.HIGH])
+        verification_coverage = (
+            self.verified_claims / self.total_claims
+            if self.total_claims
+            else 0.0
+        )
 
         if critical_count > criteria.max_critical_findings:
             self.passed = False
@@ -391,6 +474,18 @@ class GauntletResult:
         elif self.robustness_score < criteria.min_robustness_score:
             self.passed = False
             self.verdict_summary = f"FAIL: Robustness {self.robustness_score:.0%}"
+        elif criteria.require_formal_verification and self.total_claims == 0:
+            self.passed = False
+            self.verdict_summary = "FAIL: Formal verification required but no claims were verified"
+        elif verification_coverage < criteria.min_verification_coverage:
+            self.passed = False
+            self.verdict_summary = f"FAIL: Verification coverage {verification_coverage:.0%}"
+        elif criteria.require_consensus and not self.consensus_reached:
+            self.passed = False
+            self.verdict_summary = "FAIL: Consensus required but not reached"
+        elif self.confidence < criteria.min_confidence:
+            self.passed = False
+            self.verdict_summary = f"FAIL: Confidence {self.confidence:.0%}"
         else:
             self.passed = True
             self.verdict_summary = f"PASS: {len(self.findings)} findings"

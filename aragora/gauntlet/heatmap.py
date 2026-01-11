@@ -105,6 +105,49 @@ class RiskHeatmap:
             highest_risk_severity=highest_severity,
         )
 
+    @classmethod
+    def from_mode_result(cls, result: Any) -> "RiskHeatmap":
+        """Create heatmap from aragora.modes.gauntlet.GauntletResult."""
+        findings = list(getattr(result, "all_findings", []))
+        categories = sorted({f.category for f in findings})
+        severities = ["critical", "high", "medium", "low"]
+
+        cells = []
+        category_totals: dict[str, int] = {}
+        severity_totals: dict[str, int] = {}
+
+        for category in categories:
+            category_totals[category] = 0
+            for severity in severities:
+                matches = [
+                    f for f in findings
+                    if f.category == category and f.severity_level.lower() == severity
+                ]
+                count = len(matches)
+                category_totals[category] += count
+                severity_totals[severity] = severity_totals.get(severity, 0) + count
+
+                cells.append(HeatmapCell(
+                    category=category,
+                    severity=severity,
+                    count=count,
+                    vulnerabilities=[f.finding_id for f in matches],
+                ))
+
+        highest_category = max(category_totals, key=category_totals.get) if category_totals else None
+        highest_severity = "critical" if severity_totals.get("critical", 0) > 0 else (
+            "high" if severity_totals.get("high", 0) > 0 else None
+        )
+
+        return cls(
+            cells=cells,
+            categories=categories,
+            severities=severities,
+            total_findings=len(findings),
+            highest_risk_category=highest_category,
+            highest_risk_severity=highest_severity,
+        )
+
     def get_cell(self, category: str, severity: str) -> Optional[HeatmapCell]:
         """Get a specific cell."""
         for cell in self.cells:

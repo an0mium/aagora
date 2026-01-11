@@ -7,11 +7,14 @@ Endpoints:
 - GET /api/gauntlet/{id}/receipt - Get decision receipt
 - GET /api/gauntlet/{id}/heatmap - Get risk heatmap
 - GET /api/gauntlet/personas - List available personas
+- GET /api/gauntlet/results - List recent results with pagination
+- GET /api/gauntlet/{id}/compare/{id2} - Compare two gauntlet runs
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -26,6 +29,7 @@ from .base import (
     handle_errors,
     get_string_param,
     get_bool_param,
+    get_int_param,
     safe_json_parse,
 )
 from .utils.rate_limit import rate_limit
@@ -33,8 +37,21 @@ from .utils.rate_limit import rate_limit
 logger = logging.getLogger(__name__)
 
 
-# In-memory storage for gauntlet runs (in production, use database)
+# In-memory storage for in-flight gauntlet runs (pending/running)
+# Completed runs are persisted to GauntletStorage
 _gauntlet_runs: dict[str, dict[str, Any]] = {}
+
+# Persistent storage singleton
+_storage: Optional["GauntletStorage"] = None
+
+
+def _get_storage() -> "GauntletStorage":
+    """Get or create the persistent storage instance."""
+    global _storage
+    if _storage is None:
+        from aragora.gauntlet.storage import GauntletStorage
+        _storage = GauntletStorage()
+    return _storage
 
 
 class GauntletHandler(BaseHandler):
@@ -43,8 +60,10 @@ class GauntletHandler(BaseHandler):
     ROUTES = [
         "/api/gauntlet/run",
         "/api/gauntlet/personas",
+        "/api/gauntlet/results",
         "/api/gauntlet/*/receipt",
         "/api/gauntlet/*/heatmap",
+        "/api/gauntlet/*/compare/*",
         "/api/gauntlet/*",
     ]
 
@@ -60,7 +79,11 @@ class GauntletHandler(BaseHandler):
             return True
         if path == "/api/gauntlet/personas" and method == "GET":
             return True
+        if path == "/api/gauntlet/results" and method == "GET":
+            return True
         if path.startswith("/api/gauntlet/") and method == "GET":
+            return True
+        if path.startswith("/api/gauntlet/") and method == "DELETE":
             return True
         return False
 
@@ -82,6 +105,10 @@ class GauntletHandler(BaseHandler):
         if path == "/api/gauntlet/personas":
             return self._list_personas()
 
+        # GET /api/gauntlet/results - List with pagination
+        if path == "/api/gauntlet/results":
+            return self._list_results(query_params)
+
         # GET /api/gauntlet/{id}/receipt
         if path.endswith("/receipt"):
             gauntlet_id = path.split("/")[-2]
@@ -92,10 +119,24 @@ class GauntletHandler(BaseHandler):
             gauntlet_id = path.split("/")[-2]
             return await self._get_heatmap(gauntlet_id, query_params)
 
+        # GET /api/gauntlet/{id}/compare/{id2}
+        if "/compare/" in path:
+            parts = path.split("/")
+            if len(parts) >= 5:
+                gauntlet_id = parts[-3]
+                compare_id = parts[-1]
+                return self._compare_results(gauntlet_id, compare_id, query_params)
+
+        # DELETE /api/gauntlet/{id}
+        if method == "DELETE" and path.startswith("/api/gauntlet/"):
+            gauntlet_id = path.split("/")[-1]
+            if gauntlet_id and gauntlet_id not in ("run", "personas", "results"):
+                return self._delete_result(gauntlet_id, query_params)
+
         # GET /api/gauntlet/{id}
         if path.startswith("/api/gauntlet/"):
             gauntlet_id = path.split("/")[-1]
-            if gauntlet_id and gauntlet_id not in ("run", "personas"):
+            if gauntlet_id and gauntlet_id not in ("run", "personas", "results"):
                 return await self._get_status(gauntlet_id)
 
         return None
@@ -150,6 +191,7 @@ class GauntletHandler(BaseHandler):
 
         # Generate gauntlet ID
         gauntlet_id = f"gauntlet-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        input_hash = hashlib.sha256(input_content.encode()).hexdigest()
 
         # Store initial state
         _gauntlet_runs[gauntlet_id] = {
@@ -157,6 +199,7 @@ class GauntletHandler(BaseHandler):
             "status": "pending",
             "input_type": input_type,
             "input_summary": input_content[:200] + "..." if len(input_content) > 200 else input_content,
+            "input_hash": input_hash,
             "persona": persona,
             "profile": profile,
             "created_at": datetime.now().isoformat(),
@@ -238,9 +281,9 @@ class GauntletHandler(BaseHandler):
             result = await orchestrator.run(config)
 
             # Store result
-            _gauntlet_runs[gauntlet_id]["status"] = "completed"
-            _gauntlet_runs[gauntlet_id]["completed_at"] = datetime.now().isoformat()
-            _gauntlet_runs[gauntlet_id]["result"] = {
+            completed_at = datetime.now().isoformat()
+            result_dict = {
+                "gauntlet_id": gauntlet_id,
                 "verdict": result.verdict.value,
                 "confidence": result.confidence,
                 "risk_score": result.risk_score,
@@ -264,6 +307,23 @@ class GauntletHandler(BaseHandler):
                 ],
             }
 
+            # Update in-memory state
+            _gauntlet_runs[gauntlet_id]["status"] = "completed"
+            _gauntlet_runs[gauntlet_id]["completed_at"] = completed_at
+            _gauntlet_runs[gauntlet_id]["result_obj"] = result
+            _gauntlet_runs[gauntlet_id]["result"] = result_dict
+
+            # Persist to storage
+            try:
+                storage = _get_storage()
+                storage.save(result)
+                logger.info(f"Gauntlet {gauntlet_id} persisted to storage")
+            except Exception as storage_err:
+                logger.warning(f"Failed to persist gauntlet {gauntlet_id}: {storage_err}")
+
+            # Clean up in-memory storage after persisting (keep result_obj for receipt generation)
+            # In-memory entry can be removed after a timeout in production
+
         except Exception as e:
             logger.error(f"Gauntlet {gauntlet_id} failed: {e}")
             _gauntlet_runs[gauntlet_id]["status"] = "failed"
@@ -271,46 +331,83 @@ class GauntletHandler(BaseHandler):
 
     async def _get_status(self, gauntlet_id: str) -> HandlerResult:
         """Get gauntlet run status."""
-        if gauntlet_id not in _gauntlet_runs:
-            return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
+        # Check in-memory first (for pending/running)
+        if gauntlet_id in _gauntlet_runs:
+            run = _gauntlet_runs[gauntlet_id]
+            safe_run = {k: v for k, v in run.items() if k != "result_obj"}
+            return json_response(safe_run)
 
-        run = _gauntlet_runs[gauntlet_id]
-        return json_response(run)
+        # Check persistent storage (for completed runs)
+        try:
+            storage = _get_storage()
+            stored = storage.get(gauntlet_id)
+            if stored:
+                return json_response({
+                    "gauntlet_id": gauntlet_id,
+                    "status": "completed",
+                    "result": stored,
+                })
+        except Exception as e:
+            logger.warning(f"Storage lookup failed for {gauntlet_id}: {e}")
+
+        return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
 
     async def _get_receipt(self, gauntlet_id: str, query_params: dict) -> HandlerResult:
         """Get decision receipt for gauntlet run."""
-        if gauntlet_id not in _gauntlet_runs:
-            return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
-
-        run = _gauntlet_runs[gauntlet_id]
-        if run["status"] != "completed":
-            return error_response("Gauntlet run not completed", 400)
-
-        result = run["result"]
-
         from aragora.gauntlet.receipt import DecisionReceipt
 
-        receipt = DecisionReceipt(
-            receipt_id=f"receipt-{gauntlet_id[-12:]}",
-            gauntlet_id=gauntlet_id,
-            timestamp=run.get("completed_at", ""),
-            input_summary=run["input_summary"],
-            input_hash=gauntlet_id,  # Simplified
-            risk_summary={
-                "critical": result["critical_count"],
-                "high": result["high_count"],
-                "medium": result["medium_count"],
-                "low": result["low_count"],
-                "total": result["total_findings"],
-            },
-            attacks_attempted=0,
-            attacks_successful=0,
-            probes_run=0,
-            vulnerabilities_found=result["total_findings"],
-            verdict=result["verdict"].upper(),
-            confidence=result["confidence"],
-            robustness_score=result["robustness_score"],
-        )
+        run = None
+        result = None
+        result_obj = None
+
+        # Check in-memory first
+        if gauntlet_id in _gauntlet_runs:
+            run = _gauntlet_runs[gauntlet_id]
+            if run["status"] != "completed":
+                return error_response("Gauntlet run not completed", 400)
+            result = run["result"]
+            result_obj = run.get("result_obj")
+        else:
+            # Check persistent storage
+            try:
+                storage = _get_storage()
+                stored = storage.get(gauntlet_id)
+                if stored:
+                    result = stored
+                else:
+                    return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
+            except Exception as e:
+                logger.warning(f"Storage lookup failed for {gauntlet_id}: {e}")
+                return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
+
+        # Generate receipt
+        if result_obj:
+            receipt = DecisionReceipt.from_mode_result(
+                result_obj,
+                input_hash=run.get("input_hash") if run else None,
+            )
+        else:
+            receipt = DecisionReceipt(
+                receipt_id=f"receipt-{gauntlet_id[-12:]}",
+                gauntlet_id=gauntlet_id,
+                timestamp=run.get("completed_at", "") if run else datetime.now().isoformat(),
+                input_summary=run["input_summary"] if run else result.get("input_summary", ""),
+                input_hash=run.get("input_hash", gauntlet_id) if run else result.get("input_hash", gauntlet_id),
+                risk_summary={
+                    "critical": result.get("critical_count", 0),
+                    "high": result.get("high_count", 0),
+                    "medium": result.get("medium_count", 0),
+                    "low": result.get("low_count", 0),
+                    "total": result.get("total_findings", 0),
+                },
+                attacks_attempted=0,
+                attacks_successful=0,
+                probes_run=0,
+                vulnerabilities_found=result.get("total_findings", 0),
+                verdict=result.get("verdict", "UNKNOWN").upper(),
+                confidence=result.get("confidence", 0),
+                robustness_score=result.get("robustness_score", 0),
+            )
 
         # Return format based on query param
         format_type = get_string_param(query_params, "format", "json")
@@ -324,49 +421,66 @@ class GauntletHandler(BaseHandler):
 
     async def _get_heatmap(self, gauntlet_id: str, query_params: dict) -> HandlerResult:
         """Get risk heatmap for gauntlet run."""
-        if gauntlet_id not in _gauntlet_runs:
-            return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
-
-        run = _gauntlet_runs[gauntlet_id]
-        if run["status"] != "completed":
-            return error_response("Gauntlet run not completed", 400)
-
-        result = run["result"]
-
         from aragora.gauntlet.heatmap import RiskHeatmap, HeatmapCell
 
-        # Build heatmap from findings
-        cells = []
-        categories = set()
-        severities = ["critical", "high", "medium", "low"]
+        run = None
+        result = None
+        result_obj = None
 
-        for finding in result.get("findings", []):
-            category = finding.get("category", "unknown")
-            categories.add(category)
+        # Check in-memory first
+        if gauntlet_id in _gauntlet_runs:
+            run = _gauntlet_runs[gauntlet_id]
+            if run["status"] != "completed":
+                return error_response("Gauntlet run not completed", 400)
+            result = run["result"]
+            result_obj = run.get("result_obj")
+        else:
+            # Check persistent storage
+            try:
+                storage = _get_storage()
+                stored = storage.get(gauntlet_id)
+                if stored:
+                    result = stored
+                else:
+                    return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
+            except Exception as e:
+                logger.warning(f"Storage lookup failed for {gauntlet_id}: {e}")
+                return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
 
-        # Count by category and severity
-        category_severity_counts: dict[tuple[str, str], int] = {}
-        for finding in result.get("findings", []):
-            category = finding.get("category", "unknown")
-            severity = finding.get("severity_level", "medium").lower()
-            key = (category, severity)
-            category_severity_counts[key] = category_severity_counts.get(key, 0) + 1
+        # Generate heatmap
+        if result_obj:
+            heatmap = RiskHeatmap.from_mode_result(result_obj)
+        else:
+            cells = []
+            categories = set()
+            severities = ["critical", "high", "medium", "low"]
 
-        for category in sorted(categories):
-            for severity in severities:
-                count = category_severity_counts.get((category, severity), 0)
-                cells.append(HeatmapCell(
-                    category=category,
-                    severity=severity,
-                    count=count,
-                ))
+            for finding in result.get("findings", []):
+                category = finding.get("category", "unknown")
+                categories.add(category)
 
-        heatmap = RiskHeatmap(
-            cells=cells,
-            categories=sorted(list(categories)),
-            severities=severities,
-            total_findings=result["total_findings"],
-        )
+            category_severity_counts: dict[tuple[str, str], int] = {}
+            for finding in result.get("findings", []):
+                category = finding.get("category", "unknown")
+                severity = finding.get("severity_level", "medium").lower()
+                key = (category, severity)
+                category_severity_counts[key] = category_severity_counts.get(key, 0) + 1
+
+            for category in sorted(categories):
+                for severity in severities:
+                    count = category_severity_counts.get((category, severity), 0)
+                    cells.append(HeatmapCell(
+                        category=category,
+                        severity=severity,
+                        count=count,
+                    ))
+
+            heatmap = RiskHeatmap(
+                cells=cells,
+                categories=sorted(list(categories)),
+                severities=severities,
+                total_findings=result.get("total_findings", 0),
+            )
 
         # Return format based on query param
         format_type = get_string_param(query_params, "format", "json")
@@ -377,3 +491,84 @@ class GauntletHandler(BaseHandler):
             return (heatmap.to_ascii(), 200, {"Content-Type": "text/plain"})
         else:
             return json_response(heatmap.to_dict())
+
+    def _list_results(self, query_params: dict) -> HandlerResult:
+        """List recent gauntlet results with pagination."""
+        try:
+            storage = _get_storage()
+
+            limit = get_int_param(query_params, "limit", 20)
+            offset = get_int_param(query_params, "offset", 0)
+            verdict = get_string_param(query_params, "verdict", None)
+            min_severity = get_string_param(query_params, "min_severity", None)
+
+            # Clamp values
+            limit = min(max(limit, 1), 100)
+            offset = max(offset, 0)
+
+            results = storage.list_recent(
+                limit=limit,
+                offset=offset,
+                verdict=verdict,
+                min_severity=min_severity,
+            )
+
+            total = storage.count(verdict=verdict)
+
+            return json_response({
+                "results": [
+                    {
+                        "gauntlet_id": r.gauntlet_id,
+                        "input_hash": r.input_hash,
+                        "input_summary": r.input_summary[:100] + "..." if len(r.input_summary) > 100 else r.input_summary,
+                        "verdict": r.verdict,
+                        "confidence": r.confidence,
+                        "robustness_score": r.robustness_score,
+                        "critical_count": r.critical_count,
+                        "high_count": r.high_count,
+                        "total_findings": r.total_findings,
+                        "created_at": r.created_at.isoformat(),
+                        "duration_seconds": r.duration_seconds,
+                    }
+                    for r in results
+                ],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            })
+        except Exception as e:
+            logger.error(f"Failed to list results: {e}")
+            return error_response(f"Failed to list results: {e}", 500)
+
+    def _compare_results(self, id1: str, id2: str, query_params: dict) -> HandlerResult:
+        """Compare two gauntlet results."""
+        try:
+            storage = _get_storage()
+            comparison = storage.compare(id1, id2)
+
+            if comparison is None:
+                return error_response("One or both gauntlet runs not found", 404)
+
+            return json_response(comparison)
+        except Exception as e:
+            logger.error(f"Failed to compare results: {e}")
+            return error_response(f"Failed to compare results: {e}", 500)
+
+    def _delete_result(self, gauntlet_id: str, query_params: dict) -> HandlerResult:
+        """Delete a gauntlet result."""
+        try:
+            # Remove from in-memory if present
+            if gauntlet_id in _gauntlet_runs:
+                del _gauntlet_runs[gauntlet_id]
+
+            # Remove from persistent storage
+            storage = _get_storage()
+            deleted = storage.delete(gauntlet_id)
+
+            if deleted:
+                return json_response({"deleted": True, "gauntlet_id": gauntlet_id})
+            else:
+                return error_response(f"Gauntlet run not found: {gauntlet_id}", 404)
+        except Exception as e:
+            logger.error(f"Failed to delete result: {e}")
+            return error_response(f"Failed to delete result: {e}", 500)

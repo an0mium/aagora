@@ -160,11 +160,23 @@ class GauntletRunner:
             AttackCategory.SECURITY: [AttackType.SECURITY, AttackType.ADVERSARIAL_INPUT],
             AttackCategory.INJECTION: [AttackType.ADVERSARIAL_INPUT],
             AttackCategory.LOGIC: [AttackType.LOGICAL_FALLACY, AttackType.COUNTEREXAMPLE],
+            AttackCategory.COMPLIANCE: [AttackType.UNSTATED_ASSUMPTION, AttackType.COUNTEREXAMPLE],
+            AttackCategory.GDPR: [AttackType.UNSTATED_ASSUMPTION, AttackType.COUNTEREXAMPLE],
+            AttackCategory.HIPAA: [AttackType.UNSTATED_ASSUMPTION, AttackType.COUNTEREXAMPLE],
+            AttackCategory.AI_ACT: [AttackType.UNSTATED_ASSUMPTION, AttackType.COUNTEREXAMPLE],
+            AttackCategory.REGULATORY_VIOLATION: [AttackType.UNSTATED_ASSUMPTION, AttackType.COUNTEREXAMPLE],
             AttackCategory.EDGE_CASES: [AttackType.EDGE_CASE],
+            AttackCategory.EDGE_CASE: [AttackType.EDGE_CASE],
             AttackCategory.ASSUMPTIONS: [AttackType.UNSTATED_ASSUMPTION],
+            AttackCategory.STAKEHOLDER_CONFLICT: [AttackType.UNSTATED_ASSUMPTION, AttackType.COUNTEREXAMPLE],
             AttackCategory.ARCHITECTURE: [AttackType.SCALABILITY],
             AttackCategory.SCALABILITY: [AttackType.SCALABILITY, AttackType.RESOURCE_EXHAUSTION],
+            AttackCategory.PERFORMANCE: [AttackType.SCALABILITY, AttackType.RESOURCE_EXHAUSTION],
+            AttackCategory.RESOURCE_EXHAUSTION: [AttackType.RESOURCE_EXHAUSTION],
             AttackCategory.OPERATIONAL: [AttackType.DEPENDENCY_FAILURE, AttackType.RACE_CONDITION],
+            AttackCategory.DEPENDENCY_FAILURE: [AttackType.DEPENDENCY_FAILURE],
+            AttackCategory.RACE_CONDITION: [AttackType.RACE_CONDITION],
+            AttackCategory.RACE_CONDITIONS: [AttackType.RACE_CONDITION],
         }
 
         # Collect attack types to run

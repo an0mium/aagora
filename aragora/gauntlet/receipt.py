@@ -192,6 +192,119 @@ class DecisionReceipt:
             config_used=result.config_used,
         )
 
+    @classmethod
+    def from_mode_result(
+        cls,
+        result: Any,
+        input_hash: Optional[str] = None,
+    ) -> "DecisionReceipt":
+        """Create receipt from aragora.modes.gauntlet.GauntletResult."""
+        receipt_id = f"receipt-{datetime.now().strftime('%Y%m%d%H%M%S')}-{result.gauntlet_id[-8:]}"
+
+        findings = list(getattr(result, "all_findings", []))
+        critical = len(getattr(result, "critical_findings", []))
+        high = len(getattr(result, "high_findings", []))
+        medium = len(getattr(result, "medium_findings", []))
+        low = len(getattr(result, "low_findings", []))
+
+        redteam = getattr(result, "redteam_result", None)
+        probe_report = getattr(result, "probe_report", None)
+        audit_verdict = getattr(result, "audit_verdict", None)
+
+        provenance = []
+        for finding in findings:
+            provenance.append(ProvenanceRecord(
+                timestamp=getattr(finding, "timestamp", ""),
+                event_type="finding",
+                agent=None,
+                description=f"[{finding.severity_level}] {finding.title[:50]}",
+                evidence_hash=hashlib.sha256(finding.description.encode()).hexdigest()[:16],
+            ))
+
+        provenance.append(ProvenanceRecord(
+            timestamp=getattr(result, "created_at", ""),
+            event_type="verdict",
+            description=f"Verdict: {result.verdict.value} ({result.confidence:.1%} confidence)",
+        ))
+
+        dissenting = []
+        for dissent in getattr(result, "dissenting_views", []):
+            if hasattr(dissent, "agent"):
+                reasons = "; ".join(getattr(dissent, "reasons", []) or [])
+                summary = f"{dissent.agent}: {reasons}".strip()
+                if getattr(dissent, "alternative_view", None):
+                    summary = f"{summary} | alt: {dissent.alternative_view}".strip()
+                dissenting.append(summary)
+            else:
+                dissenting.append(str(dissent))
+
+        dissenting_agents = [
+            getattr(d, "agent", "") for d in getattr(result, "dissenting_views", [])
+            if getattr(d, "agent", None)
+        ]
+
+        consensus = ConsensusProof(
+            reached=bool(getattr(result, "consensus_reached", False)),
+            confidence=result.confidence,
+            supporting_agents=list(getattr(result, "agents_involved", [])),
+            dissenting_agents=dissenting_agents,
+            method="gauntlet_consensus",
+            evidence_hash=getattr(result, "checksum", ""),
+        )
+
+        verdict_reasoning = (
+            f"Risk score: {result.risk_score:.0%}, "
+            f"Coverage: {result.coverage_score:.0%}, "
+            f"Verification: {getattr(result, 'verification_coverage', 0.0):.0%}"
+        )
+        if audit_verdict and getattr(audit_verdict, "recommendation", None):
+            verdict_reasoning = audit_verdict.recommendation[:500]
+
+        severity_details = [
+            {
+                "id": f.finding_id,
+                "category": f.category,
+                "severity": f.severity,
+                "severity_level": f.severity_level,
+                "title": f.title,
+                "description": f.description,
+                "evidence": f.evidence,
+                "mitigation": f.mitigation,
+                "source": f.source,
+                "verified": f.verified,
+                "timestamp": f.timestamp,
+            }
+            for f in findings
+            if f.severity_level in ("CRITICAL", "HIGH")
+        ]
+
+        return cls(
+            receipt_id=receipt_id,
+            gauntlet_id=result.gauntlet_id,
+            timestamp=getattr(result, "created_at", ""),
+            input_summary=result.input_summary,
+            input_hash=input_hash or getattr(result, "checksum", ""),
+            risk_summary={
+                "critical": critical,
+                "high": high,
+                "medium": medium,
+                "low": low,
+                "total": len(findings),
+            },
+            attacks_attempted=getattr(redteam, "total_attacks", 0) if redteam else 0,
+            attacks_successful=getattr(redteam, "successful_attacks", 0) if redteam else 0,
+            probes_run=getattr(probe_report, "probes_run", 0) if probe_report else 0,
+            vulnerabilities_found=len(findings),
+            verdict=result.verdict.value.upper(),
+            confidence=result.confidence,
+            robustness_score=result.robustness_score,
+            vulnerability_details=severity_details,
+            verdict_reasoning=verdict_reasoning,
+            dissenting_views=dissenting,
+            consensus_proof=consensus,
+            provenance_chain=provenance,
+        )
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON export."""
         return {
