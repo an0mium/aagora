@@ -31,32 +31,22 @@ from .base import (
 
 logger = logging.getLogger(__name__)
 
-# Webhook idempotency tracking (in-memory with TTL)
-# For production, use Redis or database
-_PROCESSED_WEBHOOK_EVENTS: dict[str, datetime] = {}
-_WEBHOOK_EVENT_TTL_SECONDS = 86400  # 24 hours
-
-
-def _cleanup_old_webhook_events() -> None:
-    """Remove webhook events older than TTL."""
-    now = datetime.utcnow()
-    expired = [
-        event_id for event_id, timestamp in _PROCESSED_WEBHOOK_EVENTS.items()
-        if (now - timestamp).total_seconds() > _WEBHOOK_EVENT_TTL_SECONDS
-    ]
-    for event_id in expired:
-        del _PROCESSED_WEBHOOK_EVENTS[event_id]
+# Webhook idempotency tracking (persistent SQLite by default)
+# Uses aragora.storage.webhook_store for persistence across restarts
 
 
 def _is_duplicate_webhook(event_id: str) -> bool:
     """Check if webhook event was already processed."""
-    _cleanup_old_webhook_events()
-    return event_id in _PROCESSED_WEBHOOK_EVENTS
+    from aragora.storage.webhook_store import get_webhook_store
+    store = get_webhook_store()
+    return store.is_processed(event_id)
 
 
-def _mark_webhook_processed(event_id: str) -> None:
+def _mark_webhook_processed(event_id: str, result: str = "success") -> None:
     """Mark webhook event as processed."""
-    _PROCESSED_WEBHOOK_EVENTS[event_id] = datetime.utcnow()
+    from aragora.storage.webhook_store import get_webhook_store
+    store = get_webhook_store()
+    store.mark_processed(event_id, result)
 
 
 class BillingHandler(BaseHandler):
@@ -363,7 +353,8 @@ class BillingHandler(BaseHandler):
             return json_response({"checkout": session.to_dict()})
 
         except StripeConfigError as e:
-            return error_response(str(e), 503)
+            logger.error(f"Stripe checkout failed: {type(e).__name__}: {e}")
+            return error_response("Payment service unavailable", 503)
 
     @handle_errors("create portal")
     def _create_portal(self, handler) -> HandlerResult:
@@ -412,7 +403,8 @@ class BillingHandler(BaseHandler):
             return json_response({"portal": session.to_dict()})
 
         except StripeConfigError as e:
-            return error_response(str(e), 503)
+            logger.error(f"Stripe portal failed: {type(e).__name__}: {e}")
+            return error_response("Payment service unavailable", 503)
 
     def _log_audit(
         self,
@@ -743,9 +735,10 @@ class BillingHandler(BaseHandler):
             return json_response({"invoices": invoices})
 
         except StripeConfigError as e:
-            return error_response(str(e), 503)
+            logger.error(f"Stripe invoices failed: {type(e).__name__}: {e}")
+            return error_response("Payment service unavailable", 503)
         except Exception as e:
-            logger.error(f"Failed to get invoices: {e}")
+            logger.error(f"Failed to get invoices: {type(e).__name__}: {e}")
             return error_response("Failed to retrieve invoices", 500)
 
     @handle_errors("cancel subscription")

@@ -478,32 +478,37 @@ class TestWebhookIdempotency:
 
     def test_cleanup_old_webhook_events(self):
         """Old webhook events are cleaned up after TTL."""
-        from aragora.server.handlers.billing import (
-            _PROCESSED_WEBHOOK_EVENTS,
-            _cleanup_old_webhook_events,
-            _mark_webhook_processed,
-            _WEBHOOK_EVENT_TTL_SECONDS,
+        from aragora.storage.webhook_store import (
+            InMemoryWebhookStore,
+            set_webhook_store,
+            reset_webhook_store,
         )
+        import time
 
-        # Clear any existing events
-        _PROCESSED_WEBHOOK_EVENTS.clear()
+        # Use in-memory store with short TTL for testing
+        test_store = InMemoryWebhookStore(ttl_seconds=1, cleanup_interval=0)
+        set_webhook_store(test_store)
 
-        # Add an old event
-        old_time = datetime.utcnow() - timedelta(seconds=_WEBHOOK_EVENT_TTL_SECONDS + 100)
-        _PROCESSED_WEBHOOK_EVENTS["old_event_123"] = old_time
+        try:
+            # Add an event
+            test_store.mark_processed("old_event_123")
 
-        # Add a recent event
-        _mark_webhook_processed("recent_event_456")
+            # Event should exist
+            assert test_store.is_processed("old_event_123")
 
-        # Run cleanup
-        _cleanup_old_webhook_events()
+            # Wait for TTL to expire
+            time.sleep(1.5)
 
-        # Old event should be removed, recent event should remain
-        assert "old_event_123" not in _PROCESSED_WEBHOOK_EVENTS
-        assert "recent_event_456" in _PROCESSED_WEBHOOK_EVENTS
+            # Event should be expired now
+            assert not test_store.is_processed("old_event_123")
 
-        # Cleanup
-        _PROCESSED_WEBHOOK_EVENTS.clear()
+            # Add a fresh event to verify cleanup works
+            test_store.mark_processed("recent_event_456")
+            assert test_store.is_processed("recent_event_456")
+
+        finally:
+            # Reset to default store
+            reset_webhook_store()
 
 
 # =============================================================================
