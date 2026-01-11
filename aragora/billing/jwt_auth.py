@@ -883,6 +883,70 @@ def create_token_pair(
     return TokenPair(access, refresh)
 
 
+# =============================================================================
+# MFA Pending Token (short-lived token for MFA flow)
+# =============================================================================
+
+MFA_PENDING_TOKEN_EXPIRY_MINUTES = 5  # Short-lived for security
+
+
+def create_mfa_pending_token(user_id: str, email: str) -> str:
+    """
+    Create a short-lived token for MFA pending state.
+
+    This token is issued after password verification when MFA is enabled.
+    It can only be exchanged for real tokens after MFA verification.
+
+    Args:
+        user_id: User ID
+        email: User email
+
+    Returns:
+        JWT token string with type="mfa_pending"
+    """
+    now = int(time.time())
+    exp = now + (MFA_PENDING_TOKEN_EXPIRY_MINUTES * 60)
+
+    payload = JWTPayload(
+        sub=user_id,
+        email=email,
+        org_id=None,
+        role="",
+        iat=now,
+        exp=exp,
+        type="mfa_pending",
+    )
+
+    return _encode_jwt(payload)
+
+
+def validate_mfa_pending_token(token: str) -> Optional[JWTPayload]:
+    """
+    Validate an MFA pending token.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        JWTPayload if valid and type is mfa_pending, None otherwise
+    """
+    # Check blacklist first to prevent replay attacks
+    blacklist = get_token_blacklist()
+    if blacklist.is_revoked(token):
+        logger.debug("mfa_pending_token_already_used")
+        return None
+
+    payload = decode_jwt(token)
+    if payload is None:
+        return None
+
+    if payload.type != "mfa_pending":
+        logger.warning(f"mfa_pending_token_invalid_type: got {payload.type}")
+        return None
+
+    return payload
+
+
 __all__ = [
     "JWTPayload",
     "UserAuthContext",
@@ -899,6 +963,9 @@ __all__ = [
     "validate_refresh_token",
     "extract_user_from_request",
     "create_token_pair",
+    # MFA pending token
+    "create_mfa_pending_token",
+    "validate_mfa_pending_token",
     # Security configuration
     "ARAGORA_ENVIRONMENT",
     "MIN_SECRET_LENGTH",

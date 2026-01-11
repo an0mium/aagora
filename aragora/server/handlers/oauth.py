@@ -52,6 +52,16 @@ GOOGLE_REDIRECT_URI = os.environ.get(
 OAUTH_SUCCESS_URL = os.environ.get("OAUTH_SUCCESS_URL", "http://localhost:3000/auth/callback")
 OAUTH_ERROR_URL = os.environ.get("OAUTH_ERROR_URL", "http://localhost:3000/auth/error")
 
+# Security: Allowed redirect hosts (comma-separated)
+# Only redirect URLs with these hosts are allowed after OAuth
+_ALLOWED_REDIRECT_HOSTS_STR = os.environ.get(
+    "OAUTH_ALLOWED_REDIRECT_HOSTS",
+    "localhost,127.0.0.1"
+)
+ALLOWED_OAUTH_REDIRECT_HOSTS = frozenset(
+    host.strip().lower() for host in _ALLOWED_REDIRECT_HOSTS_STR.split(",") if host.strip()
+)
+
 # Google OAuth endpoints
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -91,6 +101,46 @@ def _generate_state(user_id: Optional[str] = None, redirect_url: Optional[str] =
         "expires_at": time.time() + _STATE_TTL_SECONDS,
     }
     return state
+
+
+def _validate_redirect_url(redirect_url: str) -> bool:
+    """
+    Validate that redirect URL is in the allowed hosts list.
+
+    This prevents open redirect vulnerabilities where an attacker could
+    craft an OAuth URL that redirects tokens to a malicious domain.
+
+    Args:
+        redirect_url: The URL to validate
+
+    Returns:
+        True if URL is allowed, False otherwise
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(redirect_url)
+        host = parsed.hostname
+        if not host:
+            return False
+
+        # Normalize host for comparison
+        host = host.lower()
+
+        # Check against allowlist
+        if host in ALLOWED_OAUTH_REDIRECT_HOSTS:
+            return True
+
+        # Check if it's a subdomain of allowed hosts
+        for allowed in ALLOWED_OAUTH_REDIRECT_HOSTS:
+            if host.endswith(f".{allowed}"):
+                return True
+
+        logger.warning(f"oauth_redirect_blocked: host={host} not in allowlist")
+        return False
+    except Exception as e:
+        logger.warning(f"oauth_redirect_validation_error: {e}")
+        return False
 
 
 def _validate_state(state: str) -> Optional[dict[str, Any]]:
@@ -154,6 +204,13 @@ class OAuthHandler(BaseHandler):
 
         # Get optional redirect URL from query params
         redirect_url = query_params.get("redirect_url", [OAUTH_SUCCESS_URL])[0]
+
+        # Security: Validate redirect URL against allowlist to prevent open redirects
+        if not _validate_redirect_url(redirect_url):
+            return error_response(
+                "Invalid redirect URL. Only approved domains are allowed.",
+                400
+            )
 
         # Check if this is for account linking (user already authenticated)
         user_id = None
@@ -468,6 +525,14 @@ class OAuthHandler(BaseHandler):
 
         # Return the auth URL for the provider
         redirect_url = body.get("redirect_url", OAUTH_SUCCESS_URL)
+
+        # Validate redirect URL against allowlist (same as start flow)
+        if not _validate_redirect_url(redirect_url):
+            return error_response(
+                "Invalid redirect URL. Only approved domains are allowed.",
+                400
+            )
+
         state = _generate_state(user_id=auth_ctx.user_id, redirect_url=redirect_url)
 
         if provider == "google":

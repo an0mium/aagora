@@ -199,7 +199,8 @@ class AuthHandler(BaseHandler):
                 name=name or email.split("@")[0],
             )
         except ValueError as e:
-            return error_response(str(e), 409)
+            logger.warning(f"User creation failed: {type(e).__name__}: {e}")
+            return error_response("User creation failed", 409)
 
         # Create organization if name provided
         if org_name:
@@ -233,7 +234,7 @@ class AuthHandler(BaseHandler):
     @log_request("user login")
     def _handle_login(self, handler) -> HandlerResult:
         """Handle user login."""
-        from aragora.billing.jwt_auth import create_token_pair
+        from aragora.billing.jwt_auth import create_token_pair, create_mfa_pending_token
 
         # Parse request body
         body = self.read_json_body(handler)
@@ -268,7 +269,19 @@ class AuthHandler(BaseHandler):
         # Update last login
         user_store.update_user(user.id, last_login_at=datetime.utcnow())
 
-        # Create tokens
+        # Check if MFA is enabled - require second factor before issuing tokens
+        if user.mfa_enabled and user.mfa_secret:
+            pending_token = create_mfa_pending_token(user.id, user.email)
+            logger.info(f"User login pending MFA: {user.email}")
+            return json_response(
+                {
+                    "mfa_required": True,
+                    "pending_token": pending_token,
+                    "message": "MFA verification required",
+                }
+            )
+
+        # No MFA - create full tokens
         tokens = create_token_pair(
             user_id=user.id,
             email=user.email,
@@ -706,6 +719,7 @@ class AuthHandler(BaseHandler):
             "warning": "Save these backup codes securely. They cannot be shown again.",
         })
 
+    @rate_limit(rpm=5, limiter_name="mfa_disable")
     @handle_errors("MFA disable")
     @log_request("MFA disable")
     def _handle_mfa_disable(self, handler) -> HandlerResult:
@@ -761,11 +775,12 @@ class AuthHandler(BaseHandler):
 
         return json_response({"message": "MFA disabled successfully"})
 
+    @rate_limit(rpm=10, limiter_name="mfa_verify")
     @handle_errors("MFA verify")
     @log_request("MFA verify")
     def _handle_mfa_verify(self, handler) -> HandlerResult:
         """Verify MFA code during login."""
-        from aragora.billing.jwt_auth import extract_user_from_request, create_token_pair
+        from aragora.billing.jwt_auth import validate_mfa_pending_token, create_token_pair
         import hashlib
 
         try:
@@ -786,15 +801,16 @@ class AuthHandler(BaseHandler):
         if not pending_token:
             return error_response("Pending token is required", 400)
 
+        # Validate the pending token to identify the user
+        pending_payload = validate_mfa_pending_token(pending_token)
+        if not pending_payload:
+            return error_response("Invalid or expired pending token", 401)
+
         user_store = self._get_user_store()
+        if not user_store:
+            return error_response("Authentication service unavailable", 503)
 
-        # For now, use the pending token to identify the user
-        # In a full implementation, this would be a separate short-lived token
-        auth_ctx = extract_user_from_request(handler, user_store)
-        if not auth_ctx.is_authenticated:
-            return error_response("Not authenticated", 401)
-
-        user = user_store.get_user_by_id(auth_ctx.user_id)
+        user = user_store.get_user_by_id(pending_payload.sub)
         if not user:
             return error_response("User not found", 404)
 
@@ -804,13 +820,24 @@ class AuthHandler(BaseHandler):
         # Try TOTP code first
         totp = pyotp.TOTP(user.mfa_secret)
         if totp.verify(code, valid_window=1):
-            # Valid TOTP code
-            tokens = create_token_pair(user.id, user.email)
+            # Blacklist pending token to prevent replay
+            from aragora.billing.jwt_auth import get_token_blacklist
+            blacklist = get_token_blacklist()
+            blacklist.revoke_token(pending_token)
+
+            # Valid TOTP code - create full tokens
+            tokens = create_token_pair(
+                user_id=user.id,
+                email=user.email,
+                org_id=user.org_id,
+                role=user.role,
+            )
+            token_dict = tokens.to_dict()
+            logger.info(f"MFA verified for user: {user.email}")
             return json_response({
                 "message": "MFA verification successful",
-                "access_token": tokens["access_token"],
-                "refresh_token": tokens["refresh_token"],
-                "expires_in": tokens["expires_in"],
+                "user": user.to_dict(),
+                "tokens": token_dict,
             })
 
         # Try backup code
@@ -827,22 +854,33 @@ class AuthHandler(BaseHandler):
                     mfa_backup_codes=json_module.dumps(backup_hashes),
                 )
 
-                tokens = create_token_pair(user.id, user.email)
+                # Blacklist pending token to prevent replay
+                from aragora.billing.jwt_auth import get_token_blacklist
+                blacklist = get_token_blacklist()
+                blacklist.revoke_token(pending_token)
+
+                tokens = create_token_pair(
+                    user_id=user.id,
+                    email=user.email,
+                    org_id=user.org_id,
+                    role=user.role,
+                )
+                token_dict = tokens.to_dict()
                 remaining = len(backup_hashes)
 
                 logger.info(f"Backup code used for user: {user.email}, {remaining} remaining")
 
                 return json_response({
                     "message": "MFA verification successful (backup code used)",
-                    "access_token": tokens["access_token"],
-                    "refresh_token": tokens["refresh_token"],
-                    "expires_in": tokens["expires_in"],
+                    "user": user.to_dict(),
+                    "tokens": token_dict,
                     "backup_codes_remaining": remaining,
                     "warning": f"Backup code used. {remaining} remaining." if remaining < 5 else None,
                 })
 
         return error_response("Invalid MFA code", 400)
 
+    @rate_limit(rpm=3, limiter_name="mfa_backup")
     @handle_errors("MFA backup codes")
     @log_request("MFA backup codes")
     def _handle_mfa_backup_codes(self, handler) -> HandlerResult:
