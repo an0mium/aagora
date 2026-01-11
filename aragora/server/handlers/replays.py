@@ -186,7 +186,14 @@ class ReplaysHandler(BaseHandler):
         - agents: Agent reputation/acceptance over time
         - debates: Debate statistics over time
         """
-        empty_response = {"patterns": [], "agents": [], "debates": []}
+        empty_response = {
+            "patterns": [],
+            "patterns_count": 0,
+            "agents": [],
+            "agents_count": 0,
+            "debates": [],
+            "debates_count": 0,
+        }
 
         if not nomic_dir:
             return json_response(empty_response)
@@ -280,8 +287,11 @@ class ReplaysHandler(BaseHandler):
 
         return json_response({
             "patterns": patterns,
+            "patterns_count": len(patterns),
             "agents": agents,
+            "agents_count": len(agents),
             "debates": debates,
+            "debates_count": len(debates),
         })
 
     @ttl_cache(ttl_seconds=CACHE_TTL_META_LEARNING, key_prefix="meta_learning_stats", skip_first=True)

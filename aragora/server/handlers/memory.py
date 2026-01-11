@@ -340,8 +340,24 @@ class MemoryHandler(BaseHandler):
         return json_response(response_data)
 
     def handle_delete(self, path: str, query_params: dict, handler) -> Optional[HandlerResult]:
-        """Route DELETE memory requests to appropriate methods."""
+        """Route DELETE memory requests to appropriate methods with auth."""
+        from aragora.billing.jwt_auth import extract_user_from_request
+        from .utils.rate_limit import RateLimiter, get_client_ip
+
         if path.startswith("/api/memory/continuum/"):
+            # Require authentication for state mutation
+            user_store = self._get_user_store()
+            auth_ctx = extract_user_from_request(handler, user_store)
+            if not auth_ctx.is_authenticated:
+                return error_response("Authentication required", 401)
+
+            # Rate limit: 10 deletes per minute per IP
+            if not hasattr(self, "_delete_limiter"):
+                self._delete_limiter = RateLimiter(requests_per_minute=10)
+            client_ip = get_client_ip(handler)
+            if not self._delete_limiter.is_allowed(client_ip):
+                return error_response("Rate limit exceeded. Please try again later.", 429)
+
             # Extract memory_id from /api/memory/continuum/{id}
             memory_id, err = self.extract_path_param(path, 3, "memory_id")
             if err:

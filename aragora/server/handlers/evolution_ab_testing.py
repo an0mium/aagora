@@ -68,6 +68,10 @@ class EvolutionABTestingHandler(BaseHandler):
             self._manager = ABTestManager(db_path=db_path)
         return self._manager
 
+    def _get_user_store(self):
+        """Get user store from context."""
+        return self.ctx.get("user_store")
+
     def can_handle(self, path: str) -> bool:
         """Check if this handler can process the given path."""
         return path.startswith("/api/evolution/ab-tests")
@@ -134,7 +138,10 @@ class EvolutionABTestingHandler(BaseHandler):
         return None
 
     def handle_delete(self, path: str, handler=None) -> Optional[HandlerResult]:
-        """Route DELETE requests."""
+        """Route DELETE requests with auth and rate limiting."""
+        from aragora.billing.jwt_auth import extract_user_from_request
+        from .utils.rate_limit import RateLimiter, get_client_ip
+
         if not AB_TESTING_AVAILABLE:
             return error_response("A/B testing module not available", 503)
 
@@ -148,6 +155,19 @@ class EvolutionABTestingHandler(BaseHandler):
             valid, err = validate_path_segment(test_id, "test_id")
             if not valid:
                 return error_response(err or "Invalid test ID", 400)
+
+            # Require authentication for state mutation
+            user_store = self._get_user_store()
+            auth_ctx = extract_user_from_request(handler, user_store)
+            if not auth_ctx.is_authenticated:
+                return error_response("Authentication required", 401)
+
+            # Rate limit: 10 deletes per minute per IP
+            if not hasattr(self, "_delete_limiter"):
+                self._delete_limiter = RateLimiter(requests_per_minute=10)
+            client_ip = get_client_ip(handler)
+            if not self._delete_limiter.is_allowed(client_ip):
+                return error_response("Rate limit exceeded. Please try again later.", 429)
 
             return self._cancel_test(test_id)
 
